@@ -23,6 +23,8 @@ import {
 import type {KeyPair} from "./crypto-utils.js"
 import type {SMPClientAgent} from "./agent.js"
 import type {SMPServerAddress} from "./types.js"
+import {buildConnectionRequest} from "./connection-request.js"
+import type {ConnectionRequestParams} from "./connection-request.js"
 
 // -- Types
 
@@ -241,6 +243,69 @@ export class ConnectionManager {
       }
     }
     return active
+  }
+
+  /**
+   * Send a connection request on an existing managed connection.
+   * The connection must be in QUEUE_CREATED state with a non-null contactQueue.
+   *
+   * Steps:
+   * 1. Build the full connection request (6 crypto layers)
+   * 2. Get SMP client for Alice's contact queue server
+   * 3. Send SKEY to secure sender on contact queue (Fast SMP v9)
+   * 4. Send SEND to contact queue with the confirmation
+   * 5. Drive state machine to PENDING
+   */
+  async sendConnectionRequest(
+    connectionId: string,
+    params: ConnectionRequestParams,
+    aliceKey1Raw: Uint8Array,
+    aliceKey2Raw: Uint8Array
+  ): Promise<void> {
+    const conn = this.connections.get(connectionId)
+    if (!conn) throw new Error("Connection not found: " + connectionId)
+
+    if (conn.state.state !== "QUEUE_CREATED") {
+      throw new Error("Connection must be in QUEUE_CREATED state, got: " + conn.state.state)
+    }
+
+    if (!conn.contactQueue) {
+      throw new Error("Cannot send connection request: contactQueue is null (short link not resolved)")
+    }
+
+    try {
+      // 1. Build the connection request
+      const {smpEncConfirmation, senderAuthKeySPKI} = await buildConnectionRequest(
+        conn, params, aliceKey1Raw, aliceKey2Raw
+      )
+
+      // 2. Get SMP client for Alice's server
+      const contactServer = toSMPServerAddress(conn.contactQueue.server)
+      const client = await this.agent.getClient(contactServer)
+
+      // 3. Decode the senderId from the contact queue for entityId
+      const senderIdBytes = base64urlDecode(conn.contactQueue.senderId)
+
+      // 4. SKEY to secure sender (Fast SMP v9)
+      await client.secureQueueSender(senderIdBytes, senderAuthKeySPKI)
+
+      // 5. SEND the confirmation
+      await client.sendMessage(senderIdBytes, {
+        notification: true,
+        encMessage: smpEncConfirmation,
+      })
+
+      // 6. Drive state machine to PENDING
+      conn.state.transition("sendRequest")
+
+    } catch (err) {
+      conn.state.transition("error", {
+        code: "REQUEST_SEND_FAILED",
+        message: err instanceof Error ? err.message : "Unknown error",
+        cause: err instanceof Error ? err : undefined,
+      })
+      throw err
+    }
   }
 
   async closeConnection(connectionId: string): Promise<void> {

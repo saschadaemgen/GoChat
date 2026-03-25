@@ -19,9 +19,11 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@noble/ciphers": "^2.1.1",
     "@noble/curves": "^2.0.1",
     "@noble/hashes": "^1.5.0",
-    "@simplex-chat/xftp-web": "file:../xftp-web"
+    "@simplex-chat/xftp-web": "file:../xftp-web",
+    "zstd-codec": "^0.1.5"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

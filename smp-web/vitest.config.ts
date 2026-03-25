@@ -10,6 +10,11 @@ export default defineConfig({
       // Alias both bare and .js imports to the actual files.
       "@noble/curves/ed25519": path.resolve(__dirname, "node_modules/@noble/curves/ed25519.js"),
       "@noble/curves/ed448": path.resolve(__dirname, "node_modules/@noble/curves/ed448.js"),
+      "@noble/hashes/hkdf": path.resolve(__dirname, "node_modules/@noble/hashes/hkdf.js"),
+      "@noble/hashes/sha512": path.resolve(__dirname, "node_modules/@noble/hashes/sha512.js"),
+      "@noble/hashes/sha256": path.resolve(__dirname, "node_modules/@noble/hashes/sha256.js"),
+      "@noble/ciphers/aes": path.resolve(__dirname, "node_modules/@noble/ciphers/aes.js"),
+      "@noble/ciphers/salsa": path.resolve(__dirname, "node_modules/@noble/ciphers/salsa.js"),
     },
   },
   test: {

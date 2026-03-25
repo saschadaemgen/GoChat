@@ -117,8 +117,13 @@ export type {KeyPair} from "./crypto-utils.js"
 export {
   generateX25519KeyPair,
   generateEd25519KeyPair,
+  generateX448KeyPair,
   encodeEd25519PublicKey,
   encodeX25519PublicKey,
+  encodeX448PublicKey,
+  decodeX448PublicKey,
+  x448DH,
+  x25519DH,
 } from "./crypto-utils.js"
 
 // ConnectionManager (Season 4)
@@ -129,3 +134,26 @@ export type {
   ConnectionManagerConfig,
 } from "./connection.js"
 export {ConnectionManager} from "./connection.js"
+
+// X3DH key agreement (Season 4)
+export type {X3DHKeys, X3DHResult} from "./x3dh.js"
+export {performX3DH} from "./x3dh.js"
+
+// Double Ratchet (Season 4)
+export type {RatchetSendState} from "./ratchet.js"
+export {initSendRatchet, ratchetEncrypt} from "./ratchet.js"
+
+// Agent envelope (Season 4)
+export type {AgentConfirmationParams} from "./agent-envelope.js"
+export {buildAgentConfirmation} from "./agent-envelope.js"
+
+// Connection request builder (Season 4)
+export type {ConnectionRequestParams} from "./connection-request.js"
+export {
+  buildConnInfoJSON,
+  buildSmpEncConfirmation,
+  buildSmpConfirmation,
+  buildSmpConfirmationWithKey,
+  buildConnectionRequest,
+  zstdCompress,
+} from "./connection-request.js"
