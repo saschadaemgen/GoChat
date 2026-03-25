@@ -36,6 +36,8 @@ export interface BrowserClientConfig {
   onStatusChange: (status: ClientStatus) => void
   /** Callback for errors (optional) */
   onError?: (error: Error) => void
+  /** @internal Injectable agent for testing - defaults to newSMPAgent() */
+  _agent?: SMPClientAgent
 }
 
 export interface BrowserClient {
@@ -76,7 +78,7 @@ class BrowserClientImpl implements BrowserClient {
 
     try {
       // 1. Create agent and connection manager
-      this.agent = newSMPAgent()
+      this.agent = this.config._agent ?? newSMPAgent()
       this.connManager = new ConnectionManager(this.agent, {
         subscribeMode: "S",
         sndSecure: true,
