@@ -16,7 +16,7 @@
 **Ecosystem:** SimpleGo (hardware) / GoRelay (relay server) / GoChat (browser client)  
 **Date:** 2026-03-25  
 **Branch analyzed:** `ep/smp-web-spike` on `simplex-chat/simplexmq`  
-**Status:** Season 2 complete, Season 3 (SMP commands) upcoming
+**Status:** Season 4 complete, Season 5 (E2E encryption hardening) next
 
 ---
 
@@ -316,28 +316,28 @@ The SMP protocol has well-defined commands. We need TypeScript encoders/decoders
 
 **Tasks:**
 
-- [ ] **CMD-1:** Queue creation commands
+- [x] **CMD-1:** Queue creation commands
   - `NEW` - Create a new message queue (recipient side)
   - Response: `IDS` containing recipientId, senderId, server DH public key
 
-- [ ] **CMD-2:** Sender commands
+- [x] **CMD-2:** Sender commands
   - `SEND` - Send a message to a queue
   - `SKEY` - Provide sender's public key for authenticated sending
   - Response: `OK` or `ERR`
 
-- [ ] **CMD-3:** Recipient commands
+- [x] **CMD-3:** Recipient commands
   - `SUB` - Subscribe to a queue (start receiving messages)
   - `ACK` - Acknowledge message receipt
   - `KEY` - Rotate recipient key
   - `DEL` - Delete a queue
   - Event: `MSG` - Incoming message delivery (async, pushed by server)
 
-- [ ] **CMD-4:** Connection link commands (partially done)
+- [x] **CMD-4:** Connection link commands (partially done)
   - `LGET` - Get link data (DONE in spike)
   - `LNK` - Link response parsing (DONE in spike)
-  - [ ] `LSND` - Send data via link (for connection request)
+  - `LSND` - Send data via link (for connection request)
 
-- [ ] **CMD-5:** Utility commands
+- [x] **CMD-5:** Utility commands
   - `PING` / `PONG` - Keepalive
   - Response error types: `AUTH`, `QUOTA`, `NO_MSG`, `CMD`, `INTERNAL`
 
@@ -349,26 +349,30 @@ This implements the "duplex connection over simplex queues" pattern. In Haskell 
 
 **Tasks:**
 
-- [ ] **CONN-1:** Contact address parsing
-  - Parse SimpleX contact address URI: `simplex:/contact#/?v=...&smp=...`
+- [x] **CONN-1:** Contact address parsing
+  - Parse SimpleX contact address URI (both simplex:/ and https:// formats, short links v6.4+ and legacy)
   - Extract server address, public key, and connection parameters
   - Decode base64url-encoded key material
+  - Discriminated union output: short link vs full link
 
-- [ ] **CONN-2:** Connection initiation (browser side)
-  - Generate ephemeral X25519 key pair for the connection
+- [x] **CONN-2:** Connection state machine
+  - States: NEW -> QUEUE_CREATED -> PENDING -> CONFIRMED -> CONNECTED -> CLOSED (+ ERROR)
+  - Validated transitions via lookup table
+  - Event emitter for state change listeners
+  - Transition history tracking
+
+- [x] **CONN-3:** Queue pair creation
+  - Generate Ed25519 + X25519 + X448 key pairs
   - Create recipient queue on SMP server (NEW command)
-  - Build connection request containing our queue info + public key
-  - Send connection request through the contact address mechanism
+  - ConnectionManager orchestrating parse -> keygen -> createQueue -> state transition
 
-- [ ] **CONN-3:** Connection acceptance handling
-  - Receive confirmation from support team (MSG on our recipient queue)
-  - Extract support team's queue info + public key from confirmation
-  - Subscribe to our recipient queue for incoming messages (SUB)
-
-- [ ] **CONN-4:** Connection state machine
-  - States: `NEW` -> `PENDING` -> `CONNECTED` -> `CLOSED`
-  - Persist connection state in browser (IndexedDB/localStorage)
-  - Handle reconnection: re-SUB to existing queues on page reload
+- [x] **CONN-4:** Connection request with full crypto stack
+  - X3DH modified 4-DH key agreement (4x X448 DH + HKDF-SHA512 "SimpleXX3DH")
+  - Double Ratchet initialization + first encrypt (AES-256-GCM, HKDF-SHA256)
+  - Agent confirmation envelope (agentVersion=7, X448 SPKI keys, e2e v3)
+  - SMP confirmation with NaCl Layer 1 (XSalsa20-Poly1305)
+  - connInfo as zstd-compressed JSON (ChatMessage v1-16, x.info event)
+  - SKEY + SEND to contact queue, state -> PENDING
 
 ### 5.4 Layer 4: End-to-end encryption
 
@@ -380,24 +384,13 @@ All crypto operations run in a dedicated Web Worker, isolated from the main thre
 
 **Tasks:**
 
-- [ ] **E2E-1:** Key agreement (X3DH - Extended Triple Diffie-Hellman)
-  - Generate identity key pair (X25519) via @noble/curves
-  - Generate signed pre-key
-  - Generate one-time pre-key
-  - Compute shared secret from X3DH
-  - **Alternative MVP:** Use single X25519 DH for shared secret (simpler, no forward secrecy)
-
-- [ ] **E2E-2:** Message encryption
-  - **MVP:** NaCl secretbox with shared DH secret (via @noble/ciphers, XSalsa20-Poly1305)
-  - **Full:** Double Ratchet with symmetric key ratchet + DH ratchet
-  - Message padding to fixed block size (reuse xftp-web/crypto/padding.ts)
-
-- [ ] **E2E-3:** Key storage
-  - Store CryptoKey objects in IndexedDB with `extractable: false`
-  - Encrypt all sensitive data with AES-256-GCM before writing to IndexedDB
-  - Derive wrapping key from user password/PIN via PBKDF2 (>=2^19 iterations)
-  - Clear key material from memory as aggressively as JS GC allows
-  - Handle key rotation for long-lived sessions
+- [ ] **E2E-1:** Ratchet receive side (decrypt incoming messages)
+- [ ] **E2E-2:** Symmetric ratchet step (advance chain on each message)
+- [ ] **E2E-3:** DH ratchet step (re-key on send/receive transitions)
+- [ ] **E2E-4:** Out-of-order message handling (skipped message keys)
+- [ ] **E2E-5:** Header decryption with current + next header key
+- [ ] **E2E-6:** Key storage (IndexedDB + AES-256-GCM encryption at rest)
+- [ ] **SEC-3:** Web Worker isolation for all crypto operations
 
 ### 5.5 Layer 5: Chat UI (GoChat frontend)
 
@@ -647,17 +640,22 @@ GoChat/
   smp-web/                          # SMP browser client (spike + our work)
     src/
       index.ts                      # Re-exports all public API
-      types.ts                      # ChatTransport interface, SMPServerAddress, errors, events
-      transport.ts                  # SMPWebSocketTransport (WebSocket + 16KB block framing)
+      types.ts                      # ChatTransport interface, SMP types
+      transport.ts                  # SMPWebSocketTransport (16KB block framing)
       handshake.ts                  # SMP ServerHello/ClientHello encode/decode
-      client.ts                     # SMPClient (handshake + session + PING/PONG + dispatch)
-      agent.ts                      # SMPClientAgent (connection pool + reconnection)
-      protocol.ts                   # SMP transmission encode/decode, LGET/LNK
-      __tests__/                    # Vitest unit tests
-        transport.test.ts           # 17 transport tests
-        handshake.test.ts           # Handshake encoding tests
-        client.test.ts              # Client and dispatch tests
-        agent.test.ts               # Agent pooling tests
+      client.ts                     # SMPClient (handshake, session, typed commands, corrId dispatch)
+      agent.ts                      # SMPClientAgent (connection pool, reconnection)
+      commands.ts                   # SMP command encoders (14 commands)
+      protocol.ts                   # SMP transmission encode/decode, response decoder
+      address.ts                    # SimpleX contact address URI parser (S4)
+      state.ts                      # Connection lifecycle state machine (S4)
+      crypto-utils.ts               # Key gen: Ed25519, X25519, X448 + SPKI encoding (S4)
+      connection.ts                 # ConnectionManager (queue creation + send request) (S4)
+      x3dh.ts                       # Modified 4-DH X3DH key agreement (S4)
+      ratchet.ts                    # Double Ratchet init + first encrypt AES-256-GCM (S4)
+      agent-envelope.ts             # Agent confirmation encoding (S4)
+      connection-request.ts         # Connection request builder + zstd (S4)
+      __tests__/                    # 413 tests across 16 files
 
   xftp-web/                         # Shared infrastructure (upstream)
     src/
@@ -687,6 +685,9 @@ GoChat/
     seasons/
       SEASON-PLAN.md                # Season overview and workflow
       SEASON-01-planning.md         # Season 1 closing protocol
+      SEASON-02-transport.md        # Season 2 closing protocol
+      SEASON-03-commands.md         # Season 3 closing protocol
+      SEASON-04-connection-flow.md  # Season 4 closing protocol
 ```
 
 ### 7.3 Dependencies
@@ -696,6 +697,7 @@ GoChat/
 | `@noble/hashes` | ^1.5.0 | SHA-256, SHA-512 (used by xftp-web crypto) |
 | `@noble/curves` | latest | Ed25519, X25519 (6 audits, used by Proton Mail, MetaMask) |
 | `@noble/ciphers` | latest | XSalsa20-Poly1305, AES-256-GCM |
+| `zstd-codec` | latest | Zstd compression (level 3) for connInfo payload |
 | `@simplex-chat/xftp-web` | file:../xftp-web | Encoding, crypto, transport primitives |
 | `typescript` | ^5.4.0 | Build tooling |
 | `ws` | ^8.0.0 | WebSocket (dev/test only, browser uses native WebSocket) |
@@ -821,18 +823,21 @@ GoChat is one component of the SimpleGo ecosystem for encrypted communication ac
 | WS-2 | Transport | SMP client with handshake | S2 DONE |
 | WS-3 | Transport | Connection pooling and reconnect | S2 DONE |
 | WS-4 | Transport | SharedWorker for tab persistence | S6 |
-| CMD-1 | Commands | Queue creation (NEW/IDS) | S3 |
-| CMD-2 | Commands | Sender commands (SEND/SKEY) | S3 |
-| CMD-3 | Commands | Recipient commands (SUB/ACK/KEY/DEL/MSG) | S3 |
-| CMD-4 | Commands | Connection link commands (LGET/LNK/LSND) | S3 |
-| CMD-5 | Commands | Utility commands (PING/PONG/ERR) | S3 |
-| CONN-1 | Connection | Contact address parsing | S4 |
-| CONN-2 | Connection | Connection initiation | S4 |
-| CONN-3 | Connection | Connection acceptance handling | S4 |
-| CONN-4 | Connection | Connection state machine | S4 |
-| E2E-1 | Encryption | Key agreement (X3DH) | S5 |
-| E2E-2 | Encryption | Message encryption (NaCl MVP, DR full) | S5 |
-| E2E-3 | Encryption | Key storage (IndexedDB + AES-256-GCM) | S5 |
+| CMD-1 | Commands | Queue creation (NEW/IDS) | S3 DONE |
+| CMD-2 | Commands | Sender commands (SEND/SKEY) | S3 DONE |
+| CMD-3 | Commands | Recipient commands (SUB/ACK/KEY/DEL/MSG) | S3 DONE |
+| CMD-4 | Commands | Connection link commands (LGET/LNK/LSND) | S3 DONE |
+| CMD-5 | Commands | Utility commands (PING/PONG/ERR) | S3 DONE |
+| CONN-1 | Connection | Contact address parsing (all formats) | S4 DONE |
+| CONN-2 | Connection | Connection state machine (7 states) | S4 DONE |
+| CONN-3 | Connection | Queue pair creation + ConnectionManager | S4 DONE |
+| CONN-4 | Connection | Connection request (X3DH + Ratchet + 6 crypto layers) | S4 DONE |
+| E2E-1 | Encryption | Ratchet receive side (decrypt incoming) | S5 |
+| E2E-2 | Encryption | Symmetric ratchet step (advance chain) | S5 |
+| E2E-3 | Encryption | DH ratchet step (re-key on transitions) | S5 |
+| E2E-4 | Encryption | Out-of-order message handling | S5 |
+| E2E-5 | Encryption | Header decryption (current + next key) | S5 |
+| E2E-6 | Encryption | Key storage (IndexedDB + AES-256-GCM) | S5 |
 | UI-1 | Chat UI | Nose-bar integration | S6 |
 | UI-2 | Chat UI | Chat panel | S6 |
 | UI-3 | Chat UI | Chat state management | S6 |
@@ -849,10 +854,15 @@ GoChat is one component of the SimpleGo ecosystem for encrypted communication ac
 | OPS-1 | Deployment | SMP server deployment | S8 |
 | OPS-2 | Deployment | Contact address setup | S8 |
 | OPS-3 | Deployment | Monitoring | S8 |
-| GRP-1 | GRP Transport | Noise Protocol transport | S9 |
-| GRP-2 | GRP Transport | ML-KEM-768 post-quantum | S9 |
-| GRP-3 | GRP Transport | Two-hop relay routing | S10 |
-| GRP-4 | GRP Transport | Triple Shield (ZKP, Shamir, Stego) | S11+ |
+| LIB-1 | Library | API design document | S9 |
+| LIB-2 | Library | Package scaffolding (build, bundle, tree-shake) | S9 |
+| LIB-3 | Library | Extract core modules from GoChat | S9 |
+| LIB-4 | Library | SimpleXClient facade class | S9 |
+| LIB-5 | Library | Zero-dependency audit | S9 |
+| GRP-1 | GRP Transport | Noise Protocol transport | S10 |
+| GRP-2 | GRP Transport | ML-KEM-768 post-quantum | S10 |
+| GRP-3 | GRP Transport | Two-hop relay routing | S11 |
+| GRP-4 | GRP Transport | Triple Shield (ZKP, Shamir, Stego) | S12+ |
 
 ---
 
@@ -863,3 +873,4 @@ GoChat is one component of the SimpleGo ecosystem for encrypted communication ac
 | 2026-03-25 | Initial protocol document created. Analyzed `ep/smp-web-spike` branch, documented existing infrastructure, defined implementation roadmap. |
 | 2026-03-25 | Major update: added dual-profile architecture (SMP + GRP), ChatTransport interface requirement, new task categories (GRP-1 to GRP-4, SEC-1 to SEC-5, UI-6 to UI-8, WS-4), browser-specific risk assessment, ecosystem context, ground rules, task registry. |
 | 2026-03-25 | Season 2 complete. WS-1, WS-2, WS-3 implemented: SMPWebSocketTransport, SMPClient with handshake and dispatch, SMPClientAgent with exponential backoff reconnection. Updated code map and task registry. |
+| 2026-03-25 | Season 4 complete. CONN-1 to CONN-4 implemented: contact address parser, connection state machine, queue pair creation, connection request with X3DH + Double Ratchet (6 crypto layers). 226 new tests (413 total). All CMD tasks marked done (Season 3). Added E2E-4/5/6 tasks for Season 5. Added LIB-1 to LIB-5 for Season 9 (simplex-js library). Updated code map and dependencies. |
