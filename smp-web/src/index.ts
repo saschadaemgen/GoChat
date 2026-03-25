@@ -111,3 +111,21 @@ export {
   ConnectionStateMachine,
   InvalidTransitionError,
 } from "./state.js"
+
+// Crypto utilities (Season 4)
+export type {KeyPair} from "./crypto-utils.js"
+export {
+  generateX25519KeyPair,
+  generateEd25519KeyPair,
+  encodeEd25519PublicKey,
+  encodeX25519PublicKey,
+} from "./crypto-utils.js"
+
+// ConnectionManager (Season 4)
+export type {
+  ConnectionKeys,
+  ContactQueueInfo,
+  ManagedConnection,
+  ConnectionManagerConfig,
+} from "./connection.js"
+export {ConnectionManager} from "./connection.js"
