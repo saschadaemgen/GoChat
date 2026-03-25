@@ -76,3 +76,21 @@ export {
 } from "./commands.js"
 // Note: encodePING is already exported from client.js above.
 // commands.ts also exports encodePING for standalone use.
+
+// Contact address URI parser (Season 4)
+export type {
+  SMPServer,
+  SMPQueueURI,
+  ConnectionMode,
+  ShortLinkData,
+  FullLinkData,
+  ParsedContactAddress,
+  ContactAddressErrorCode,
+} from "./address.js"
+export {
+  parseContactAddress,
+  parseSMPQueueURI,
+  parseSMPServer,
+  validateBase64url,
+  ContactAddressError,
+} from "./address.js"
