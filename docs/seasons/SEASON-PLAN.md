@@ -53,7 +53,7 @@ docs/
 
 ---
 
-## Season 1: Planning and documentation (CURRENT)
+## Season 1: Planning and documentation
 
 **Status:** Complete  
 **Goal:** Complete project analysis, fork setup, dual-profile architecture design, deep research, community contact, roadmap, and workflow definition.
@@ -82,8 +82,7 @@ docs/
 - [x] Set up GPG signing (key E13737C02E97E54B)
 - [x] Create `.claude/CLAUDE.md` for Claude Code instructions
 - [x] Create `.github/assets/gochat_banner.png`
-- [ ] Create season 1 closing protocol (`SEASON-01-planning.md`)
-- [ ] Prepare task list for Claude Code (Season 2 briefing)
+- [x] Create season 1 closing protocol (`SEASON-01-planning.md`)
 
 ### Key decisions made
 
@@ -99,12 +98,6 @@ docs/
 10. **No mobile app:** SimpleX covers mobile/desktop. GoChat fills the browser gap.
 11. **GoChat extends SimpleX, does not replace it.** GRP is an additional security layer via GoRelay, not a competing protocol.
 
-### Open questions for Season 2
-
-- Should we contribute WebSocket transport client upstream?
-- Self-hosted SMP server or SimpleX public servers for development?
-- How to handle the xftp-web dependency during development (local link vs npm)?
-
 ---
 
 ## Season 2: WebSocket transport client
@@ -113,28 +106,6 @@ docs/
 
 **Status:** Complete
 **Result:** 3 tasks, 3 PRs merged, all tests passing. Transport layer stack fully operational.
-
-**This is the foundation - nothing else works without it.**
-
-### Scope
-
-- `smp-web/src/transport.ts` - WebSocket transport class implementing `ChatTransport`
-  - Connect to `wss://server:443`
-  - Binary message framing (SMP uses fixed 16KB blocks)
-  - Connection lifecycle: open, close, error, reconnect
-  - Heartbeat via PING/PONG
-- `smp-web/src/client.ts` - SMP client with handshake
-  - Adapt handshake for SMP protocol (different from XFTP)
-  - Version negotiation
-  - Session ID management
-- TLS certificate strategy: Let's Encrypt for browser WSS, SMP fingerprint at app layer (SEC-5)
-- Test against a real SMP server (SimpleX public or local Docker)
-
-### Tasks for Claude Code
-
-```
-Task references: WS-1, WS-2, WS-3, SEC-5 from PROTOCOL.md
-```
 
 ### Success criteria
 
@@ -145,65 +116,52 @@ Task references: WS-1, WS-2, WS-3, SEC-5 from PROTOCOL.md
 - [x] Can send a raw SMP block and receive a response
 - [x] Transport class implements ChatTransport interface
 
-### What to watch out for
-
-- SMP handshake is TLS-level, not HTTP-level like XFTP
-- WebSocket binary frames vs SMP block framing alignment
-- Browser security: WSS required, no self-signed certs in production
-- The existing `xftp-web/src/client.ts` is the reference - study `connectXFTP()` carefully
-- All transport code must go through ChatTransport abstraction from the first line
-
 ---
 
 ## Season 3: SMP commands
 
 **Goal:** Implement all SMP commands needed for basic messaging.
 
+**Status:** Complete
+**Result:** 4 tasks, 4 PRs merged (#4, #5, #6, #7), 187 tests across 8 files. Full command layer operational with mock integration testing.
+
+### Deliverables
+
+- [x] 14 command encoders in `commands.ts` (NEW, SUB, KEY, SKEY, SEND, ACK, DEL, OFF, GET, NKEY, NDEL, NSUB, PING, QUE)
+- [x] Extended response decoder in `protocol.ts` (IDS, MSG, NID, NMSG, INFO, PONG, END, full ERR tree)
+- [x] 12 typed client methods with CorrId-matched dispatch in `client.ts`
+- [x] Mock SMP server for integration testing
+- [x] End-to-end roundtrip tests (NEW -> KEY -> SEND -> MSG -> ACK -> DEL)
+
+### Success criteria
+
+- [x] Can create a queue on SMP server (NEW -> IDS)
+- [x] Can subscribe to a queue (SUB)
+- [x] Can send a message to a queue (SEND -> OK)
+- [x] Can receive a message from a queue (MSG event)
+- [x] Can acknowledge message receipt (ACK)
+- [x] All commands have encode/decode unit tests
+- [x] Full integration test with mock SMP server
+
+---
+
+## Season 4: Connection flow (CURRENT)
+
+**Goal:** Full connection establishment from browser to SimpleX app via contact address.
+
 **Status:** Current
 
 ### Scope
 
-- `smp-web/src/commands.ts` - SMP command encoders/decoders
-  - `NEW` / `IDS` - Create queue
-  - `SUB` - Subscribe to queue
-  - `SEND` / `MSG` - Send and receive messages
-  - `ACK` - Acknowledge receipt
-  - `KEY` - Set sender key
-  - `DEL` - Delete queue
-- `smp-web/src/protocol.ts` - Extend existing file with new response types
-- Unit tests for encode/decode roundtrips
-
-### Tasks for Claude Code
-
-```
-Task references: CMD-1, CMD-2, CMD-3, CMD-4, CMD-5 from PROTOCOL.md
-```
-
-### Success criteria
-
-- [ ] Can create a queue on SMP server (NEW -> IDS)
-- [ ] Can subscribe to a queue (SUB)
-- [ ] Can send a message to a queue (SEND -> OK)
-- [ ] Can receive a message from a queue (MSG event)
-- [ ] Can acknowledge message receipt (ACK)
-- [ ] All commands have encode/decode unit tests
-
----
-
-## Season 4: Connection flow
-
-**Goal:** Full connection establishment from browser to SimpleX app via contact address.
-
-### Scope
-
+- `smp-web/src/address.ts` - SimpleX contact address URI parser
 - `smp-web/src/connection.ts` - Connection manager
   - Parse SimpleX contact address URI
   - Create queue pair (two NEW commands)
   - X25519 key exchange
   - Send connection request
   - Handle connection confirmation
-- `smp-web/src/agent.ts` - Minimal SMP agent
-  - Connection state machine: NEW -> PENDING -> CONNECTED -> CLOSED
+- `smp-web/src/state.ts` - Connection state machine
+  - NEW -> PENDING -> CONFIRMED -> CONNECTED -> CLOSED
   - Queue pair management
   - Message routing (incoming MSG -> correct connection)
 
@@ -215,7 +173,7 @@ Task references: CONN-1, CONN-2, CONN-3, CONN-4 from PROTOCOL.md
 
 ### Success criteria
 
-- [ ] Can parse a SimpleX contact address link
+- [ ] Can parse a SimpleX contact address link (both simplex:/ and https:// formats)
 - [ ] Browser creates queue pair on SMP server
 - [ ] Connection request reaches SimpleX mobile/desktop app
 - [ ] Support team can accept connection
@@ -402,25 +360,15 @@ After Season 8, GoChat's SMP profile is production-ready. The GRP profile develo
 
 **Goal:** Implement the Noise Protocol transport layer for the GRP profile.
 
-This is the beginning of GoChat's high-security communication profile. The GRP profile speaks the GoRelay Protocol exclusively through GoRelay infrastructure, starting with the Noise transport foundation.
-
 ### Scope
 
 - `smp-web/src/grp/transport.ts` - GRP transport class implementing `ChatTransport`
-  - Noise_IK_25519_ChaChaPoly_BLAKE2s (primary pattern, server key pre-known)
+  - Noise_IK_25519_ChaChaPoly_BLAKE2s
   - Noise_XX fallback for first-contact scenarios
-  - Protocol identifier: "GRP/1" as the Prologue
   - No cipher negotiation - fixed suite per protocol version
   - Rekeying every 2-5 minutes or every 1000 messages
-- Browser Noise implementation via @noble/ciphers (ChaCha20-Poly1305) and @noble/hashes (BLAKE2s)
+- Browser Noise implementation via @noble/ciphers and @noble/hashes
 - Connect to GoRelay server on port 7443 via WSS
-- Noise handshake inside WebSocket (WSS for browser cert acceptance, Noise for actual security)
-
-### Tasks for Claude Code
-
-```
-Task references: GRP-1 from PROTOCOL.md
-```
 
 ### Success criteria
 
@@ -428,12 +376,11 @@ Task references: GRP-1 from PROTOCOL.md
 - [ ] Noise IK handshake completes against GoRelay server
 - [ ] Can send/receive 16KB blocks through Noise-encrypted channel
 - [ ] Rekeying works on timer and message count thresholds
-- [ ] Profile switching works at runtime (swap SMP transport for GRP transport)
+- [ ] Profile switching works at runtime
 
 ### Prerequisites
 
 - GoRelay must have GRP listener implemented (GoRelay Phase 4)
-- @noble/ciphers and @noble/hashes confirmed working for Noise cipher suite
 
 ---
 
@@ -444,20 +391,8 @@ Task references: GRP-1 from PROTOCOL.md
 ### Scope
 
 - Hybrid X25519 + ML-KEM-768 key exchange in the Noise handshake
-  - ML-KEM-768 targets NIST Security Level 3 (AES-192 equivalent)
-  - Not optional, cannot be disabled - handshake aborts if ML-KEM fails
-  - Combination via HKDF: ML-KEM secret first (FIPS ordering), then X25519 secret
-- Evaluate and implement ML-KEM-768 for the browser
-  - Option A: Pure JS implementation (@noble-style, auditable)
-  - Option B: WASM-compiled Rust/C (better side-channel resistance)
-  - Option C: Hybrid approach (WASM for ML-KEM, JS for classical)
-- Total handshake overhead: ~2,336 bytes (vs 64 bytes for X25519 alone)
-
-### Tasks for Claude Code
-
-```
-Task references: GRP-2 from PROTOCOL.md
-```
+- ML-KEM-768 browser implementation evaluation and selection
+- Total handshake overhead: ~2,336 bytes
 
 ### Success criteria
 
@@ -470,7 +405,6 @@ Task references: GRP-2 from PROTOCOL.md
 ### Prerequisites
 
 - GoRelay must have ML-KEM-768 hybrid exchange implemented (GoRelay Phase 4)
-- Browser ML-KEM library evaluated and selected
 
 ---
 
@@ -480,26 +414,15 @@ Task references: GRP-2 from PROTOCOL.md
 
 ### Scope
 
-- Two-hop relay architecture
-  - Every GRP message passes through two GoRelay servers
-  - Relay A sees sender IP but not destination queue
-  - Relay B sees destination queue but not sender IP
-  - Neither server alone can link sender to recipient
-- SMP routing commands: PFWD, RFWD, RRES, PRES
-- Per-message ephemeral key for s2d encryption (prevents cross-queue correlation)
-- Five encryption layers per message: e2e, s2d, f2d, Noise transport, storage AES-256-GCM
-- Cover traffic integration (Poisson-distributed dummy messages from GoRelay)
-
-### Tasks for Claude Code
-
-```
-Task references: GRP-3 from PROTOCOL.md
-```
+- Two-hop relay architecture via PFWD/RFWD/RRES/PRES commands
+- Per-message ephemeral key for s2d encryption
+- Five encryption layers per message
+- Cover traffic integration
 
 ### Success criteria
 
 - [ ] Messages route through two GoRelay servers
-- [ ] Neither server has complete metadata (sender + destination)
+- [ ] Neither server has complete metadata
 - [ ] Per-message ephemeral keys prevent cross-queue correlation
 - [ ] Cover traffic indistinguishable from real messages
 - [ ] Latency acceptable (< 50ms added for same-region servers)
@@ -515,15 +438,13 @@ Task references: GRP-3 from PROTOCOL.md
 
 **Goal:** Implement the Triple Shield defense layer and additional GRP features.
 
-These are long-term goals that depend on GoRelay Phase 6 completion.
-
 ### Potential future seasons
 
 - **Triple Shield 6a:** Zero-Knowledge Queue Authentication (Schnorr DLOG via Fiat-Shamir)
 - **Triple Shield 6b:** Shamir's Secret Sharing 2-of-3 across servers
 - **Triple Shield 6c:** Steganographic Transport (Pluggable Transports: HTTPS, WebSocket, meek, obfs4)
 - **Double Ratchet encryption** - Full Signal-protocol-level forward secrecy
-- **File sharing** - Send images/files via XFTP protocol (already in xftp-web)
+- **File sharing** - Send images/files via XFTP protocol
 - **Typing indicators** - Show when support team is typing
 - **Bot integration** - Automated responses for common questions
 - **Push notifications** - Browser notifications for new messages
@@ -539,8 +460,8 @@ These are long-term goals that depend on GoRelay Phase 6 completion.
 |:-------|:------|:-----------|:-----------|
 | S1 | Planning and docs | Protocol, research, season plan, dual-profile design | - |
 | S2 | WebSocket transport | `transport.ts` (ChatTransport), `client.ts` | S1 |
-| S3 | SMP commands | `commands.ts`, unit tests | S2 |
-| S4 | Connection flow | `connection.ts`, `agent.ts` | S3 |
+| S3 | SMP commands | `commands.ts`, typed client, mock server, 187 tests | S2 |
+| S4 | Connection flow | `address.ts`, `connection.ts`, `state.ts` | S3 |
 | S5 | E2E encryption | `crypto/e2e.ts`, Web Worker, key storage | S4 |
 | S6 | Chat UI (Intercom-level) | Animations, encryption badge, accessibility, SharedWorker | S4 (S5 in parallel) |
 | S7 | Website integration | Full SimpleGo integration, mobile, SPA | S5 + S6 |
@@ -564,3 +485,4 @@ These are long-term goals that depend on GoRelay Phase 6 completion.
 | 2026-03-25 | Season plan created by Prinzessin Mausi. Defined 8 seasons covering planning through production. |
 | 2026-03-25 | Season 2 complete. Marked S1 and S2 complete, S3 current. Updated Season 2 success criteria. |
 | 2026-03-25 | Dual-profile update. Expanded Season 1 deliverables with dual-profile design, deep research, community contact, GPG signing. Added key decisions 3-11 (dual-profile, ChatTransport, @noble crypto, Intercom-level UI, no mobile app). Expanded Season 6 scope from minimal to Intercom-level with animations, encryption badge, accessibility, SharedWorker. Added Seasons 9-11 for GRP profile (Noise transport, ML-KEM-768 post-quantum, two-hop relay routing). Added Season 12+ for Triple Shield and future features. Updated quick reference with GRP dependency chain. Added ground rule. |
+| 2026-03-25 | Season 3 complete. 4 tasks, 4 PRs (#4-#7), 187 tests. Marked S3 complete with full deliverables and success criteria. Marked S4 current. Updated quick reference S3 output. |
