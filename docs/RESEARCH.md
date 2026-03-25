@@ -103,6 +103,33 @@ The GRP profile mandates hybrid X25519 + ML-KEM-768 key exchange. This creates a
 
 Go 1.24's stdlib includes FIPS-validated ML-KEM-768 - GoRelay uses this server-side. The browser needs an equivalent. This is an open research question tracked as GRP-2 in the protocol document.
 
+### 2.6 Crypto algorithms verified in practice (Season 4)
+
+During Season 4, the SimpleGo team (an independent C implementation of the SimpleX protocol) provided exact crypto specifications from their working implementation and packet captures. The following was confirmed:
+
+| Algorithm | Usage | Library |
+|:----------|:------|:--------|
+| X448 (Curve448) | Double Ratchet key exchange, X3DH | @noble/curves/ed448 |
+| X25519 (Curve25519) | Per-queue NaCl crypto_box (Layer 1) | @noble/curves/ed25519 |
+| Ed25519 | SMP command authorization | @noble/curves/ed25519 |
+| AES-256-GCM | Double Ratchet body + header encryption | @noble/ciphers/aes |
+| XSalsa20-Poly1305 | NaCl crypto_box (SMP Layer 1) | @noble/ciphers |
+| HKDF-SHA512 | X3DH key derivation ("SimpleXX3DH") | @noble/hashes/hkdf |
+| HKDF-SHA256 | Ratchet chain key derivation ("SimpleXMK"/"SimpleXCK") | @noble/hashes/hkdf |
+| Zstd (level 3) | connInfo payload compression | zstd-codec |
+
+**Critical finding:** SimpleX uses X448 (not X25519) for the Double Ratchet layer. This is a different curve than the per-queue NaCl layer. Confusing the two was documented as one of SimpleGo's earliest implementation bugs. GoChat uses both: X25519 for Layer 1 (SMP transport encryption), X448 for Ratchet (E2E encryption).
+
+**X3DH variant:** SimpleX uses a modified symmetric 4-DH scheme, not Signal's 3-DH. Both sides generate two X448 key pairs, producing four DH shared secrets that are concatenated and fed into HKDF-SHA512 with salt=zeros(32) and info="SimpleXX3DH". This produces 96 bytes split into Root Key (32) + Header Key (32) + Next Header Key (32).
+
+**Agent confirmation format (from SimpleGo packet captures):**
+- agentVersion = 7 (2 bytes Big-Endian)
+- 'C' confirmation tag (1 byte)
+- Just(e2eEncryption_): e2e version v3-v3, two X448 SPKI keys (68 bytes each, OID 1.3.101.111), optional KEM key
+- encConnInfo: zstd-compressed JSON (ChatMessage v1-16, x.info event with profile)
+
+The @noble ecosystem covers all required algorithms from a single audited source.
+
 ---
 
 ## 3. Security analysis
@@ -318,6 +345,9 @@ The combination of both profiles in a single chat interface - selectable per con
 - **WebSocket architecture:** SharedWorker layer for tab persistence, managing connections to both SMP and GoRelay servers.
 - **ChatTransport interface from day one:** All transport code goes through the abstract interface. This ensures GRP can be added later without touching application-level code.
 - **GRP as extension, not replacement:** GoChat does not replace SimpleX. It fills the browser gap. The GRP profile extends the SimpleX ecosystem for high-security environments via GoRelay's dual-protocol bridge.
+- **X448 for Ratchet, X25519 for NaCl:** Verified via SimpleGo team. Two different elliptic curves for two different encryption layers. This is non-negotiable - the SimpleX app expects X448 for ratchet parameters.
+- **Agent envelope format:** Confirmed by SimpleGo team from actual packet captures: agentVersion=7, 'C' confirmation tag, e2e version v3-v3 with X448 SPKI keys (68 bytes each, OID 1.3.101.111).
+- **Zstd always required:** Even the first connection request uses zstd compression for connInfo. Verified by SimpleGo team.
 
 ### Modified decisions from initial planning
 
@@ -365,3 +395,4 @@ The combination of both profiles in a single chat interface - selectable per con
 |------|--------|
 | 2026-03-25 | Initial research document. Comprehensive analysis of browser crypto, security, design, and competitive landscape. |
 | 2026-03-25 | Dual-profile update. Added GRP security context throughout, expanded competitive analysis with dual-profile positioning, added post-quantum browser crypto section, referenced GoRelay research documents, updated architectural decisions with ChatTransport interface and dual-profile as key Season 1 decision. |
+| 2026-03-25 | Season 4 crypto verification. Added Section 2.6 documenting all crypto algorithms confirmed by SimpleGo team. X448 mandatory for ratchet, X25519 for NaCl Layer 1 only. Added X3DH variant details and agent confirmation format. Updated architectural decisions with three new verified findings. |
