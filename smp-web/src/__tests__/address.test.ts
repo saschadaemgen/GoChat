@@ -424,3 +424,63 @@ describe("Version range edge cases", () => {
       .toThrow(ContactAddressError)
   })
 })
+
+// -- Real SimpleX app contact URIs (double-encoding regression)
+
+describe("Real SimpleX app contact URI parsing", () => {
+  const REAL_SIMPLEX_URI =
+    "https://simplex.chat/contact#/?v=2-7&smp=smp%3A%2F%2F6iIcWT_dF2zN_w5xzZEY7HI2Prbh3ldP07YTyDexPjE%3D%40smp10.simplex.im%2Fo9snLUQd6MlAiq7n3nFtB9r6jSqj8FE7%23%2F%3Fv%3D1-4%26dh%3DMCowBQYDK2VuAyEABo11ArKXGHb9zoz_76yzv0fWBdYnSJcm__i0uZAy_38%253D%26q%3Dc%26srv%3Drb2pbttocvnbrngnwziclp2f4ckjq65kebafws6g4hy22cdaiv5dwjqd.onion"
+
+  it("parses real SimpleX app contact URI with double-encoded parameters", () => {
+    const result = parseContactAddress(REAL_SIMPLEX_URI)
+    expect(result.format).toBe("full")
+  })
+
+  it("extracts correct server identity from real URI", () => {
+    const result = parseContactAddress(REAL_SIMPLEX_URI)
+    if (result.format !== "full") throw new Error("Expected full format")
+    expect(result.data.smpQueues[0].server.serverIdentity).toBe("6iIcWT_dF2zN_w5xzZEY7HI2Prbh3ldP07YTyDexPjE=")
+  })
+
+  it("extracts correct host from real URI", () => {
+    const result = parseContactAddress(REAL_SIMPLEX_URI)
+    if (result.format !== "full") throw new Error("Expected full format")
+    expect(result.data.smpQueues[0].server.hosts).toEqual(["smp10.simplex.im"])
+  })
+
+  it("extracts correct queue ID from real URI", () => {
+    const result = parseContactAddress(REAL_SIMPLEX_URI)
+    if (result.format !== "full") throw new Error("Expected full format")
+    expect(result.data.smpQueues[0].senderId).toBe("o9snLUQd6MlAiq7n3nFtB9r6jSqj8FE7")
+  })
+
+  it("extracts DH key with correct base64url padding", () => {
+    const result = parseContactAddress(REAL_SIMPLEX_URI)
+    if (result.format !== "full") throw new Error("Expected full format")
+    // The DH key ends with = padding which was double-encoded as %253D -> %3D -> =
+    expect(result.data.smpQueues[0].dhPublicKey).toBe("MCowBQYDK2VuAyEABo11ArKXGHb9zoz_76yzv0fWBdYnSJcm__i0uZAy_38=")
+  })
+
+  it("extracts correct SMP version range from real URI", () => {
+    const result = parseContactAddress(REAL_SIMPLEX_URI)
+    if (result.format !== "full") throw new Error("Expected full format")
+    expect(result.data.smpQueues[0].smpVersion).toEqual({min: 1, max: 4})
+  })
+
+  it("extracts correct agent version range from real URI", () => {
+    const result = parseContactAddress(REAL_SIMPLEX_URI)
+    if (result.format !== "full") throw new Error("Expected full format")
+    expect(result.data.agentVersion).toEqual({min: 2, max: 7})
+  })
+
+  it("parses a second real URI with different server", () => {
+    // Another typical SimpleX contact URI with standard encoding
+    const uri = "https://simplex.chat/contact#/?v=1-7&smp=smp%3A%2F%2FabcDEF123_-%3D%40smp.example.com%2FqueueID123%23%2F%3Fv%3D1-7%26dh%3DsomeBase64urlKey"
+    const result = parseContactAddress(uri)
+    expect(result.format).toBe("full")
+    if (result.format !== "full") throw new Error("Expected full format")
+    expect(result.data.smpQueues[0].server.hosts).toEqual(["smp.example.com"])
+    expect(result.data.smpQueues[0].senderId).toBe("queueID123")
+    expect(result.data.smpQueues[0].dhPublicKey).toBe("someBase64urlKey")
+  })
+})
