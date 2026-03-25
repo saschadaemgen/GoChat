@@ -89,12 +89,167 @@ export function decodeLNK(d: Decoder): LNKResponse {
   return {senderId, encFixedData, encUserData}
 }
 
+// -- Error types (mirrors SMP v9 ABNF error tree)
+
+export type HandshakeError = "PARSE" | "IDENTITY" | "BAD_AUTH"
+
+export type TransportError =
+  | "BLOCK"
+  | "VERSION"
+  | "LARGE_MSG"
+  | "SESSION"
+  | "NO_AUTH"
+  | {type: "HANDSHAKE"; handshakeError: HandshakeError}
+
+export type BrokerError =
+  | {type: "RESPONSE"; info: string}
+  | {type: "UNEXPECTED"; info: string}
+  | {type: "NETWORK"}
+  | {type: "TIMEOUT"}
+  | {type: "HOST"}
+  | {type: "TRANSPORT"; transportError: TransportError}
+
+export type ProxyError =
+  | {type: "PROTOCOL"; error: SMPError}
+  | {type: "BASIC_AUTH"}
+  | {type: "NO_SESSION"}
+  | {type: "BROKER"; brokerError: BrokerError}
+
+export type CMDError =
+  | "SYNTAX"
+  | "PROHIBITED"
+  | "NO_AUTH"
+  | "HAS_AUTH"
+  | "NO_ENTITY"
+  | "UNKNOWN"
+
+export type SMPError =
+  | {type: "BLOCK"}
+  | {type: "SESSION"}
+  | {type: "AUTH"}
+  | {type: "QUOTA"}
+  | {type: "LARGE_MSG"}
+  | {type: "INTERNAL"}
+  | {type: "CMD"; cmdError: CMDError}
+  | {type: "PROXY"; proxyError: ProxyError}
+
+// -- Error decoders
+
+function decodeCMDError(d: Decoder): CMDError {
+  const tag = readTag(d)
+  switch (tag) {
+    case "SYNTAX": return "SYNTAX"
+    case "PROHIBITED": return "PROHIBITED"
+    case "NO_AUTH": return "NO_AUTH"
+    case "HAS_AUTH": return "HAS_AUTH"
+    case "NO_ENTITY": return "NO_ENTITY"
+    default: return "UNKNOWN"
+  }
+}
+
+function decodeTransportError(d: Decoder): TransportError {
+  const tag = readTag(d)
+  switch (tag) {
+    case "BLOCK": return "BLOCK"
+    case "VERSION": return "VERSION"
+    case "LARGE_MSG": return "LARGE_MSG"
+    case "SESSION": return "SESSION"
+    case "NO_AUTH": return "NO_AUTH"
+    case "HANDSHAKE": {
+      readSpace(d)
+      const hsTag = readTag(d)
+      let handshakeError: HandshakeError
+      switch (hsTag) {
+        case "PARSE": handshakeError = "PARSE"; break
+        case "IDENTITY": handshakeError = "IDENTITY"; break
+        case "BAD_AUTH": handshakeError = "BAD_AUTH"; break
+        default: handshakeError = "PARSE"; break
+      }
+      return {type: "HANDSHAKE", handshakeError}
+    }
+    default: return "BLOCK"
+  }
+}
+
+function decodeBrokerError(d: Decoder): BrokerError {
+  const tag = readTag(d)
+  switch (tag) {
+    case "RESPONSE": {
+      readSpace(d)
+      const info = decodeBytes(d)
+      let s = ""
+      for (const b of info) s += String.fromCharCode(b)
+      return {type: "RESPONSE", info: s}
+    }
+    case "UNEXPECTED": {
+      readSpace(d)
+      const info = decodeBytes(d)
+      let s = ""
+      for (const b of info) s += String.fromCharCode(b)
+      return {type: "UNEXPECTED", info: s}
+    }
+    case "NETWORK": return {type: "NETWORK"}
+    case "TIMEOUT": return {type: "TIMEOUT"}
+    case "HOST": return {type: "HOST"}
+    case "TRANSPORT": {
+      readSpace(d)
+      return {type: "TRANSPORT", transportError: decodeTransportError(d)}
+    }
+    default: return {type: "NETWORK"}
+  }
+}
+
+function decodeProxyError(d: Decoder): ProxyError {
+  const tag = readTag(d)
+  switch (tag) {
+    case "PROTOCOL": {
+      readSpace(d)
+      return {type: "PROTOCOL", error: decodeError(d)}
+    }
+    case "BASIC_AUTH": return {type: "BASIC_AUTH"}
+    case "NO_SESSION": return {type: "NO_SESSION"}
+    case "BROKER": {
+      readSpace(d)
+      return {type: "BROKER", brokerError: decodeBrokerError(d)}
+    }
+    default: return {type: "NO_SESSION"}
+  }
+}
+
+export function decodeError(d: Decoder): SMPError {
+  const tag = readTag(d)
+  switch (tag) {
+    case "BLOCK": return {type: "BLOCK"}
+    case "SESSION": return {type: "SESSION"}
+    case "AUTH": return {type: "AUTH"}
+    case "QUOTA": return {type: "QUOTA"}
+    case "LARGE_MSG": return {type: "LARGE_MSG"}
+    case "INTERNAL": return {type: "INTERNAL"}
+    case "CMD": {
+      readSpace(d)
+      return {type: "CMD", cmdError: decodeCMDError(d)}
+    }
+    case "PROXY": {
+      readSpace(d)
+      return {type: "PROXY", proxyError: decodeProxyError(d)}
+    }
+    default: return {type: "INTERNAL"}
+  }
+}
+
 // -- Response dispatch (same pattern as xftp-web decodeResponse)
 
 export type SMPResponse =
-  | {type: "LNK", response: LNKResponse}
+  | {type: "LNK"; response: LNKResponse}
   | {type: "OK"}
-  | {type: "ERR", message: string}
+  | {type: "IDS"; recipientId: Uint8Array; senderId: Uint8Array; serverDhKey: Uint8Array; sndSecure: boolean}
+  | {type: "MSG"; msgId: Uint8Array; encryptedBody: Uint8Array}
+  | {type: "NID"; notifierId: Uint8Array; serverNtfDhKey: Uint8Array}
+  | {type: "NMSG"; nmsgNonce: Uint8Array; encryptedMeta: Uint8Array}
+  | {type: "INFO"; info: string}
+  | {type: "PONG"}
+  | {type: "END"}
+  | {type: "ERR"; error: SMPError}
 
 export function decodeResponse(d: Decoder): SMPResponse {
   const tag = readTag(d)
@@ -103,11 +258,55 @@ export function decodeResponse(d: Decoder): SMPResponse {
       readSpace(d)
       return {type: "LNK", response: decodeLNK(d)}
     }
-    case "OK": return {type: "OK"}
+    case "OK":
+      return {type: "OK"}
+    case "IDS": {
+      readSpace(d)
+      const recipientId = decodeBytes(d)
+      const senderId = decodeBytes(d)
+      const serverDhKey = decodeBytes(d)
+      // sndSecure is optional (v9+), default false
+      let sndSecure = false
+      if (d.remaining() > 0) {
+        const flag = d.anyByte()
+        sndSecure = flag === 0x54 // "T"
+      }
+      return {type: "IDS", recipientId, senderId, serverDhKey, sndSecure}
+    }
+    case "MSG": {
+      readSpace(d)
+      const msgId = decodeBytes(d)
+      const encryptedBody = d.takeAll()
+      return {type: "MSG", msgId, encryptedBody}
+    }
+    case "NID": {
+      readSpace(d)
+      const notifierId = decodeBytes(d)
+      const serverNtfDhKey = decodeBytes(d)
+      return {type: "NID", notifierId, serverNtfDhKey}
+    }
+    case "NMSG": {
+      readSpace(d)
+      const nmsgNonce = d.take(24)
+      const encryptedMeta = d.takeAll()
+      return {type: "NMSG", nmsgNonce, encryptedMeta}
+    }
+    case "INFO": {
+      readSpace(d)
+      const bytes = d.takeAll()
+      let info = ""
+      for (const b of bytes) info += String.fromCharCode(b)
+      return {type: "INFO", info}
+    }
+    case "PONG":
+      return {type: "PONG"}
+    case "END":
+      return {type: "END"}
     case "ERR": {
       readSpace(d)
-      return {type: "ERR", message: readTag(d)}
+      return {type: "ERR", error: decodeError(d)}
     }
-    default: throw new Error("unknown SMP response: " + tag)
+    default:
+      throw new Error("unknown SMP response: " + tag)
   }
 }
