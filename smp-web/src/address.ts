@@ -131,7 +131,9 @@ export function parseSMPServer(serverStr: string): SMPServer {
     throw new ContactAddressError("INVALID_SMP_URI", "Missing @ in server address: " + serverStr)
   }
 
-  const identity = serverStr.substring(0, atIdx)
+  let identity = serverStr.substring(0, atIdx)
+  // URL-decode identity in case it was double-encoded in the outer URI
+  try { identity = decodeURIComponent(identity) } catch (_e) { /* keep original */ }
   validateBase64url(identity)
 
   const hostPart = serverStr.substring(atIdx + 1)
@@ -196,28 +198,44 @@ export function parseSMPQueueURI(uri: string): SMPQueueURI {
     throw new ContactAddressError("INVALID_SMP_URI", "Missing fragment (#/?) in SMP URI")
   }
 
-  const senderId = pathAndFragment.substring(0, fragIdx)
+  let senderId = pathAndFragment.substring(0, fragIdx)
+  // URL-decode senderId in case it was double-encoded in the outer URI
+  try { senderId = decodeURIComponent(senderId) } catch (_e) { /* keep original */ }
   validateBase64url(senderId)
 
   const paramsStr = pathAndFragment.substring(fragIdx + 3) // skip "#/?"
   const params = parseQueryParams(paramsStr)
 
+  // URL-decode parameter values. When an SMP queue URI is embedded inside
+  // a contact address (smp= query param), it gets URL-encoded. The outer
+  // parser decodes once, but the inner URI's own parameter values may still
+  // contain URL-encoded characters (e.g. %3D for = in base64 padding).
+  // We decode each value here to handle both single and double encoding.
+  const decodedParams = new Map<string, string>()
+  for (const [k, v] of params) {
+    try {
+      decodedParams.set(k, decodeURIComponent(v))
+    } catch (_e) {
+      decodedParams.set(k, v) // keep original if decode fails
+    }
+  }
+
   // Version
-  const vStr = params.get("v")
+  const vStr = decodedParams.get("v")
   if (!vStr) {
     throw new ContactAddressError("INVALID_VERSION", "Missing v= in SMP queue URI")
   }
   const smpVersion = parseVersionRange(vStr)
 
   // DH key
-  const dhKey = params.get("dh")
+  const dhKey = decodedParams.get("dh")
   if (!dhKey) {
     throw new ContactAddressError("MISSING_DH_KEY", "Missing dh= in SMP queue URI")
   }
   validateBase64url(dhKey)
 
   // sndSecure
-  const sndSecure = params.get("k") === "s"
+  const sndSecure = decodedParams.get("k") === "s"
 
   return {server, senderId, dhPublicKey: dhKey, smpVersion, sndSecure}
 }
