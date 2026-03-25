@@ -56,3 +56,23 @@ export {connectSMP, encodePING} from "./client.js"
 // SMPClientAgent with connection pooling and reconnection
 export type {SMPClientAgent, SMPAgentConfig} from "./agent.js"
 export {newSMPAgent, calculateBackoff, serverKey} from "./agent.js"
+
+// SMP command encoders (Season 3)
+export type {NewQueueParams, SendParams, EnableNotificationsParams} from "./commands.js"
+export {
+  encodeNEW,
+  encodeSUB,
+  encodeKEY,
+  encodeSKEY,
+  encodeSEND,
+  encodeACK,
+  encodeDEL,
+  encodeOFF,
+  encodeGET,
+  encodeNKEY,
+  encodeNDEL,
+  encodeNSUB,
+  encodeQUE,
+} from "./commands.js"
+// Note: encodePING is already exported from client.js above.
+// commands.ts also exports encodePING for standalone use.
