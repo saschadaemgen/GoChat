@@ -284,8 +284,8 @@ We develop in seasons - each with a clear goal, defined scope, and a protocol do
 | Season | Focus | Status |
 |:-------|:------|:-------|
 | **S1** | Planning, documentation, and research | Complete |
-| **S2** | WebSocket transport client (SMP) | Current |
-| **S3** | SMP commands | Planned |
+| **S2** | WebSocket transport client (SMP) | Complete |
+| **S3** | SMP commands | Current |
 | **S4** | Connection flow (browser to SimpleX app) | Planned |
 | **S5** | End-to-end encryption (@noble/curves) | Planned |
 | **S6** | Chat UI (Intercom-level design) | Planned |
@@ -314,6 +314,9 @@ GoChat/
 |       +-- protocol.ts             # SMP transmission encode/decode, LGET/LNK
 |       +-- types.ts                # ChatTransport interface, SMP types
 |       +-- transport.ts            # SMPWebSocketTransport (16KB block framing)
+|       +-- handshake.ts            # SMP ServerHello/ClientHello encode/decode
+|       +-- client.ts               # SMPClient (handshake, session, dispatch)
+|       +-- agent.ts                # SMPClientAgent (connection pool, reconnection)
 +-- xftp-web/                       # Shared infrastructure (upstream)
 |   +-- src/
 |       +-- client.ts               # HTTP/2 transport, handshake, retry
@@ -414,7 +417,7 @@ We intend to contribute our WebSocket transport client and SMP command implement
 
 ## Status
 
-Season 1 (planning, documentation, and research) is complete. Season 2 (WebSocket transport) is in progress.
+Season 1 (planning) and Season 2 (WebSocket transport) are complete. Season 3 (SMP commands) is in progress.
 
 | Component | Status |
 |:----------|:-------|
@@ -423,7 +426,7 @@ Season 1 (planning, documentation, and research) is complete. Season 2 (WebSocke
 | Season plan and workflow | Done |
 | Deep research (security, design, crypto) | Done |
 | Dual-profile architecture design | Done |
-| WebSocket transport client | Season 2 (in progress) |
+| WebSocket transport client | Done |
 | SMP command implementation | Season 3 |
 | Browser-to-app connection | Season 4 |
 | End-to-end encryption | Season 5 |
