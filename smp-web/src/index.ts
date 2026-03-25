@@ -94,3 +94,20 @@ export {
   validateBase64url,
   ContactAddressError,
 } from "./address.js"
+
+// Connection state machine (Season 4)
+export type {
+  ConnectionState,
+  ConnectionAction,
+  ConnectionInfo,
+  QueuePairInfo,
+  RemotePartyInfo,
+  ConnectionError,
+  ConnectionErrorCode,
+  ConnectionStateEvent,
+  ConnectionStateListener,
+} from "./state.js"
+export {
+  ConnectionStateMachine,
+  InvalidTransitionError,
+} from "./state.js"
