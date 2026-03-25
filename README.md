@@ -283,8 +283,8 @@ We develop in seasons - each with a clear goal, defined scope, and a protocol do
 |:-------|:------|:-------|
 | **S1** | Planning, documentation, and research | Complete |
 | **S2** | WebSocket transport client (SMP) | Complete |
-| **S3** | SMP commands | Current |
-| **S4** | Connection flow (browser to SimpleX app) | Planned |
+| **S3** | SMP commands (187 tests) | Complete |
+| **S4** | Connection flow (browser to SimpleX app) | Current |
 | **S5** | End-to-end encryption (@noble/curves) | Planned |
 | **S6** | Chat UI (Intercom-level design) | Planned |
 | **S7** | SimpleGo website integration | Planned |
@@ -308,13 +308,15 @@ GoChat/
 +-- .claude/                        # Claude Code project instructions
 +-- smp-web/                        # SMP browser client (spike + our work)
 |   +-- src/
-|       +-- index.ts                # Re-exports encoding primitives
-|       +-- protocol.ts             # SMP transmission encode/decode, LGET/LNK
+|       +-- index.ts                # Re-exports all public API
 |       +-- types.ts                # ChatTransport interface, SMP types
 |       +-- transport.ts            # SMPWebSocketTransport (16KB block framing)
 |       +-- handshake.ts            # SMP ServerHello/ClientHello encode/decode
-|       +-- client.ts               # SMPClient (handshake, session, dispatch)
+|       +-- client.ts               # SMPClient (handshake, session, typed commands, corrId dispatch)
 |       +-- agent.ts                # SMPClientAgent (connection pool, reconnection)
+|       +-- commands.ts             # SMP command encoders (14 commands)
+|       +-- protocol.ts             # SMP transmission encode/decode, response decoder
+|       +-- __tests__/              # 187 tests across 8 files
 +-- xftp-web/                       # Shared infrastructure (upstream)
 |   +-- src/
 |       +-- client.ts               # HTTP/2 transport, handshake, retry
@@ -327,6 +329,8 @@ GoChat/
 |   +-- seasons/
 |       +-- SEASON-PLAN.md          # Season overview and workflow
 |       +-- SEASON-01-planning.md   # Season 1 learnings
+|       +-- SEASON-02-transport.md  # Season 2 learnings
+|       +-- SEASON-03-commands.md   # Season 3 learnings
 +-- LICENSE                         # AGPL-3.0
 +-- README.md
 ```
@@ -415,7 +419,7 @@ We intend to contribute our WebSocket transport client and SMP command implement
 
 ## Status
 
-Season 1 (planning) and Season 2 (WebSocket transport) are complete. Season 3 (SMP commands) is in progress.
+Seasons 1 through 3 are complete. Season 4 (connection flow) is in progress.
 
 | Component | Status |
 |:----------|:-------|
@@ -425,7 +429,7 @@ Season 1 (planning) and Season 2 (WebSocket transport) are complete. Season 3 (S
 | Deep research (security, design, crypto) | Done |
 | Dual-profile architecture design | Done |
 | WebSocket transport client | Done |
-| SMP command implementation | Season 3 |
+| SMP command implementation | Done (187 tests) |
 | Browser-to-app connection | Season 4 |
 | End-to-end encryption | Season 5 |
 | Chat UI (Intercom-level) | Season 6 |
