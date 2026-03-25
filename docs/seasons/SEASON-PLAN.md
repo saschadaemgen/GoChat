@@ -55,7 +55,7 @@ docs/
 
 ## Season 1: Planning and documentation (CURRENT)
 
-**Status:** Nearing completion  
+**Status:** Complete  
 **Goal:** Complete project analysis, fork setup, dual-profile architecture design, deep research, community contact, roadmap, and workflow definition.
 
 ### Deliverables
@@ -111,6 +111,9 @@ docs/
 
 **Goal:** Browser can establish a WebSocket connection to an SMP server, complete the handshake, and send/receive raw SMP blocks. The transport class must implement the ChatTransport interface.
 
+**Status:** Complete
+**Result:** 3 tasks, 3 PRs merged, all tests passing. Transport layer stack fully operational.
+
 **This is the foundation - nothing else works without it.**
 
 ### Scope
@@ -135,12 +138,12 @@ Task references: WS-1, WS-2, WS-3, SEC-5 from PROTOCOL.md
 
 ### Success criteria
 
-- [ ] Browser opens WebSocket to SMP server on port 443
-- [ ] Handshake completes successfully
-- [ ] PING/PONG keepalive works
-- [ ] Connection auto-reconnects after drop
-- [ ] Can send a raw SMP block and receive a response
-- [ ] Transport class implements ChatTransport interface
+- [x] Browser opens WebSocket to SMP server on port 443
+- [x] Handshake completes successfully
+- [x] PING/PONG keepalive works
+- [x] Connection auto-reconnects after drop
+- [x] Can send a raw SMP block and receive a response
+- [x] Transport class implements ChatTransport interface
 
 ### What to watch out for
 
@@ -155,6 +158,8 @@ Task references: WS-1, WS-2, WS-3, SEC-5 from PROTOCOL.md
 ## Season 3: SMP commands
 
 **Goal:** Implement all SMP commands needed for basic messaging.
+
+**Status:** Current
 
 ### Scope
 
@@ -557,4 +562,5 @@ These are long-term goals that depend on GoRelay Phase 6 completion.
 | Date | Change |
 |------|--------|
 | 2026-03-25 | Season plan created by Prinzessin Mausi. Defined 8 seasons covering planning through production. |
+| 2026-03-25 | Season 2 complete. Marked S1 and S2 complete, S3 current. Updated Season 2 success criteria. |
 | 2026-03-25 | Dual-profile update. Expanded Season 1 deliverables with dual-profile design, deep research, community contact, GPG signing. Added key decisions 3-11 (dual-profile, ChatTransport, @noble crypto, Intercom-level UI, no mobile app). Expanded Season 6 scope from minimal to Intercom-level with animations, encryption badge, accessibility, SharedWorker. Added Seasons 9-11 for GRP profile (Noise transport, ML-KEM-768 post-quantum, two-hop relay routing). Added Season 12+ for Triple Shield and future features. Updated quick reference with GRP dependency chain. Added ground rule. |
