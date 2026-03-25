@@ -157,3 +157,7 @@ export {
   buildConnectionRequest,
   zstdCompress,
 } from "./connection-request.js"
+
+// Browser client (Season 5 Phase 2)
+export type {BrowserClientConfig, BrowserClient, ClientStatus} from "./browser-client.js"
+export {createBrowserClient} from "./browser-client.js"
