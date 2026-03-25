@@ -2,8 +2,6 @@
   <img src=".github/assets/gochat_banner.png" alt="GoChat" width="1500" height="230">
 </p>
 
-<h1 align="center">GoChat</h1>
-
 <p align="center">
   <strong>Browser-native encrypted messenger for the SimpleX ecosystem.</strong><br>
   No app install. No registration. No user IDs. End-to-end encrypted from the first message.
@@ -55,11 +53,11 @@ On the receiving end, the support team or operator has three options:
 ```
 Website visitor (browser)          Any SMP Server           Receiving end
         |                               |                        |
-        |--- WSS + SMP --------------->|                        |  SimpleX App (phone/desktop)
-        |    E2E encrypted             |--- SMP relay --------->|  GoChat Admin Panel (browser)
+        |--- WSS + SMP ---------------->|                        |  SimpleX App (phone/desktop)
+        |    E2E encrypted              |--- SMP relay --------->|  GoChat Admin Panel (browser)
         |                               |                        |  or SimpleGo terminal
-        |<-- WSS + SMP ----------------|<-- SMP relay ----------|
-        |    E2E encrypted             |                        |
+        |<-- WSS + SMP -----------------|<-- SMP relay ----------|
+        |    E2E encrypted              |                        |
 ```
 
 The Admin Panel option means the entire communication chain - customer to support - runs in the browser with E2E encryption. No app installs on either side. This is unique among support chat tools: Chatwoot, Crisp, and Intercom all have unencrypted admin interfaces.
@@ -83,13 +81,13 @@ On the receiving end, a [SimpleGo hardware device](#simplego-ecosystem) provides
 
 ```
 Website visitor (browser)          GoRelay Server           Receiving end
-        |                               |                        |
+        |                              |                        |
         |--- WSS + GRP --------------->|                        |
         |    Noise + Post-quantum      |--- GRP relay --------->|
         |    Two-hop routing           |    Cover traffic       |  SimpleGo hardware
         |    Cover traffic             |                        |  (ESP32-S3)
         |<-- WSS + GRP ----------------|<-- GRP relay ----------|
-        |                               |                        |
+        |                              |                        |
 ```
 
 ---
@@ -220,8 +218,8 @@ Full security analysis: [docs/RESEARCH.md](docs/RESEARCH.md)
 |                      SHARED WORKER                            |
 |    WebSocket Pool  /  Reconnection  /  Message Queue          |
 +---------------------------------------------------------------+
-|                    TRANSPORT LAYER                             |
-|    SMP Profile: SMP over WSS     GRP Profile: GRP over WSS   |
+|                    TRANSPORT LAYER                            |
+|    SMP Profile: SMP over WSS     GRP Profile: GRP over WSS    |
 |    (@noble/curves, NaCl)         (Noise, ML-KEM-768)          |
 +-------------------------------+-------------------------------+
 |        ANY SMP SERVER         |         GORELAY SERVER        |
@@ -379,7 +377,7 @@ The three projects cover the complete communication chain from silicon to browse
 +-----------+                      +-----------+                      +----------+
 |  GoChat   |                      |  GoRelay  |                      | SimpleGo |
 |  Browser  |--------------------->|  GRP      |--------------------->| Hardware |
-|  GRP mode |  Noise + PQ + 2-hop |  Server   |  Noise + PQ + 2-hop | ESP32-S3 |
+|  GRP mode |  Noise + PQ + 2-hop |  Server    |  Noise + PQ + 2-hop  | ESP32-S3 |
 +-----------+                      +-----------+                      +----------+
 ```
 
