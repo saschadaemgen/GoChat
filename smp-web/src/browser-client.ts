@@ -28,6 +28,13 @@ export type ClientStatus = "offline" | "connecting" | "connected" | "error"
 export interface BrowserClientConfig {
   /** SimpleX contact address URI of the support team */
   contactAddress: string
+  /**
+   * WebSocket server URL for the WSS proxy (e.g. 'wss://smp.simplego.dev').
+   * Browsers connect to this URL (typically port 443) which reverse-proxies
+   * to the SMP server (port 5223). If omitted, connects directly to the
+   * host:port from the contact address (only works in non-browser envs).
+   */
+  serverUrl?: string
   /** Display name shown to the support team */
   displayName?: string
   /** Callback when a message is received */
@@ -79,9 +86,18 @@ class BrowserClientImpl implements BrowserClient {
     try {
       // 1. Create agent and connection manager
       this.agent = this.config._agent ?? newSMPAgent()
+
+      // Parse serverUrl to override WebSocket connection host:port.
+      // The contact address contains the SMP protocol address (e.g. port 5223)
+      // but browsers need the WSS proxy (e.g. port 443).
+      const queueServer = this.config.serverUrl
+        ? parseServerUrl(this.config.serverUrl)
+        : undefined
+
       this.connManager = new ConnectionManager(this.agent, {
         subscribeMode: "S",
         sndSecure: true,
+        queueServer,
       })
 
       // 2. Initiate connection (parse address, create queue)
@@ -126,10 +142,15 @@ class BrowserClientImpl implements BrowserClient {
     }
 
     try {
-      // Get the SMP client for the contact queue server
+      // Get the SMP client for the contact queue server.
+      // If serverUrl is configured, use its host:port for the WebSocket
+      // connection (the WSS proxy), not the SMP protocol port.
+      const wssServer = this.config.serverUrl
+        ? parseServerUrl(this.config.serverUrl)
+        : null
       const serverAddress = {
-        host: this.conn.contactQueue.server.hosts[0],
-        port: this.conn.contactQueue.server.port,
+        host: wssServer ? wssServer.hosts[0] : this.conn.contactQueue.server.hosts[0],
+        port: wssServer ? wssServer.port : this.conn.contactQueue.server.port,
         keyHash: new Uint8Array(32), // Placeholder for MVP
       }
       const client = await this.agent!.getClient(serverAddress)
@@ -209,18 +230,26 @@ class BrowserClientImpl implements BrowserClient {
     if (!this.conn || !this.agent) return
 
     // Get the SMP client for our receiving queue's server
-    // and register a message handler
-    const contactAddress = this.conn.contactAddress
+    // and register a message handler.
+    // If serverUrl is configured, use WSS proxy host:port instead of
+    // the SMP protocol address from the contact URI.
+    const wssServer = this.config.serverUrl
+      ? parseServerUrl(this.config.serverUrl)
+      : null
+
     let serverHost: string
     let serverPort: number
 
-    if (contactAddress.format === "full") {
-      const q = contactAddress.data.smpQueues[0]
+    if (wssServer) {
+      serverHost = wssServer.hosts[0]
+      serverPort = wssServer.port
+    } else if (this.conn.contactAddress.format === "full") {
+      const q = this.conn.contactAddress.data.smpQueues[0]
       serverHost = q.server.hosts[0]
       serverPort = q.server.port
     } else {
-      serverHost = contactAddress.data.server.hosts[0]
-      serverPort = contactAddress.data.server.port
+      serverHost = this.conn.contactAddress.data.server.hosts[0]
+      serverPort = this.conn.contactAddress.data.server.port
     }
 
     const serverAddress = {
@@ -260,6 +289,42 @@ export function createBrowserClient(config: BrowserClientConfig): BrowserClient 
 }
 
 // -- Helpers
+
+/**
+ * Parse a WSS server URL into host/port/identity for ConnectionManager.
+ * Input: 'wss://smp.simplego.dev' or 'wss://smp.simplego.dev:443'
+ * Returns the shape expected by ConnectionManagerConfig.queueServer.
+ */
+function parseServerUrl(url: string): {hosts: string[]; port: number; serverIdentity: string} {
+  // Strip wss:// or https:// prefix
+  let hostPart = url
+  if (hostPart.startsWith("wss://")) hostPart = hostPart.substring(6)
+  else if (hostPart.startsWith("https://")) hostPart = hostPart.substring(8)
+
+  // Strip trailing path/slash
+  const slashIdx = hostPart.indexOf("/")
+  if (slashIdx !== -1) hostPart = hostPart.substring(0, slashIdx)
+
+  // Parse host:port
+  const colonIdx = hostPart.lastIndexOf(":")
+  let hostname: string
+  let port = 443 // Default WSS port
+
+  if (colonIdx > 0) {
+    const portCandidate = hostPart.substring(colonIdx + 1)
+    const portNum = parseInt(portCandidate, 10)
+    if (!isNaN(portNum) && portNum > 0 && portNum <= 65535 && portCandidate === String(portNum)) {
+      hostname = hostPart.substring(0, colonIdx)
+      port = portNum
+    } else {
+      hostname = hostPart
+    }
+  } else {
+    hostname = hostPart
+  }
+
+  return {hosts: [hostname], port, serverIdentity: ""}
+}
 
 function base64urlDecode(s: string): Uint8Array {
   if (!s || s.length === 0) return new Uint8Array(0)
