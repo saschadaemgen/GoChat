@@ -16,7 +16,7 @@
 **Ecosystem:** SimpleGo (hardware) / GoRelay (relay server) / GoChat (browser client)  
 **Date:** 2026-03-25  
 **Branch analyzed:** `ep/smp-web-spike` on `simplex-chat/simplexmq`  
-**Status:** Season 1 nearing completion, documentation updates in progress
+**Status:** Season 2 complete, Season 3 (SMP commands) upcoming
 
 ---
 
@@ -276,7 +276,7 @@ All transport code must implement the `ChatTransport` interface defined in secti
 
 **Tasks:**
 
-- [ ] **WS-1:** Create `smp-web/src/transport.ts` - WebSocket transport class
+- [x] **WS-1:** Create `smp-web/src/transport.ts` - WebSocket transport class
   - Implement `ChatTransport` interface
   - Connect to `wss://server:443` with SNI header for WS routing
   - Implement the SMP block-based framing over WebSocket binary messages
@@ -284,13 +284,13 @@ All transport code must implement the `ChatTransport` interface defined in secti
   - Implement heartbeat/keepalive (SMP PING/PONG)
   - Support concurrent send + async receive (SUB delivers MSG at any time)
 
-- [ ] **WS-2:** Create `smp-web/src/client.ts` - SMP client with handshake
+- [x] **WS-2:** Create `smp-web/src/client.ts` - SMP client with handshake
   - Adapt the XFTP handshake flow for SMP protocol
   - SMP uses TLS-level handshake (different from XFTP HTTP-level handshake)
   - Version negotiation with `compatibleVRange`
   - Session ID extraction for transmission encoding
 
-- [ ] **WS-3:** Connection pooling and reconnect
+- [x] **WS-3:** Connection pooling and reconnect
   - Reuse the `XFTPClientAgent` pattern from xftp-web
   - Auto-reconnect with exponential backoff (500ms base, 2x multiplier, 30s cap, 50-100% jitter)
   - Re-subscribe to queues after reconnect
@@ -646,8 +646,18 @@ Encoding uses length-prefixed byte strings (1-byte length for short, 2-byte for 
 GoChat/
   smp-web/                          # SMP browser client (spike + our work)
     src/
-      index.ts                      # Re-exports encoding primitives from xftp-web
+      index.ts                      # Re-exports all public API
+      types.ts                      # ChatTransport interface, SMPServerAddress, errors, events
+      transport.ts                  # SMPWebSocketTransport (WebSocket + 16KB block framing)
+      handshake.ts                  # SMP ServerHello/ClientHello encode/decode
+      client.ts                     # SMPClient (handshake + session + PING/PONG + dispatch)
+      agent.ts                      # SMPClientAgent (connection pool + reconnection)
       protocol.ts                   # SMP transmission encode/decode, LGET/LNK
+      __tests__/                    # Vitest unit tests
+        transport.test.ts           # 17 transport tests
+        handshake.test.ts           # Handshake encoding tests
+        client.test.ts              # Client and dispatch tests
+        agent.test.ts               # Agent pooling tests
 
   xftp-web/                         # Shared infrastructure (upstream)
     src/
@@ -807,9 +817,9 @@ GoChat is one component of the SimpleGo ecosystem for encrypted communication ac
 
 | ID | Layer | Description | Season |
 |:---|:------|:------------|:-------|
-| WS-1 | Transport | WebSocket transport class (ChatTransport) | S2 |
-| WS-2 | Transport | SMP client with handshake | S2 |
-| WS-3 | Transport | Connection pooling and reconnect | S2 |
+| WS-1 | Transport | WebSocket transport class (ChatTransport) | S2 DONE |
+| WS-2 | Transport | SMP client with handshake | S2 DONE |
+| WS-3 | Transport | Connection pooling and reconnect | S2 DONE |
 | WS-4 | Transport | SharedWorker for tab persistence | S6 |
 | CMD-1 | Commands | Queue creation (NEW/IDS) | S3 |
 | CMD-2 | Commands | Sender commands (SEND/SKEY) | S3 |
@@ -852,3 +862,4 @@ GoChat is one component of the SimpleGo ecosystem for encrypted communication ac
 |------|--------|
 | 2026-03-25 | Initial protocol document created. Analyzed `ep/smp-web-spike` branch, documented existing infrastructure, defined implementation roadmap. |
 | 2026-03-25 | Major update: added dual-profile architecture (SMP + GRP), ChatTransport interface requirement, new task categories (GRP-1 to GRP-4, SEC-1 to SEC-5, UI-6 to UI-8, WS-4), browser-specific risk assessment, ecosystem context, ground rules, task registry. |
+| 2026-03-25 | Season 2 complete. WS-1, WS-2, WS-3 implemented: SMPWebSocketTransport, SMPClient with handshake and dispatch, SMPClientAgent with exponential backoff reconnection. Updated code map and task registry. |
