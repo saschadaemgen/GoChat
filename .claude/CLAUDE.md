@@ -3,386 +3,186 @@
 ## Project
 
 GoChat is a browser-native encrypted messenger built on SimpleXMQ.
-- SMP Profile: SimpleX Messaging Protocol over WebSocket for everyday encrypted chat
-- GRP Profile: GoRelay Protocol over WebSocket for high-security environments (future, Season 9+)
-- Both profiles share the same ChatTransport interface abstraction
+- Two communication profiles: SMP (everyday) and GRP (high-security)
+- SMP Profile: SimpleX Messaging Protocol over WebSocket, compatible with all SimpleX clients
+- GRP Profile: GoRelay Protocol over WebSocket, Noise transport, mandatory post-quantum (future)
+- Built on the `ep/smp-web-spike` branch by Evgeny Poberezkin (SimpleX founder)
 - Repository: github.com/saschadaemgen/GoChat
-- Fork of: simplex-chat/simplexmq (branch ep/smp-web-spike)
 - License: AGPL-3.0
 - Author: Sascha Daemgen, IT and More Systems, Recklinghausen
-
-## Ground Rule
-
-**Nothing invented. What is missing gets asked.**
-Claude does not fabricate information, assume technical details, or fill gaps with
-speculation. If a detail is unknown, it is marked as unknown and the question is raised.
-This applies to code, documentation, protocol details, and all other output.
+- Part of the SimpleGo ecosystem: SimpleGo (hardware) / GoRelay (relay server) / GoChat (browser)
 
 ## Rules (NON-NEGOTIABLE)
 
+### Ground Rule
+Nothing invented. What is missing gets asked. Do NOT fabricate information, assume
+technical details, or fill gaps with speculation. If a detail is unknown, mark it as
+unknown and raise the question.
+
 ### Git
-- Conventional Commits ONLY: `type(scope): description`
+- Conventional Commits ONLY: `feat(scope): description`, `fix(scope): description`
 - Valid types: feat, fix, docs, test, refactor, ci, chore
-- Valid scopes: transport, commands, connection, crypto, ui, security, config, docs
-- Commits as granular as possible, as few as necessary
+- Valid scopes: transport, commands, connection, crypto, ui, security, config, ci
+- GPG signing enabled (key E13737C02E97E54B, email sascha.daemgen@t-online.de)
 - NEVER change version numbers without explicit permission
-- GPG signing key: E13737C02E97E54B (sascha.daemgen@t-online.de)
+- Commits as granular as possible, as few as necessary
+- Feature branch per task, push with `git push --set-upstream origin feature/branch-name`
 
 ### Code Style
 - NEVER use em dashes (the long ones) - use regular hyphens or rewrite the sentence
 - All code, comments, commits, and documentation in English
-- TypeScript strict mode always
-- Use @noble libraries ONLY for cryptography - NEVER Web Crypto API directly, NEVER libsodium.js
-- All crypto operations MUST run in a dedicated Web Worker (isolated from main thread XSS)
+- TypeScript strict mode for ALL code
 - Handle all errors explicitly - NEVER use `_` to discard errors
-- NEVER log key material, queue IDs, message content, or any user metadata
+- Use `Uint8Array` for all binary data (not Buffer, not ArrayBuffer directly)
 
-### Architecture
-- ChatTransport interface is mandatory - ALL transport code goes through this abstraction
-- SMP and GRP code NEVER import each other
-- xftp-web/ is upstream code - NEVER modify files in xftp-web/
-- smp-web/ is our workspace - all new code goes here
+### Crypto Rules (CRITICAL)
+- @noble libraries ONLY for all cryptographic operations
+  - `@noble/curves` for Ed25519, X25519
+  - `@noble/ciphers` for XSalsa20-Poly1305, ChaCha20-Poly1305, AES-256-GCM
+  - `@noble/hashes` for SHA-256, SHA-512, HKDF, BLAKE2s
+- NEVER use Web Crypto API directly for these primitives
+- NEVER use libsodium.js, tweetnacl, or any other crypto library
+- Avoid importing from xftp-web if it pulls libsodium dependency chain
+- Define simple constants locally if imports are heavy (e.g. SMP_BLOCK_SIZE = 16384)
+
+### Architecture Rules
+- ALL transport code MUST implement the ChatTransport interface
+- NEVER import SMP-specific code from GRP modules or vice versa
+- NEVER modify files in xftp-web/ - this is upstream code, read-only
+- NEVER modify files in protocol/ - this is upstream SMP specification
+- smp-web/src/ is where ALL our code lives
+- Use binary WebSocket frames (not text) - no Base64 overhead
 - Fixed 16,384-byte blocks for ALL SMP wire communication, '#' (0x23) padding
-- SharedWorker for WebSocket connection pool (Season 6)
-- Web Worker for crypto isolation (Season 5)
-- IndexedDB for persistent storage (messages, keys, connection state)
 
-## Technology Stack (LOCKED)
+## Build and Test
 
-| Component | Choice | Notes |
-|---|---|---|
-| Language | TypeScript (strict mode) | ES2022 target |
-| Transport | Native WebSocket (browser) | WSS only, binary frames |
-| Crypto (SMP) | @noble/curves, @noble/ciphers, @noble/hashes | 6 audits, used by Proton Mail |
-| Crypto (GRP, future) | @noble/ciphers (ChaCha20-Poly1305), @noble/hashes (BLAKE2s) | Same family |
-| Key exchange | X25519 via @noble/curves | Ed25519 for signatures |
-| Symmetric encryption | XSalsa20-Poly1305 via @noble/ciphers (NaCl secretbox) | MVP E2E |
-| Hash functions | SHA-256, SHA-512 via @noble/hashes | Already in xftp-web |
-| Key storage | IndexedDB with AES-256-GCM encryption at rest | extractable: false |
-| Shared infrastructure | @simplex-chat/xftp-web (local file dependency) | DO NOT MODIFY |
-| Build | TypeScript compiler (tsc) | No bundler in smp-web yet |
-| Test | To be determined in Season 2 | Vitest or Jest |
-
-## Package Structure
-
-```
-GoChat/
-  .claude/
-    CLAUDE.md                       # This file
-    settings.local.json             # Claude Code permissions
-  .github/
-    assets/
-      gochat_banner.png             # Project banner
-  docs/
-    PROTOCOL.md                     # Main technical protocol (33 tasks, dual-profile)
-    RESEARCH.md                     # Browser crypto, security, design research
-    seasons/
-      SEASON-PLAN.md                # 12-season roadmap
-      SEASON-01-planning.md         # Season 1 closing protocol
-  smp-web/                          # OUR WORKSPACE - all new code goes here
-    src/
-      index.ts                      # Re-exports encoding primitives from xftp-web
-      protocol.ts                   # SMP transmission encode/decode, LGET/LNK (from spike)
-      transport.ts                  # NEW in S2: WebSocket transport (ChatTransport)
-      client.ts                     # NEW in S2: SMP client with handshake
-    package.json                    # @simplex-chat/smp-web v0.1.0
-    tsconfig.json                   # ES2022, strict mode
-  xftp-web/                         # UPSTREAM - DO NOT MODIFY
-    src/
-      client.ts                     # HTTP/2 transport, handshake, retry (REFERENCE)
-      agent.ts                      # File transfer agent
-      download.ts                   # Chunk decryption
-      protocol/
-        encoding.ts                 # Binary encoding (Decoder, encodeBytes, etc.)
-        transmission.ts             # Block framing, session auth
-        handshake.ts                # Client/server handshake, version negotiation
-        commands.ts                 # XFTP commands
-        address.ts                  # Server address parsing
-      crypto/
-        keys.ts                     # X25519 key generation + DH
-        secretbox.ts                # NaCl XSalsa20-Poly1305
-        identity.ts                 # Ed25519 server identity verification
-        digest.ts                   # SHA-256 / SHA-512
-        padding.ts                  # Block padding
-  protocol/                         # SMP protocol specification (upstream reference)
-  LICENSE                           # AGPL-3.0
-  README.md                         # Project README with dual-profile architecture
+```bash
+cd smp-web
+npm install
+npm run build
+npm test
 ```
 
 ## Current State
 
-Season 1 is COMPLETE. Season 2 is CURRENT.
+Season 1 COMPLETE. Season 2 COMPLETE. Season 3 CURRENT.
 
-Season 1 produced documentation only - no executable code. The project has:
-- Complete technical protocol with 33 tasks across 12 seasons
-- Deep research on browser crypto, security, design, competitive landscape
-- Dual-profile architecture design (SMP + GRP)
-- ChatTransport interface defined
-- Repository forked, cleaned (Haskell removed), restructured
-- Community contact established (Evgeny Poberezkin confirmed smp-web is active WIP)
+### Season 2 output (transport layer - all working):
+- `types.ts` - ChatTransport interface, SMPServerAddress, TransportState, errors, events
+- `transport.ts` - SMPWebSocketTransport (WebSocket + 16KB block framing + onClose)
+- `handshake.ts` - SMP ServerHello decode, ClientHello encode, v6/v7 negotiation
+- `client.ts` - SMPClient (handshake + session + PING/PONG + async command dispatch)
+- `agent.ts` - SMPClientAgent (connection pool + exponential backoff + network-aware)
+- `protocol.ts` - SMP transmission encode/decode, LGET/LNK (from upstream spike)
 
-The smp-web spike from upstream contains:
-- SMP transmission encode/decode (encodeTransmission, decodeTransmission)
-- LGET command encoding and LNK response decoding
-- SMP response dispatch (LNK / OK / ERR)
-- Re-exported encoding primitives from xftp-web
+### What Season 3 adds:
+- `commands.ts` - ALL SMP command encoders/decoders (NEW, SUB, SEND, MSG, ACK, KEY, DEL, SKEY)
+- `protocol.ts` - EXTENDED with IDS, MSG, PONG, full ERR subtype parsing
+- `client.ts` - EXTENDED with typed command methods (createQueue, subscribe, send, etc.)
 
-What does NOT exist yet (our work):
-- WebSocket transport client (Season 2)
-- SMP commands beyond LGET/LNK (Season 3)
-- Connection flow via contact address (Season 4)
-- E2E encryption (Season 5)
-- Chat UI (Season 6)
-- Everything else
+## Package Structure
+
+```
+smp-web/src/
+  index.ts              # Re-exports all public API
+  types.ts              # ChatTransport, SMPServerAddress, errors, events
+  transport.ts          # SMPWebSocketTransport (16KB blocks, binary WS)
+  handshake.ts          # SMP ServerHello/ClientHello
+  client.ts             # SMPClient (handshake, dispatch, PING/PONG)
+  agent.ts              # SMPClientAgent (pool, reconnect, network-aware)
+  protocol.ts           # SMP transmission format, LGET/LNK, response dispatch
+  commands.ts           # [Season 3 NEW] SMP command encoders/decoders
+  __tests__/
+    transport.test.ts   # 17 tests
+    handshake.test.ts
+    client.test.ts
+    agent.test.ts
+
+xftp-web/src/           # UPSTREAM - READ ONLY
+  protocol/encoding.ts  # Decoder, encodeBytes, Word16/32/64
+  protocol/commands.ts  # readTag, readSpace (imported by protocol.ts)
+  crypto/keys.ts        # X25519 keygen, DH, Ed25519 sign/verify
+
+protocol/
+  simplex-messaging.md  # Official SMP v9 spec - THE REFERENCE FOR SEASON 3
+```
+
+## SMP Protocol Details
+
+### SMP v7 implySessId (CRITICAL)
+- SessionId NOT on wire, but IS in signature computation
+- encodeTransmission in protocol.ts already handles this
+
+### Command Reference
+| Command | Direction | Season |
+|---|---|---|
+| LGET/LNK | Both | DONE (spike) |
+| PING/PONG | Both | DONE (S2) |
+| NEW/IDS | Both | S3 |
+| SUB | Client->Server | S3 |
+| KEY | Client->Server | S3 |
+| SKEY | Client->Server | S3 |
+| SEND | Client->Server | S3 |
+| MSG | Server->Client | S3 |
+| ACK | Client->Server | S3 |
+| DEL | Client->Server | S3 |
+
+### Key Encoding Details
+- Ed25519/X25519 public keys: SPKI DER encoded (44 bytes), sent as shortString
+- corrId: 24 random bytes, prefixed with 0x18 length byte
+- Signatures: 64 bytes Ed25519, sent as shortString
+- NEW includes: recipientAuthKey + recipientDhKey + subscribeMode('S'/'C') + sndSecure('T'/'F')
+- SEND includes: msgFlags(notifyFlag + reserved) + SP + smpEncMessage
+- MSG includes: msgId(24 bytes) + server-encrypted body (NaCl crypto_box with DH secret)
+
+## Season 3 Implementation Plan (CURRENT)
+
+### Task 1: commands.ts - Command Encoders/Decoders
+- Encode: NEW, SUB, KEY, SKEY, SEND, ACK, DEL
+- Decode: IDS, MSG, PONG, OK, ERR (with all subtypes)
+- Study protocol/simplex-messaging.md for exact ABNF
+
+### Task 2: Extend protocol.ts - Response Types
+- Add IDS, MSG, END to SMPResponse union
+- Parse full ERR subtypes (AUTH, QUOTA, CMD SYNTAX, etc.)
+- Keep existing LGET/LNK/OK/ERR working
+
+### Task 3: Extend client.ts - Typed Methods
+- createQueue, subscribe, sendMessage, acknowledge, setKey, deleteQueue
+- Each method: encode -> wrap in block -> send -> parse response
+
+### Files to Study FIRST
+1. `protocol/simplex-messaging.md` - SMP commands section (ABNF syntax)
+2. `smp-web/src/protocol.ts` - existing transmission code
+3. `smp-web/src/client.ts` - Season 2 client (sendCommand, dispatch)
+4. `xftp-web/src/protocol/commands.ts` - XFTP command patterns
+5. `xftp-web/src/crypto/keys.ts` - X25519/Ed25519 operations
+6. `xftp-web/src/protocol/encoding.ts` - binary primitives
+
+## What NOT To Do
+- Do NOT modify xftp-web/ or protocol/
+- Do NOT use any crypto other than @noble
+- Do NOT implement connection flow (Season 4)
+- Do NOT implement E2E encryption (Season 5)
+- Do NOT build UI (Season 6)
+- Do NOT change version numbers
+- Do NOT use em dashes
 
 ## Development Roadmap
-
-- Season 1: Planning and Documentation - COMPLETE
-- Season 2: WebSocket Transport Client (ChatTransport, Handshake, Reconnect) - CURRENT
-- Season 3: SMP Commands (NEW, SUB, SEND, MSG, ACK, KEY, DEL)
-- Season 4: Connection Flow (contact address, queue pair, state machine)
-- Season 5: E2E Encryption (NaCl MVP, Web Worker isolation, key storage)
-- Season 6: Chat UI (Intercom-level, animations, encryption badge, SharedWorker)
-- Season 7: SimpleGo Website Integration (SPA, mobile, player coexistence)
-- Season 8: Production Hardening (CSP, SRI, deployment, security review)
-- Season 9+: GRP Profile (Noise transport, ML-KEM-768, two-hop routing)
-
-## Season 2 Implementation Plan (CURRENT)
-
-### Goal
-
-Browser can establish a WebSocket connection to an SMP server, complete the
-SMP handshake, and send/receive raw 16KB SMP blocks. The transport class
-implements the ChatTransport interface.
-
-### Task 1: ChatTransport Interface Definition (WS-1 prerequisite)
-- Create `smp-web/src/types.ts` with ChatTransport interface
-- ServerAddress type (host, port, fingerprint)
-- This is the contract all transport implementations must follow
-- Keep it minimal - only what is needed for Season 2
-
-```typescript
-interface ChatTransport {
-  connect(server: ServerAddress): Promise<void>
-  send(block: Uint8Array): Promise<void>
-  onMessage(handler: (block: Uint8Array) => void): void
-  close(): void
-}
-
-interface ServerAddress {
-  host: string
-  port: number
-  fingerprint?: string  // SHA-256 of CA cert for SMP servers
-}
-```
-
-### Task 2: WebSocket Transport Class (WS-1)
-- Create `smp-web/src/transport.ts`
-- SMPWebSocketTransport implements ChatTransport
-- Connect to `wss://server:443` using native browser WebSocket
-- Binary message mode (not text) - set binaryType = 'arraybuffer'
-- SMP block framing: every message is exactly 16,384 bytes
-- Connection lifecycle: open, close, error events
-- Heartbeat: send PING, expect PONG (use SMP protocol PING, not WebSocket ping)
-- Support concurrent send + async receive (SUB delivers MSG at any time)
-- Disable permessage-deflate (encrypted data is incompressible)
-- Branch: feature/websocket-transport
-
-### Task 3: SMP Handshake Client (WS-2)
-- Create `smp-web/src/client.ts`
-- Adapt the XFTP handshake flow for SMP protocol
-- CRITICAL: SMP handshake is DIFFERENT from XFTP handshake
-  - Study xftp-web/src/client.ts connectXFTP() carefully
-  - Study xftp-web/src/protocol/handshake.ts for the handshake structure
-- SMP ServerHello contains:
-  - smpVersionRange (4 bytes: min=6 Word16 BE, max=7 Word16 BE)
-  - sessionIdentifier (shortString, tls-unique channel binding)
-  - serverCert (originalLength + online certificate DER)
-  - signedServerKey (originalLength + X25519 SPKI DER + Ed25519 signature)
-- SMP ClientHello contains:
-  - smpVersion (2 bytes Word16 BE, chosen version)
-  - keyHash (shortString, 32 bytes raw SHA256 of CA cert.Raw)
-- Version negotiation: agree on highest mutual version (6 or 7)
-- Session ID extraction for transmission encoding
-- Branch: feature/smp-handshake
-
-### Task 4: Connection Pooling and Reconnect (WS-3)
-- Extend transport.ts with reconnection logic
-- Auto-reconnect with exponential backoff:
-  - 500ms base delay
-  - 2x multiplier per attempt
-  - 30-second maximum cap
-  - 50-100% multiplicative jitter (prevents thundering herd)
-  - After 12 attempts (~2 minutes): emit 'connection_lost' event
-- Use navigator.onLine for network awareness
-- Use document.visibilitychange to pause/resume reconnection
-- Re-handshake after reconnect (SMP sessions are not resumable)
-- Branch: feature/reconnect
-
-### Task 5: TLS Certificate Strategy (SEC-5)
-- Document and implement the certificate approach:
-  - SMP servers use self-signed CA chains with fingerprint in server address
-  - Browsers reject WSS to untrusted certs
-  - Solution: server must have Let's Encrypt cert for TLS layer
-  - SMP fingerprint verification happens at application layer after handshake
-  - The keyHash in ClientHello verifies server identity independent of TLS CA
-- Token-based WebSocket auth (not cookies) to prevent CSWSH
-- Branch: can be part of feature/smp-handshake
-
-## Critical Protocol Details
-
-### Block Framing
-```
-Block = contentLength (2 bytes, uint16 BE) + content + padding ('#' to 16384)
-ALWAYS exactly 16,384 bytes. No exceptions.
-Padding byte is '#' (0x23), NOT zero bytes.
-```
-
-### Transmission Structure (inside block content)
-```
-[transmissionCount: 1 byte]
-[transmissionLength: 2 bytes, uint16 BE]
-[transmission:]
-  [authorization: shortString (1 byte len + data, or 0x00 for unsigned)]
-  [corrId: 0x18 + 24 random bytes for commands, 0x00 for server notifications]
-  [entityId: shortString (1 byte len + queue ID, or 0x00 for empty)]
-  [command: text-based tag + body]
-```
-
-### Encoding Rules
-| Type | Format |
-|---|---|
-| shortString | 1 byte length prefix + data bytes |
-| originalLength | 2 byte Word16 BE length prefix + data bytes |
-| Ed25519 signature | shortString with length 0x40 (64 bytes) |
-| corrId | 0x18 (24) + 24 random bytes, echoed in response |
-| entityId | shortString, empty (0x00) for NEW/IDS/PING/PONG |
-
-### SMP Version Negotiation
-```
-Current SMP versions: 6 and 7 (older versions discontinued)
-Server sends: min=6, max=7
-Client responds with its version range
-Agree on highest mutual version
-```
-
-### SMP Handshake Sequence
-```
-1. Browser opens WSS connection to server:443
-2. Server sends ServerHello (16KB block):
-   [smpVersionRange][sessionId][serverCert][signedServerKey][padding]
-3. Browser verifies:
-   - signedServerKey signature against serverCert
-   - serverCert is valid
-   - SHA256(CA cert) matches fingerprint from server address
-4. Browser sends ClientHello (16KB block):
-   [smpVersion][keyHash][padding]
-5. Handshake complete, session established
-```
-
-### SMP Commands (reference for future seasons)
-| Command | Direction | entityId | Auth |
-|---|---|---|---|
-| NEW | Client -> Server | empty | Ed25519 signature (self-certifying) |
-| IDS | Server -> Client | empty | None |
-| SUB | Client -> Server | recipientId | Ed25519 signature |
-| SEND | Client -> Server | senderId | Ed25519 signature |
-| MSG | Server -> Client | recipientId | None (server push) |
-| ACK | Client -> Server | recipientId | Ed25519 signature |
-| KEY | Client -> Server | recipientId | Ed25519 signature |
-| DEL | Client -> Server | recipientId | Ed25519 signature |
-| PING | Client -> Server | empty | None |
-| PONG | Server -> Client | empty | None |
-
-### ChatTransport Interface (day-one requirement)
-```typescript
-interface ChatTransport {
-  connect(server: ServerAddress): Promise<void>
-  send(block: Uint8Array): Promise<void>
-  onMessage(handler: (block: Uint8Array) => void): void
-  close(): void
-}
-// Season 2: SMPWebSocketTransport implements ChatTransport
-// Season 9: GRPWebSocketTransport implements ChatTransport
-```
-
-## Files to Study Before Writing Code
-
-Read these files carefully before implementing Season 2 tasks:
-
-1. `xftp-web/src/client.ts` - The reference transport implementation. Study
-   connectXFTP(), the handshake flow, retry logic, and connection lifecycle.
-   Our WebSocket transport mirrors this pattern but over WebSocket instead of HTTP/2.
-
-2. `xftp-web/src/protocol/handshake.ts` - Handshake encode/decode. The SMP
-   handshake follows a similar structure but with different fields. Study
-   serverHandshakeDecode and clientHandshakeEncode.
-
-3. `xftp-web/src/protocol/encoding.ts` - The binary encoding primitives.
-   Decoder class, encodeBytes, decodeBytes, Word16/32/64. We import these
-   through smp-web/src/index.ts.
-
-4. `xftp-web/src/protocol/transmission.ts` - Block framing. How blocks are
-   built, padded to 16384 bytes, and parsed. Session-based auth and corrId.
-
-5. `smp-web/src/protocol.ts` - Existing SMP protocol code from the spike.
-   encodeTransmission, decodeTransmission, LGET/LNK. Our new commands
-   extend this file.
-
-6. `smp-web/src/index.ts` - Re-exported primitives. Check what is already
-   available before importing from xftp-web directly.
-
-7. `docs/PROTOCOL.md` - Full technical protocol with all task definitions,
-   risk assessment, and architecture details.
-
-## What NOT to Do
-
-- NEVER modify any file in xftp-web/ - this is upstream code
-- NEVER modify protocol/ directory - this is upstream SMP spec reference
-- NEVER use Web Crypto API directly - always @noble libraries
-- NEVER use libsodium.js - always @noble libraries
-- NEVER change version numbers in package.json without permission
-- NEVER use em dashes in any output
-- NEVER log sensitive data (keys, queue IDs, messages)
-- NEVER create transport code that bypasses ChatTransport interface
-- NEVER import GRP-related code from SMP-related code or vice versa
-- NEVER assume protocol details - check the source or ask
-
-## Dual-Profile Architecture (Context Only - Do Not Implement GRP Yet)
-
-GoChat has two communication profiles. Season 2-8 implement the SMP profile.
-Season 9+ implements the GRP profile. The ChatTransport interface exists
-specifically to make this separation clean.
-
-**SMP Profile (Season 2-8):**
-- SimpleX Messaging Protocol over WebSocket
-- Compatible with all SimpleX clients and servers
-- @noble/curves for X25519/Ed25519, @noble/ciphers for NaCl secretbox
-- Standard TLS transport
-
-**GRP Profile (Season 9+, DO NOT IMPLEMENT):**
-- GoRelay Protocol over WebSocket, GoRelay servers only
-- Noise_IK_25519_ChaChaPoly_BLAKE2s transport
-- X25519 + ML-KEM-768 hybrid post-quantum key exchange
-- Mandatory two-hop relay routing
-- Poisson cover traffic
-
-The GRP details are documented here so Claude Code understands WHY the
-ChatTransport interface exists and WHY it must not be bypassed.
-
-## Part of the SimpleGo Ecosystem
-
-| Component | Language | What it does |
-|---|---|---|
-| SimpleGo | C | ESP32-S3 hardware client, 4-layer encryption, sntrup761 |
-| GoRelay | Go | Dual-protocol relay server (SMP + GRP), BadgerDB, zero-knowledge |
-| GoChat | TypeScript | Browser-native encrypted messenger (this project) |
+- Season 1: Planning - COMPLETE
+- Season 2: WebSocket Transport (WS-1, WS-2, WS-3) - COMPLETE
+- Season 3: SMP Commands (CMD-1 to CMD-5) - CURRENT
+- Season 4: Connection Flow (CONN-1 to CONN-4)
+- Season 5: E2E Encryption (E2E-1 to E2E-3, SEC-3)
+- Season 6: Chat UI (UI-1 to UI-8, WS-4)
+- Season 7: Website Integration
+- Season 7.5: Admin Panel (ADM-1 to ADM-4)
+- Season 8: Production Hardening
+- Season 9+: GRP Profile
 
 ## Documentation
-
-Read these files for context and decisions:
-1. docs/PROTOCOL.md - Full technical protocol, all 33 tasks, risk assessment
-2. docs/RESEARCH.md - Browser crypto maturity, security analysis, design specs
-3. docs/seasons/SEASON-PLAN.md - 12-season roadmap with dependencies
-4. docs/seasons/SEASON-01-planning.md - Season 1 decisions and lessons learned
-5. README.md - Project overview, dual-profile architecture, ecosystem
+1. docs/PROTOCOL.md - Technical protocol with task registry
+2. docs/RESEARCH.md - Browser crypto, security, design
+3. docs/seasons/SEASON-PLAN.md - 12-season roadmap
+4. docs/seasons/SEASON-02-transport.md - Season 2 closing protocol
+5. protocol/simplex-messaging.md - Official SMP specification
