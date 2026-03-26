@@ -115,89 +115,92 @@ describe("encodeNEW", () => {
     expect(result[3]).toBe(0x20) // space after tag
   })
 
-  it("encodes authKey with 1-byte length prefix after tag", () => {
+  it("encodes authKey with Word16 BE length prefix after tag", () => {
     const result = encodeNEW(baseParams)
-    // After "NEW " (4 bytes): length prefix (1 byte) + 44 bytes key
-    expect(result[4]).toBe(44) // length prefix for 44-byte key
-    expect(result[5]).toBe(0xAA) // first byte of authKey
-    expect(result[48]).toBe(0xAA) // last byte of authKey (4+1+43)
+    // After "NEW " (4 bytes): Word16 BE length prefix (2 bytes) + 44 bytes key
+    expect(result[4]).toBe(0x00) // high byte of 44
+    expect(result[5]).toBe(44)   // low byte of 44
+    expect(result[6]).toBe(0xAA) // first byte of authKey
+    expect(result[49]).toBe(0xAA) // last byte of authKey (4+2+43)
   })
 
   it("encodes dhKey after authKey", () => {
     const result = encodeNEW(baseParams)
-    // After "NEW " (4) + encodeBytes(44) (45): length prefix (1) + 44 bytes
-    const dhKeyOffset = 4 + 45
-    expect(result[dhKeyOffset]).toBe(44) // length prefix
-    expect(result[dhKeyOffset + 1]).toBe(0xBB) // first byte of dhKey
+    // After "NEW " (4) + encodeLarge(44) (46): Word16 prefix (2) + 44 bytes
+    const dhKeyOffset = 4 + 46
+    expect(result[dhKeyOffset]).toBe(0x00) // high byte of 44
+    expect(result[dhKeyOffset + 1]).toBe(44) // low byte of 44
+    expect(result[dhKeyOffset + 2]).toBe(0xBB) // first byte of dhKey
   })
 
   it("encodes basicAuth as '0' when no auth", () => {
     const result = encodeNEW(baseParams)
-    // After "NEW " (4) + authKey (45) + dhKey (45)
-    const authOffset = 4 + 45 + 45
+    // After "NEW " (4) + authKey (46) + dhKey (46)
+    const authOffset = 4 + 46 + 46
     expect(result[authOffset]).toBe(0x30) // "0"
   })
 
-  it("encodes basicAuth as '1' + shortString when auth provided", () => {
+  it("encodes basicAuth as '1' + Word16 BE when auth provided", () => {
     const params: NewQueueParams = {
       ...baseParams,
       basicAuth: new Uint8Array([0x01, 0x02, 0x03]),
     }
     const result = encodeNEW(params)
-    const authOffset = 4 + 45 + 45
+    const authOffset = 4 + 46 + 46
     expect(result[authOffset]).toBe(0x31) // "1"
-    expect(result[authOffset + 1]).toBe(3) // length prefix
-    expect(result[authOffset + 2]).toBe(0x01)
-    expect(result[authOffset + 3]).toBe(0x02)
-    expect(result[authOffset + 4]).toBe(0x03)
+    expect(result[authOffset + 1]).toBe(0x00) // high byte of 3
+    expect(result[authOffset + 2]).toBe(3)    // low byte of 3
+    expect(result[authOffset + 3]).toBe(0x01)
+    expect(result[authOffset + 4]).toBe(0x02)
+    expect(result[authOffset + 5]).toBe(0x03)
   })
 
   it("encodes subscribeMode 'S' correctly", () => {
     const result = encodeNEW(baseParams)
-    // After tag(4) + authKey(45) + dhKey(45) + basicAuth(1)
-    const modeOffset = 4 + 45 + 45 + 1
+    // After tag(4) + authKey(46) + dhKey(46) + basicAuth(1)
+    const modeOffset = 4 + 46 + 46 + 1
     expect(result[modeOffset]).toBe(0x53) // "S"
   })
 
   it("encodes subscribeMode 'C' correctly", () => {
     const params: NewQueueParams = {...baseParams, subscribeMode: "C"}
     const result = encodeNEW(params)
-    const modeOffset = 4 + 45 + 45 + 1
+    const modeOffset = 4 + 46 + 46 + 1
     expect(result[modeOffset]).toBe(0x43) // "C"
   })
 
   it("encodes sndSecure true as 'T' for v9", () => {
     const result = encodeNEW({...baseParams, smpVersion: 9})
-    // After tag(4) + authKey(45) + dhKey(45) + basicAuth(1) + mode(1)
-    const secureOffset = 4 + 45 + 45 + 1 + 1
+    // After tag(4) + authKey(46) + dhKey(46) + basicAuth(1) + mode(1)
+    const secureOffset = 4 + 46 + 46 + 1 + 1
     expect(result[secureOffset]).toBe(0x54) // "T"
   })
 
   it("encodes sndSecure false as 'F' for v9", () => {
     const params: NewQueueParams = {...baseParams, sndSecure: false, smpVersion: 9}
     const result = encodeNEW(params)
-    const secureOffset = 4 + 45 + 45 + 1 + 1
+    const secureOffset = 4 + 46 + 46 + 1 + 1
     expect(result[secureOffset]).toBe(0x46) // "F"
   })
 
   it("omits sndSecure for v6", () => {
     const result = encodeNEW({...baseParams, smpVersion: 6})
-    // v6: no sndSecure field
-    expect(result.length).toBe(4 + 45 + 45 + 1 + 1)
+    // v6: no sndSecure field. tag(4) + authKey(2+44) + dhKey(2+44) + "0"(1) + mode(1)
+    expect(result.length).toBe(4 + 46 + 46 + 1 + 1)
   })
 
   it("has correct total length without basicAuth (v6, no sndSecure)", () => {
     const result = encodeNEW({...baseParams, smpVersion: 6})
-    // "NEW "(4) + authKey(1+44) + dhKey(1+44) + "0"(1) + mode(1)
-    expect(result.length).toBe(4 + 45 + 45 + 1 + 1)
+    // "NEW "(4) + authKey(2+44) + dhKey(2+44) + "0"(1) + mode(1)
+    expect(result.length).toBe(4 + 46 + 46 + 1 + 1)
   })
 
   it("has correct total length with basicAuth (v6, no sndSecure)", () => {
     const password = new Uint8Array(10).fill(0xFF)
     const params: NewQueueParams = {...baseParams, basicAuth: password, smpVersion: 6}
     const result = encodeNEW(params)
-    // "NEW "(4) + authKey(1+44) + dhKey(1+44) + "1"(1) + len(1) + password(10) + mode(1)
-    expect(result.length).toBe(4 + 45 + 45 + 1 + 1 + 10 + 1)
+    // "NEW "(4) + authKey(2+44) + dhKey(2+44) + "1"(1) + len(2) + password(10) + mode(1)
+    expect(result.length).toBe(4 + 46 + 46 + 1 + 2 + 10 + 1)
   })
 })
 
@@ -210,17 +213,18 @@ describe("encodeKEY", () => {
     expect(result[3]).toBe(0x20)
   })
 
-  it("encodes key with 1-byte length prefix", () => {
+  it("encodes key with Word16 BE length prefix", () => {
     const key = fakeKey(0xCC)
     const result = encodeKEY(key)
-    expect(result[4]).toBe(44) // length prefix
-    expect(result[5]).toBe(0xCC) // first byte of key
+    expect(result[4]).toBe(0x00) // high byte of 44
+    expect(result[5]).toBe(44)   // low byte of 44
+    expect(result[6]).toBe(0xCC) // first byte of key
   })
 
   it("has correct total length", () => {
     const result = encodeKEY(fakeKey(0xCC))
-    // "KEY "(4) + len(1) + key(44)
-    expect(result.length).toBe(4 + 45)
+    // "KEY "(4) + len(2) + key(44)
+    expect(result.length).toBe(4 + 46)
   })
 })
 
@@ -233,17 +237,18 @@ describe("encodeSKEY", () => {
     expect(result[4]).toBe(0x20)
   })
 
-  it("encodes key with 1-byte length prefix", () => {
+  it("encodes key with Word16 BE length prefix", () => {
     const key = fakeKey(0xDD)
     const result = encodeSKEY(key)
-    expect(result[5]).toBe(44) // length prefix
-    expect(result[6]).toBe(0xDD) // first byte of key
+    expect(result[5]).toBe(0x00) // high byte of 44
+    expect(result[6]).toBe(44)   // low byte of 44
+    expect(result[7]).toBe(0xDD) // first byte of key
   })
 
   it("has correct total length", () => {
     const result = encodeSKEY(fakeKey(0xDD))
-    // "SKEY "(5) + len(1) + key(44)
-    expect(result.length).toBe(5 + 45)
+    // "SKEY "(5) + len(2) + key(44)
+    expect(result.length).toBe(5 + 46)
   })
 })
 
@@ -308,19 +313,20 @@ describe("encodeACK", () => {
     expect(result[3]).toBe(0x20)
   })
 
-  it("encodes msgId with 1-byte length prefix (0x18 = 24)", () => {
+  it("encodes msgId with Word16 BE length prefix (0x0018 = 24)", () => {
     const msgId = new Uint8Array(24).fill(0x22)
     const result = encodeACK(msgId)
-    expect(result[4]).toBe(0x18) // 24 decimal = 0x18 hex
-    expect(result[5]).toBe(0x22) // first byte of msgId
-    expect(result[28]).toBe(0x22) // last byte of msgId (4+1+23)
+    expect(result[4]).toBe(0x00) // high byte of 24
+    expect(result[5]).toBe(0x18) // low byte of 24
+    expect(result[6]).toBe(0x22) // first byte of msgId
+    expect(result[29]).toBe(0x22) // last byte of msgId (4+2+23)
   })
 
   it("has correct total length", () => {
     const msgId = new Uint8Array(24).fill(0x33)
     const result = encodeACK(msgId)
-    // "ACK "(4) + len(1) + msgId(24) = 29
-    expect(result.length).toBe(29)
+    // "ACK "(4) + len(2) + msgId(24) = 30
+    expect(result.length).toBe(30)
   })
 
   it("preserves msgId bytes exactly", () => {
@@ -328,7 +334,7 @@ describe("encodeACK", () => {
     for (let i = 0; i < 24; i++) msgId[i] = i
     const result = encodeACK(msgId)
     for (let i = 0; i < 24; i++) {
-      expect(result[5 + i]).toBe(i)
+      expect(result[6 + i]).toBe(i)
     }
   })
 })
@@ -346,18 +352,20 @@ describe("encodeNKEY", () => {
     expect(result[4]).toBe(0x20)
   })
 
-  it("encodes both keys with length prefixes", () => {
+  it("encodes both keys with Word16 BE length prefixes", () => {
     const params: EnableNotificationsParams = {
       notifierKey: fakeKey(0xEE),
       recipientNtfDhKey: fakeKey(0xFF),
     }
     const result = encodeNKEY(params)
-    // First key at offset 5: len(44) + 44 bytes
-    expect(result[5]).toBe(44)
-    expect(result[6]).toBe(0xEE)
-    // Second key at offset 5+45=50: len(44) + 44 bytes
-    expect(result[50]).toBe(44)
-    expect(result[51]).toBe(0xFF)
+    // First key at offset 5: Word16(44) + 44 bytes
+    expect(result[5]).toBe(0x00)
+    expect(result[6]).toBe(44)
+    expect(result[7]).toBe(0xEE)
+    // Second key at offset 5+46=51: Word16(44) + 44 bytes
+    expect(result[51]).toBe(0x00)
+    expect(result[52]).toBe(44)
+    expect(result[53]).toBe(0xFF)
   })
 
   it("has correct total length", () => {
@@ -366,8 +374,8 @@ describe("encodeNKEY", () => {
       recipientNtfDhKey: fakeKey(0xFF),
     }
     const result = encodeNKEY(params)
-    // "NKEY "(5) + key1(1+44) + key2(1+44) = 95
-    expect(result.length).toBe(95)
+    // "NKEY "(5) + key1(2+44) + key2(2+44) = 97
+    expect(result.length).toBe(97)
   })
 })
 
