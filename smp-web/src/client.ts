@@ -349,6 +349,9 @@ export class SMPClientImpl implements SMPClient {
   // Send a typed command and wait for the corrId-matched response.
   private sendTypedCommand(entityId: Uint8Array, command: Uint8Array): Promise<SMPResponse> {
     if (this.currentState !== "ready") {
+      if (this.debugFn) {
+        this.debugFn("sendTypedCommand rejected: state=" + this.currentState, command.subarray(0, 16))
+      }
       return Promise.reject(new SMPTransportError("CLOSED", "Client is not ready"))
     }
 
@@ -359,9 +362,16 @@ export class SMPClientImpl implements SMPClient {
     const block = buildCommandBlock(transmission)
     const key = toHex(corrId)
 
+    if (this.debugFn) {
+      this.debugFn("sendTypedCommand: sending " + block.length + "B, transport=" + this.transport.state, command.subarray(0, 16))
+    }
+
     return new Promise<SMPResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingCommands.delete(key)
+        if (this.debugFn) {
+          this.debugFn("Command TIMEOUT after " + this.commandTimeoutMs + "ms", command.subarray(0, 16))
+        }
         reject(new SMPTransportError("TIMEOUT", "Command response timeout after " + this.commandTimeoutMs + "ms"))
       }, this.commandTimeoutMs)
 
@@ -370,6 +380,9 @@ export class SMPClientImpl implements SMPClient {
       this.transport.send(block).catch((err: Error) => {
         this.pendingCommands.delete(key)
         clearTimeout(timer)
+        if (this.debugFn) {
+          this.debugFn("Command send FAILED: " + err.message, command.subarray(0, 16))
+        }
         reject(err)
       })
     })
@@ -582,8 +595,31 @@ export async function connectSMP(
       debug("ClientHello keyHash", server.keyHash)
     }
     await transport.send(clientHello)
+    if (debug) {
+      debug("ClientHello sent, transport state", new TextEncoder().encode(transport.state))
+    }
 
-    // 7. Return client with command dispatch
+    // After ClientHello, the SMP handshake is COMPLETE.
+    // There is NO server response to ClientHello.
+    // The client can immediately start sending commands.
+    // (Confirmed by SimpleGo protocol analysis.)
+
+    // 7. Verify transport is still open after sending ClientHello.
+    // If the server rejected our handshake, the WebSocket may already
+    // be in CLOSING state. The send() above would succeed (buffered)
+    // but no data actually reaches the server.
+    if (transport.state !== "connected") {
+      throw new SMPTransportError(
+        "HANDSHAKE",
+        "Transport disconnected after ClientHello (state: " + transport.state + "). " +
+        "Server may have rejected the handshake."
+      )
+    }
+
+    // 8. Return client with command dispatch
+    if (debug) {
+      debug("connectSMP complete, creating SMPClient", new Uint8Array([smpVersion]))
+    }
     return new SMPClientImpl(
       serverHello.sessionId,
       smpVersion,
