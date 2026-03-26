@@ -159,6 +159,10 @@ export {
   zstdCompress,
 } from "./connection-request.js"
 
+// Invitation builder (Season 6)
+export type {InvitationResult} from "./invitation.js"
+export {buildInvitation, buildInvitationConnInfo} from "./invitation.js"
+
 // Browser client (Season 5 Phase 2)
 export type {BrowserClientConfig, BrowserClient, ClientStatus} from "./browser-client.js"
 export {createBrowserClient} from "./browser-client.js"

@@ -122,13 +122,27 @@ class BrowserClientImpl implements BrowserClient {
       // to MSG pushes on our receiving queue.
       this.setupMessageHandler()
 
-      // 5. For now, we transition to connected after queue creation.
-      // In a full implementation, we would:
-      //   a. Send connection request (CONN-4)
-      //   b. Wait for confirmation from support team
-      //   c. Then transition to connected
-      // Since the full E2E flow requires the support team to accept,
-      // we mark as connected after queue creation for the MVP.
+      // 5. Send invitation to contact queue (Step 2 of connection flow).
+      // After queue creation (IDS), we SEND our connection invitation
+      // to Alice's contact queue. This uses NaCl Layer 1 encryption.
+      if (this.conn.contactQueue) {
+        console.log("[SMP] BrowserClient.connect: sending invitation to contact queue")
+        try {
+          await this.connManager.sendInvitation(
+            this.conn.state.id,
+            this.config.displayName || "Website Visitor"
+          )
+          console.log("[SMP] BrowserClient.connect: invitation sent, state=PENDING")
+        } catch (invErr) {
+          const msg = invErr instanceof Error ? invErr.message : String(invErr)
+          console.log("[SMP] BrowserClient.connect: invitation FAILED: " + msg)
+          // Don't throw - queue was created successfully.
+          // The invitation failure is non-fatal for the MVP.
+        }
+      }
+
+      // Mark as connected. In a full implementation, we would wait for
+      // the support team to accept the invitation before transitioning.
       this.setStatus("connected")
 
     } catch (err) {
