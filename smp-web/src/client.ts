@@ -390,6 +390,9 @@ export class SMPClientImpl implements SMPClient {
 
     console.log("[SMP] sendTypedCommand: corrId=" + key.substring(0, 16) + "..., entityId=" + toHex(entityId) + ", cmd first 4:", toHex(command.subarray(0, 4)))
     console.log("[SMP] sendTypedCommand: sessId=" + (sessId ? toHex(sessId.subarray(0, 8)) + "... (" + sessId.length + "B)" : "none") + ", transmission " + transmission.length + "B")
+    // Log first bytes with field labels for wire format verification
+    // Expected v6: [00=sigLen] [20=sessIdLen] [32B sessId] [18=corrIdLen] [24B corrId] [00=entityIdLen] [cmd...]
+    console.log("[SMP] sendTypedCommand: tx byte[0]=" + transmission[0].toString(16).padStart(2, "0") + " (sigLen), byte[1]=" + transmission[1].toString(16).padStart(2, "0") + " (should be 0x20 sessIdLen for v6)")
     console.log("[SMP] sendTypedCommand: transmission first 48:", toHex(transmission.subarray(0, 48)))
 
     return new Promise<SMPResponse>((resolve, reject) => {

@@ -42,9 +42,10 @@ export function encodeTransmission(
   sessionId?: Uint8Array
 ): Uint8Array {
   const parts: Uint8Array[] = []
-  // Auth/signature field (sigLen=0x00 for unsigned commands)
-  parts.push(encodeBytes(new Uint8Array(0)))
-  // For SMP v6: sessionId goes AFTER auth, BEFORE corrId
+  // sigLen: 1 byte = 0x00 for unsigned commands (no signature follows)
+  // This MUST be the first byte of the transmission.
+  parts.push(new Uint8Array([0x00]))
+  // For SMP v6: sessionId goes AFTER sigLen, BEFORE corrId
   if (sessionId) {
     parts.push(encodeBytes(sessionId))
   }
