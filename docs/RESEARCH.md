@@ -7,7 +7,7 @@
 <p align="center">
   <strong>Deep research on browser-native encrypted messaging, design patterns, and security.</strong><br>
   Dual-profile architecture: SMP for everyday use, GRP for high-security environments.<br>
-  Conducted during Season 1 planning phase, 2026-03-25.
+  Conducted during Season 1 planning phase, updated with Season 5 real-server findings.
 </p>
 
 ---
@@ -89,7 +89,7 @@ Every major encrypted messenger has converged on Rust crypto compiled to WASM:
 - **Signal Desktop**: Uses libsignal (Rust->WASM)
 - **Wire**: Uses core-crypto (Rust->WASM), encrypts IndexedDB with AES-256-GCM
 
-For GoChat's SMP profile: Pure TypeScript with noble libraries is simpler to ship. For the GRP profile: a WASM-compiled ML-KEM-768 implementation may be necessary because post-quantum algorithms are computationally heavier and more sensitive to side-channel attacks than classical algorithms. This decision will be revisited when the GRP profile enters active development (Season 9+).
+For GoChat's SMP profile: Pure TypeScript with noble libraries is simpler to ship. For the GRP profile: a WASM-compiled ML-KEM-768 implementation may be necessary because post-quantum algorithms are computationally heavier and more sensitive to side-channel attacks than classical algorithms. This decision will be revisited when the GRP profile enters active development (Season 10+).
 
 ### 2.5 Post-quantum cryptography in the browser (GRP profile)
 
@@ -103,19 +103,20 @@ The GRP profile mandates hybrid X25519 + ML-KEM-768 key exchange. This creates a
 
 Go 1.24's stdlib includes FIPS-validated ML-KEM-768 - GoRelay uses this server-side. The browser needs an equivalent. This is an open research question tracked as GRP-2 in the protocol document.
 
-### 2.6 Crypto algorithms verified in practice (Season 4)
+### 2.6 Crypto algorithms verified in practice (Seasons 4 and 5)
 
-During Season 4, the SimpleGo team (an independent C implementation of the SimpleX protocol) provided exact crypto specifications from their working implementation and packet captures. The following was confirmed:
+During Seasons 4 and 5, the SimpleGo team (an independent C implementation of the SimpleX protocol) provided exact crypto specifications from their working implementation and packet captures. The following was confirmed:
 
 | Algorithm | Usage | Library |
 |:----------|:------|:--------|
 | X448 (Curve448) | Double Ratchet key exchange, X3DH | @noble/curves/ed448 |
 | X25519 (Curve25519) | Per-queue NaCl crypto_box (Layer 1) | @noble/curves/ed25519 |
-| Ed25519 | SMP command authorization | @noble/curves/ed25519 |
+| Ed25519 | SMP command authorization (signing) | @noble/curves/ed25519 |
 | AES-256-GCM | Double Ratchet body + header encryption | @noble/ciphers/aes |
 | XSalsa20-Poly1305 | NaCl crypto_box (SMP Layer 1) | @noble/ciphers |
 | HKDF-SHA512 | X3DH key derivation ("SimpleXX3DH") | @noble/hashes/hkdf |
 | HKDF-SHA256 | Ratchet chain key derivation ("SimpleXMK"/"SimpleXCK") | @noble/hashes/hkdf |
+| SHA-256 | Server identity fingerprint (keyHash in ClientHello) | @noble/hashes/sha256 |
 | Zstd (level 3) | connInfo payload compression | zstd-codec |
 
 **Critical finding:** SimpleX uses X448 (not X25519) for the Double Ratchet layer. This is a different curve than the per-queue NaCl layer. Confusing the two was documented as one of SimpleGo's earliest implementation bugs. GoChat uses both: X25519 for Layer 1 (SMP transport encryption), X448 for Ratchet (E2E encryption).
@@ -127,6 +128,36 @@ During Season 4, the SimpleGo team (an independent C implementation of the Simpl
 - 'C' confirmation tag (1 byte)
 - Just(e2eEncryption_): e2e version v3-v3, two X448 SPKI keys (68 bytes each, OID 1.3.101.111), optional KEM key
 - encConnInfo: zstd-compressed JSON (ChatMessage v1-16, x.info event with profile)
+
+### 2.7 Ed25519 signing for SMP commands (Season 5)
+
+Season 5 real-server testing revealed the exact Ed25519 signing requirements for SMP v6 commands. This knowledge came from 15 protocol fixes against a real SMP v6.4.5.1 server, with critical assistance from the SimpleGo protocol analysis team.
+
+**Signing process for SMP v6:**
+
+1. Generate Ed25519 keypair (privateKey 32B seed, publicKey 32B)
+2. Public key is SPKI-wrapped (44 bytes: `30 2a 30 05 06 03 2b 65 70 03 21 00 [32B key]`)
+3. SPKI-wrapped key goes in the command body (e.g., NEW authKey)
+4. Raw 32-byte seed is used for signing via `ed25519.sign()`
+
+**What gets signed (v6 - the critical trap):**
+
+```
+signedData = [0x20][sessionId 32B] + [corrIdLen 1B][corrId 24B] + [entityIdLen 1B][entityId] + [command]
+```
+
+The `[0x20]` byte (length prefix for the 32-byte sessionId) MUST be included in the signed data. This cost the SimpleGo team an entire day to discover. Their error progression:
+1. sign(corrId + entityId + cmd) - ERR AUTH
+2. sign(sessionId + corrId + entityId + cmd) - ERR AUTH
+3. sign([0x20] + sessionId + corrId + entityId + cmd) - SUCCESS
+
+The @noble/curves ed25519 library accepts the 32-byte private key (seed) directly and expands it internally, which is compatible with libsodium's `crypto_sign_detached()` behavior.
+
+**SPKI format reminder:**
+- Ed25519 (OID `2b 65 70`): `30 2a 30 05 06 03 2b 65 70 03 21 00 [32B key]` = 44 bytes
+- X25519 (OID `2b 65 6e`): `30 2a 30 05 06 03 2b 65 6e 03 21 00 [32B key]` = 44 bytes
+
+The OID difference is ONE BYTE: `70` for Ed25519 (signing), `6e` for X25519 (DH). The SimpleGo team documented confusing these as a common early bug.
 
 The @noble ecosystem covers all required algorithms from a single audited source.
 
@@ -164,11 +195,19 @@ This trust boundary affects both profiles equally. Even GRP's Noise + ML-KEM-768
 
 **The dual-profile architecture provides a natural escape from this limitation:** for communications where the browser trust boundary is unacceptable, the GRP profile with a SimpleGo hardware endpoint on the receiving side ensures that at least one party is running verified, non-server-delivered code. The browser side remains the weaker link, but the hardware side is fully controlled.
 
-### 3.3 TLS certificate challenge
+### 3.3 TLS certificate challenge (resolved in Season 5)
 
 SMP servers use self-signed certificate chains where the offline CA certificate hash is embedded in the server address (`smp://fingerprint@host`). Browsers reject WSS connections to servers with untrusted certificates.
 
-**Solution:** GoChat's SMP servers must use standard CA-signed certificates (e.g., Let's Encrypt) for the TLS layer. SMP's own DH key exchange provides a second encryption envelope independent of the TLS CA chain. The SMP server fingerprint verification happens at the application layer, not the TLS layer.
+**Solution implemented in Season 5:** A standalone Nginx reverse proxy terminates TLS with a trusted Let's Encrypt certificate and forwards WebSocket connections to the SMP server's internal WebSocket port. The SMP server's own TLS (with self-signed certs) runs between Nginx and the SMP server on localhost.
+
+```
+Browser --WSS (LE cert)--> Nginx :8444 --WSS (self-signed)--> SMP :5225
+```
+
+The SMP server fingerprint from the contact address is used for application-layer identity verification (keyHash in ClientHello), not for TLS certificate validation. This means the browser trusts the Let's Encrypt certificate for transport, while the SMP protocol's own fingerprint check verifies the server identity independently of the CA chain.
+
+**Key implementation detail:** The Nginx proxy requires `proxy_ssl_conf_command Options UnsafeLegacyRenegotiation` because the SMP server's TLS implementation uses older renegotiation that modern OpenSSL rejects by default.
 
 For the GRP profile, this challenge does not apply in the same way. Noise Protocol uses the server's 32-byte Curve25519 public key as identity - no certificates, no CA chain, no expiry. The key IS the fingerprint. However, the initial WebSocket connection to the GoRelay server still needs a valid TLS certificate for the browser to accept the WSS upgrade. The Noise handshake then provides a second, independent encryption layer inside the WebSocket.
 
@@ -226,11 +265,124 @@ For the GRP profile, reconnection must re-establish the Noise session (full hand
 
 GRP connections through GoRelay's two-hop routing add 5-15ms latency per hop for same-region servers. For messaging where delivery latency of 1-5 seconds is normal, this is imperceptible. The cover traffic generated by GoRelay (Poisson-distributed dummy messages) adds bandwidth overhead but no user-visible latency.
 
+### 4.4 WebSocket proxy architecture (Season 5 finding)
+
+Real-world deployment revealed that browsers cannot connect directly to SMP servers because:
+
+1. SMP servers use self-signed certificates (browsers reject these for WSS)
+2. The SMP WebSocket port (5225) may not be directly accessible
+3. Corporate firewalls often block non-standard ports
+
+The proven architecture uses a reverse proxy:
+
+```
+Browser --> WSS :8444 (Nginx, LE cert) --> HTTPS :5225 (SMP server, self-signed)
+```
+
+**Nginx as standalone process:** On servers managed by Plesk or similar panels, the system nginx is owned by the panel. A standalone nginx instance with its own config file and PID avoids conflicts:
+
+```bash
+nginx -c /etc/nginx/smp-proxy.conf   # Separate config, separate PID
+```
+
+**Critical proxy settings for SMP binary protocol:**
+- `proxy_buffering off` - SMP uses fixed 16KB blocks; buffering breaks framing
+- `proxy_request_buffering off` - commands must flow through immediately
+- `tcp_nodelay on` - no Nagle algorithm delay for small packets
+- `proxy_max_temp_file_size 0` - never write to disk
+- `proxy_read_timeout 86400` - keep long-lived connections alive (24h)
+- `proxy_ssl_verify off` - accept SMP server's self-signed cert
+- `proxy_ssl_conf_command Options UnsafeLegacyRenegotiation` - SMP server uses older TLS
+
+**What does NOT work as a proxy:**
+- Apache mod_proxy_wstunnel: fails with "downstream server wanted client certificate" (SMP mutual TLS)
+- Nginx stream module (TCP proxy): WebSocket requires HTTP Upgrade, TCP proxy cannot handle it
+- Nginx with `proxy_pass http://`: SMP WebSocket port speaks TLS, not plain HTTP
+
+**Production TODO:** The standalone nginx process does not survive server reboots. Requires a systemd service for production deployment.
+
 ---
 
-## 5. Design specifications
+## 5. SMP v6 protocol findings (Season 5)
 
-### 5.1 Premium design targets
+Season 5's 15 protocol fixes against a real SMP v6.4.5.1 server produced a comprehensive understanding of the v6 wire format that was not previously documented anywhere outside the Haskell source code. The SimpleGo protocol analysis team (49 sessions, 81 bugs, 270 lessons) provided critical knowledge at several turning points.
+
+### 5.1 SMP v6 vs v7 - key differences for browser clients
+
+| Aspect | v6 (implySessId=false) | v7+ (implySessId=true) |
+|:-------|:----------------------|:----------------------|
+| SessionId in outgoing commands | Present (after signature) | Not present |
+| SessionId in incoming responses | Present (must skip when parsing) | Not present |
+| SessionId in signed data | Included with 0x20 length prefix | Included differently |
+| NEW command | `"NEW " + authKey + dhKey + "S"` | May include basicAuth, sndSecure |
+| Field separators in commands | ShortString self-delimiting (no spaces) | May use spaces for some fields |
+
+### 5.2 Batch framing (mandatory since v4)
+
+Every 16KB block sent to or received from the SMP server uses batch framing:
+
+```
+[2B contentLen (Word16 BE)] [1B txCount] [2B txLen (Word16 BE)] [transmission] ['#' padding to 16384]
+```
+
+`batch = True` is hardcoded in the Haskell server's `Transport.hs` since v4. There is NO fallback to unbatched format. The only exception is the handshake blocks (ServerHello/ClientHello) which use a simpler format.
+
+The SimpleGo team discovered this as their Bug #31 (Session 31), where a `txCount == 1` filter in their parser silently discarded batched responses containing MSG frames. The one-character fix (`==` to `>=`) resolved three weeks of debugging.
+
+### 5.3 Asymmetric sessionId behavior over WebSocket
+
+When connecting through a WSS reverse proxy, the sessionId behavior is asymmetric:
+
+- **Outgoing commands:** SessionId IS included in the wire format (after signature, before corrId)
+- **Incoming responses:** SessionId IS present (must skip 33 bytes: 1B length + 32B sessionId before reading corrId)
+- **Signed data:** SessionId IS included WITH its `0x20` length prefix
+
+This asymmetry exists because the SMP server computes sessionId from TLS channel binding (`tls-unique` per RFC 5929). Over WebSocket through a proxy, the TLS session between Nginx and the SMP server provides the sessionId. The server sends this value in the ServerHello, and the client must echo it back in every command.
+
+### 5.4 SMP command authentication
+
+Every signed SMP command (NEW, SUB, KEY, ACK, DEL) carries its authentication in the wire format:
+
+```
+[sigLen 1B] [signature sigLen bytes] [sessIdLen 1B] [sessionId 32B] [corrIdLen 1B] [corrId] [entityIdLen 1B] [entityId] [command]
+```
+
+For unsigned commands: `sigLen = 0x00`, no signature bytes follow.
+For signed commands: `sigLen = 0x40` (64 bytes Ed25519 signature).
+
+The server verifies signatures using the public key associated with the queue. For NEW commands, the public key is extracted from the command body itself (the authKey parameter).
+
+### 5.5 Length encoding conventions
+
+From the SimpleGo protocol analysis (Session 4, the #1 bug class with 8 occurrences):
+
+- **ShortString (1-byte length):** Used for keys, sessionId, corrId, entityId within transmissions
+- **Large (2-byte Word16 BE):** Used for ByteString fields in agent-level messages (emHeader, ehBody, etc.)
+- **Word16 BE:** Used for version numbers, content lengths in block framing
+
+The SMP command body uses shortString (1-byte) for key fields. This is self-delimiting - the parser reads the length byte, then reads that many bytes for the value. No space separators needed between fields.
+
+### 5.6 Error progression pattern
+
+Real-server debugging follows a predictable progression where each fix reveals the next layer:
+
+```
+Network errors      -> Fix proxy/TLS/ports
+Decode errors       -> Fix wire format parsing  
+ERR SESSION         -> Fix sessionId handling
+ERR CMD SYNTAX      -> Fix command body format
+ERR CMD NO_AUTH     -> Fix signature presence
+ERR AUTH            -> Fix signed data content
+IDS / OK            -> Command accepted!
+```
+
+This pattern held exactly during Season 5's 15 fixes and mirrors the SimpleGo team's experience across 49 sessions.
+
+---
+
+## 6. Design specifications
+
+### 6.1 Premium design targets
 
 GoChat must achieve Intercom-level polish, not Chatwoot-level "it works".
 
@@ -238,38 +390,52 @@ GoChat must achieve Intercom-level polish, not Chatwoot-level "it works".
 |:--------|:-------------|
 | Panel width | 380px (350-400px range) |
 | Panel height | 520-550px (100vh on mobile) |
-| Launcher button | 56px circular FAB, bottom-right, 20px margin |
+| Panel position | Left-docked, flush with viewport edge |
 | Message font | 14px, system font stack, 1.5 line-height |
 | Bubble border-radius | 18px (4px on tail corner) |
 | Bubble max-width | 70-75% of container |
+| Incoming bubbles | Dark background with cyan/accent left border |
+| Outgoing bubbles | Accent color background with 2px tail corner |
 | Message spacing | 16px between senders, 2-4px within same sender |
 | Dark mode background | #121212 (never pure black - causes halation) |
 | Dark mode text | #E0E0E0 (never pure white) |
-| Primary color | Blue (#3B82F6 range) - signals trust |
+| Input field | Pill-shaped (border-radius: 20px), dark background |
+| Send button | 40px circle, centered, accent color |
 | Transitions | 200-300ms ease-out, only transform + opacity for 60fps |
 
-### 5.2 Animation patterns
+### 6.2 Animation patterns
 
 - **Message appear:** fade + translateY(10px->0) at 200ms ease-out
-- **Panel open:** scale(0.9->1) + opacity(0->1) + translateY(20->0) with transform-origin: bottom right
+- **Panel open:** slideInLeft with 300ms ease
+- **Panel close:** slideOutLeft with 300ms ease
 - **Typing indicator:** Three 8px dots with staggered animation-delay, scale(0.6)->scale(1) at 1.4s
-- **Launcher morph:** Chat bubble to X/close icon with 300ms rotation
 - **All animations must respect** `prefers-reduced-motion`
 
-### 5.3 The encryption indicator
+### 6.3 The encryption indicator
 
 GoChat's unique visual differentiator: A persistent lock icon with "End-to-end encrypted" badge, always visible. This is not just a feature - it is the brand. No competitor can match this.
 
+The encryption badge uses a shimmer animation matching the player cover art effect on the SimpleGo website, creating visual consistency across the design system.
+
 For the dual-profile architecture, the encryption indicator should also communicate which profile is active. When using the GRP profile, an additional visual element (such as a shield icon or "Post-quantum secured" label) signals the elevated security level. The user should always know whether they are on SMP (standard encryption, any server) or GRP (Noise + PQ, GoRelay only).
 
-### 5.4 Accessibility requirements
+### 6.4 Chat panel implementation (Season 5)
+
+The chat panel was implemented in Season 5 with the following architecture:
+
+- **CSS:** All classes prefixed with `gc-` to avoid conflicts with the existing SimpleGo design system
+- **JS:** Panel logic with mock/real mode detection. If `window.createBrowserClient` is available and a contact address is configured, real mode activates. Otherwise, demo messages show the UI.
+- **HTML:** Placed outside `#page-content` in the base template so the chat panel persists across SPA page navigation
+- **Integration:** "Chat" tab in the util-bar alongside "GitHub", replacing the old "Contact Us" link
+
+### 6.5 Accessibility requirements
 
 - Chat container: `role="log"` with `aria-live="polite"`
 - All interactive elements: visible focus indicators + keyboard operability
 - Touch targets: minimum 44x44px
 - Color never the sole status indicator - always combine with icons or text
 
-### 5.5 UX anti-patterns to avoid
+### 6.6 UX anti-patterns to avoid
 
 Based on user complaints across all platforms:
 1. **Never auto-open** the chat widget - use subtle launcher with optional badge
@@ -279,9 +445,9 @@ Based on user complaints across all platforms:
 
 ---
 
-## 6. Competitive analysis summary
+## 7. Competitive analysis summary
 
-### 6.1 Feature comparison
+### 7.1 Feature comparison
 
 | Feature | Intercom | Crisp | Chatwoot | GoChat (SMP) | GoChat (GRP) |
 |:--------|:---------|:------|:---------|:-------------|:-------------|
@@ -294,10 +460,10 @@ Based on user complaints across all platforms:
 | Multi-hop routing | No | No | No | No | **Yes (two-hop)** |
 | Cover traffic | No | No | No | No | **Yes (Poisson)** |
 | File sharing | Yes | Yes | Yes | **Planned** | **Planned** |
-| Mobile responsive | Yes | Yes | Yes | **Planned** | **Planned** |
+| Mobile responsive | Yes | Yes | Yes | **Done** | **Planned** |
 | Multi-agent | Yes | Yes | Yes | **Planned** | **Planned** |
 
-### 6.2 Dual-profile positioning
+### 7.2 Dual-profile positioning
 
 The dual-profile architecture gives GoChat a unique market position that no competitor can replicate without fundamental re-architecture:
 
@@ -307,7 +473,7 @@ The dual-profile architecture gives GoChat a unique market position that no comp
 
 The combination of both profiles in a single chat interface - selectable per connection - is unprecedented. A shop owner uses SMP for customer support. A journalist on the same website switches to GRP when contacting a source. Same UI, same codebase, fundamentally different security properties.
 
-### 6.3 Encrypted messenger comparison (beyond support chat)
+### 7.3 Encrypted messenger comparison (beyond support chat)
 
 | Feature | Signal Web | Element Web | Wire Web | GoChat (SMP) | GoChat (GRP) |
 |:--------|:-----------|:------------|:---------|:-------------|:-------------|
@@ -322,7 +488,7 @@ The combination of both profiles in a single chat interface - selectable per con
 
 ---
 
-## 7. Impact on GoChat season plan
+## 8. Impact on GoChat season plan
 
 ### New tasks identified from research
 
@@ -331,7 +497,7 @@ The combination of both profiles in a single chat interface - selectable per con
 - **SEC-2:** Subresource Integrity for all external scripts
 - **SEC-3:** Web Worker isolation for crypto operations
 - **SEC-4:** Security documentation - transparent trust boundary communication
-- **SEC-5:** TLS certificate strategy (Let's Encrypt + SMP fingerprint at app layer)
+- **SEC-5:** TLS certificate strategy (Let's Encrypt + SMP fingerprint at app layer) - RESOLVED in Season 5
 - **UI-6:** Intercom-level animation system (panel, messages, typing, launcher)
 - **UI-7:** Encryption indicator design and placement (with profile-aware display)
 - **UI-8:** Accessibility audit (WCAG 2.1 AA compliance)
@@ -340,7 +506,7 @@ The combination of both profiles in a single chat interface - selectable per con
 
 - **Dual-profile architecture:** SMP for everyday use, GRP for high-security. Both profiles share the same chat UI and the same ChatTransport interface abstraction. This is the single most important architectural decision in Season 1.
 - **Crypto library:** Use @noble/curves + @noble/ciphers + @noble/hashes for both profiles. The @noble family covers SMP needs (X25519, NaCl) and GRP needs (ChaCha20-Poly1305, BLAKE2s) from a single audited source.
-- **Post-quantum:** Defer ML-KEM-768 browser implementation to GRP development (Season 9+). No mature, audited JS implementation exists yet. Evaluate @noble/post-quantum vs WASM when the time comes.
+- **Post-quantum:** Defer ML-KEM-768 browser implementation to GRP development (Season 10+). No mature, audited JS implementation exists yet. Evaluate @noble/post-quantum vs WASM when the time comes.
 - **Design ambition:** Target Intercom-level polish, not "functional minimum". The encryption badge is the brand.
 - **WebSocket architecture:** SharedWorker layer for tab persistence, managing connections to both SMP and GoRelay servers.
 - **ChatTransport interface from day one:** All transport code goes through the abstract interface. This ensures GRP can be added later without touching application-level code.
@@ -348,6 +514,8 @@ The combination of both profiles in a single chat interface - selectable per con
 - **X448 for Ratchet, X25519 for NaCl:** Verified via SimpleGo team. Two different elliptic curves for two different encryption layers. This is non-negotiable - the SimpleX app expects X448 for ratchet parameters.
 - **Agent envelope format:** Confirmed by SimpleGo team from actual packet captures: agentVersion=7, 'C' confirmation tag, e2e version v3-v3 with X448 SPKI keys (68 bytes each, OID 1.3.101.111).
 - **Zstd always required:** Even the first connection request uses zstd compression for connInfo. Verified by SimpleGo team.
+- **Nginx WSS proxy for browser TLS:** Resolved in Season 5. Standalone Nginx process with Let's Encrypt cert terminates browser TLS, forwards to SMP server's internal WebSocket port. Self-signed SMP cert accepted by Nginx with verify off.
+- **SMP v6 wire format:** Fully documented in Season 5 through 15 protocol fixes. SessionId asymmetry, batch framing, Ed25519 signing with sessionId in signed data - all verified against real server.
 
 ### Modified decisions from initial planning
 
@@ -356,10 +524,12 @@ The combination of both profiles in a single chat interface - selectable per con
 - **Design ambition:** Target Intercom-level polish, not "functional minimum"
 - **WebSocket architecture:** Add SharedWorker layer for tab persistence
 - **Transport abstraction:** ChatTransport interface mandatory from the first line of transport code
+- **TLS strategy:** Nginx reverse proxy with LE cert (Season 5) instead of configuring SMP server with LE directly
+- **Season scope:** Season 5 shifted from E2E hardening to real-server connectivity (correct decision - exposed 15 bugs mocks could not catch)
 
 ---
 
-## 8. References
+## 9. References
 
 | Topic | Source |
 |:------|:-------|
@@ -386,6 +556,7 @@ The combination of both profiles in a single chat interface - selectable per con
 | GoRelay Cover Traffic Research | docs/research/05-cover-traffic.md (internal) |
 | GoRelay Two-Hop Routing Research | docs/research/06-dual-relay-routing.md (internal) |
 | GoRelay Triple Shield Research | docs/research/12-triple-shield.md (internal) |
+| SimpleGo Protocol Analysis | github.com/saschadaemgen/SimpleGo docs/protocol-analysis/ (49 sessions) |
 
 ---
 
@@ -396,3 +567,4 @@ The combination of both profiles in a single chat interface - selectable per con
 | 2026-03-25 | Initial research document. Comprehensive analysis of browser crypto, security, design, and competitive landscape. |
 | 2026-03-25 | Dual-profile update. Added GRP security context throughout, expanded competitive analysis with dual-profile positioning, added post-quantum browser crypto section, referenced GoRelay research documents, updated architectural decisions with ChatTransport interface and dual-profile as key Season 1 decision. |
 | 2026-03-25 | Season 4 crypto verification. Added Section 2.6 documenting all crypto algorithms confirmed by SimpleGo team. X448 mandatory for ratchet, X25519 for NaCl Layer 1 only. Added X3DH variant details and agent confirmation format. Updated architectural decisions with three new verified findings. |
+| 2026-03-26 | Season 5 real-server findings. Added Section 2.7 (Ed25519 signing for SMP v6). Added Section 4.4 (WebSocket proxy architecture). Added Section 5 (SMP v6 protocol findings - batch framing, sessionId asymmetry, command authentication, length encoding, error progression). Updated Section 3.3 with implemented TLS solution (Nginx WSS proxy). Updated Section 6.1 design specs with implemented panel design (left-docked). Added Section 6.4 (chat panel implementation). Updated competitive analysis (mobile responsive: Done). Updated architectural decisions with Nginx proxy and v6 wire format findings. Added SimpleGo Protocol Analysis to references. |

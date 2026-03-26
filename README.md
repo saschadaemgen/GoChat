@@ -257,19 +257,27 @@ Each website visitor connects via a permanent contact address and receives their
 | LGET/LNK commands | smp-web spike | Link retrieval for connection setup |
 | Transmission framing | xftp-web | Block encoding/decoding with session auth |
 
-### To do (our work)
+### Done (our work - Seasons 2-5)
 
-| Component | Task IDs | Description |
-|:----------|:---------|:------------|
-| WebSocket transport client | WS-1 to WS-4 | Browser-side WebSocket client + SharedWorker pool |
-| SMP commands | CMD-1 to CMD-5 | NEW, SUB, SEND, MSG, ACK, KEY, DEL |
-| Connection flow | CONN-1 to CONN-4 | Contact address parsing, queue pair setup, state machine |
-| E2E encryption | E2E-1 to E2E-3 | NaCl box MVP via @noble/ciphers, key storage, later Double Ratchet |
-| Security hardening | SEC-1 to SEC-5 | CSP, SRI, Web Worker isolation, TLS strategy |
-| Chat UI (customer) | UI-1 to UI-8 | Intercom-level panel, animations, encryption badge, accessibility |
-| Admin Panel (support) | ADM-1 to ADM-4 | Multi-conversation dashboard, agent management, E2E encrypted admin interface |
-| GRP transport | GRP-1 to GRP-4 | Noise protocol, ML-KEM-768, two-hop routing (future) |
-| Deployment | OPS-1 to OPS-3 | SMP server, TLS, contact address, monitoring |
+| Component | Season | Description |
+|:----------|:-------|:------------|
+| WebSocket transport client | S2 | SMPWebSocketTransport, ChatTransport interface, SharedWorker pool |
+| SMP commands | S3 | 14 command encoders, response decoder, mock server, 187 tests |
+| Connection flow | S4 | Contact address parser, X3DH key agreement, Double Ratchet, 413 tests |
+| Chat UI | S5 | Left-docked panel, responsive, animations, encryption badge |
+| Browser client API | S5 | createBrowserClient(), esbuild IIFE bundle, 24 integration tests |
+| Server infrastructure | S5 | Docker SMP server, Nginx WSS proxy, contact address |
+| Real server connectivity | S5 | 15 protocol fixes for SMP v6 compatibility, 485 tests total |
+
+### To do (remaining work)
+
+| Component | Season | Description |
+|:----------|:-------|:------------|
+| Bidirectional messaging | S6 | Complete 7-step connection flow, encrypted chat with SimpleX app |
+| Production polish | S7 | Animations, SharedWorker, IndexedDB persistence, accessibility |
+| Security hardening | S8 | CSP, SRI, Web Worker isolation, security review |
+| simplex-js library | S9 | Standalone npm package for SMP browser client |
+| GRP transport | S10+ | Noise protocol, ML-KEM-768, two-hop routing (future) |
 
 Full task breakdown: [docs/PROTOCOL.md](docs/PROTOCOL.md)
 
@@ -285,16 +293,15 @@ We develop in seasons - each with a clear goal, defined scope, and a protocol do
 | **S2** | WebSocket transport client (SMP) | Complete |
 | **S3** | SMP commands (187 tests) | Complete |
 | **S4** | Connection flow + X3DH + Double Ratchet (413 tests) | Complete |
-| **S5** | End-to-end encryption hardening | Next |
-| **S6** | Chat UI (Intercom-level design) | Planned |
-| **S7** | SimpleGo website integration | Planned |
-| **S7.5** | Admin Panel (browser-based support dashboard) | Planned |
+| **S5** | Chat UI + browser client + real server (485 tests) | Complete |
+| **S6** | Bidirectional messaging (7-step connection flow) | Next |
+| **S7** | Production polish (animations, persistence, accessibility) | Planned |
 | **S8** | Production hardening + security review | Planned |
 | **S9** | simplex-js npm library | Planned |
 | **S10+** | GRP profile, Noise transport, post-quantum, Triple Shield | Future |
 
-**Critical path:** S1 DONE - S2 DONE - S3 DONE - S4 DONE - S5 - S7 - S8  
-**Parallel track:** S5 (encryption) and S6 (UI) can run alongside S4  
+**Critical path:** S1 DONE - S2 DONE - S3 DONE - S4 DONE - S5 DONE - S6 - S7 - S8  
+**Parallel track:** S7 (polish) can run alongside S6  
 **GRP track:** Begins after SMP profile is production-ready
 
 Full season plan: [docs/seasons/SEASON-PLAN.md](docs/seasons/SEASON-PLAN.md)
@@ -325,7 +332,9 @@ GoChat/
 |       +-- ratchet.ts              # Double Ratchet init + first encrypt (AES-256-GCM)
 |       +-- agent-envelope.ts       # Agent confirmation encoding
 |       +-- connection-request.ts   # Connection request builder + zstd
-|       +-- __tests__/              # 413 tests across 16 files
+|       +-- browser-client.ts       # High-level browser API for chat integration
+|       +-- __tests__/              # 485 tests across 19 files
+|   +-- esbuild.config.mjs         # Browser bundle config (IIFE format)
 +-- xftp-web/                       # Shared infrastructure (upstream)
 |   +-- src/
 |       +-- client.ts               # HTTP/2 transport, handshake, retry
@@ -341,6 +350,7 @@ GoChat/
 |       +-- SEASON-02-transport.md  # Season 2 learnings
 |       +-- SEASON-03-commands.md   # Season 3 learnings
 |       +-- SEASON-04-connection-flow.md # Season 4 learnings
+|       +-- SEASON-05-real-server.md # Season 5 learnings
 +-- LICENSE                         # AGPL-3.0
 +-- README.md
 ```
@@ -357,12 +367,27 @@ cd GoChat
 git checkout feat/simplego-support-chat
 ```
 
-**Explore the spike:**
+**Run the tests:**
 
 ```powershell
-cat smp-web/src/protocol.ts         # SMP protocol in TypeScript
-cat smp-web/src/index.ts            # Shared encoding primitives
-cat xftp-web/src/client.ts          # Transport reference implementation
+cd smp-web
+npx vitest run
+```
+
+**Build the browser bundle:**
+
+```powershell
+npm run build:browser
+# Output: dist/gochat-client.js (IIFE format, ~211KB)
+```
+
+**Explore the code:**
+
+```powershell
+cat smp-web/src/browser-client.ts   # High-level browser API
+cat smp-web/src/connection.ts       # Connection flow
+cat smp-web/src/commands.ts         # SMP command encoders
+cat smp-web/src/protocol.ts         # Wire format encode/decode
 ```
 
 ---
@@ -429,7 +454,7 @@ We intend to contribute our WebSocket transport client and SMP command implement
 
 ## Status
 
-Seasons 1 through 4 are complete. Season 5 (E2E encryption hardening) is next.
+Seasons 1 through 5 are complete. Season 6 (bidirectional messaging) is next.
 
 | Component | Status |
 |:----------|:-------|
@@ -442,11 +467,14 @@ Seasons 1 through 4 are complete. Season 5 (E2E encryption hardening) is next.
 | SMP command implementation | Done (187 tests) |
 | Browser-to-app connection flow | Done (413 tests) |
 | X3DH key agreement + Double Ratchet | Done |
-| End-to-end encryption hardening | Season 5 |
-| Chat UI (Intercom-level) | Season 6 |
-| Website integration | Season 7 |
-| Admin Panel (support dashboard) | Season 7.5 |
-| Production deployment + security review | Season 8 |
+| Chat panel UI (left-docked, responsive) | Done |
+| Browser client API + esbuild bundle | Done |
+| SMP server deployment (Docker + WebSocket) | Done |
+| Nginx WSS reverse proxy | Done |
+| Real server connectivity (15 protocol fixes) | Done (485 tests) |
+| Bidirectional messaging (7-step flow) | Season 6 |
+| Production polish (animations, persistence) | Season 7 |
+| Security hardening + review | Season 8 |
 | simplex-js npm library | Season 9 |
 | GRP profile + post-quantum + Noise | Season 10+ |
 
@@ -459,6 +487,7 @@ Seasons 1 through 4 are complete. Season 5 (E2E encryption hardening) is next.
 | Technical protocol | [docs/PROTOCOL.md](docs/PROTOCOL.md) |
 | Research findings | [docs/RESEARCH.md](docs/RESEARCH.md) |
 | Season plan | [docs/seasons/SEASON-PLAN.md](docs/seasons/SEASON-PLAN.md) |
+| Season 5 closing protocol | [docs/seasons/SEASON-05-real-server.md](docs/seasons/SEASON-05-real-server.md) |
 | SimpleGo main project | [github.com/saschadaemgen/SimpleGo](https://github.com/saschadaemgen/SimpleGo) |
 | SimpleGo documentation | [wiki.simplego.dev](https://wiki.simplego.dev) |
 | GoRelay documentation | [wiki.gorelay.dev](https://wiki.gorelay.dev) |
@@ -500,7 +529,7 @@ This project is a derivative work of SimpleXMQ by SimpleX Chat Ltd, licensed und
 
 ## Acknowledgments
 
-[SimpleX Chat](https://simplex.chat/) (SimpleX Messaging Protocol and simplexmq reference implementation) - [Evgeny Poberezkin](https://github.com/epoberezkin) (smp-web spike and WebSocket server support) - [@noble/hashes](https://github.com/paulmillr/noble-hashes) (SHA-256, SHA-512, HKDF) - [@noble/curves](https://github.com/paulmillr/noble-curves) (Ed25519, X25519, X448) - [@noble/ciphers](https://github.com/paulmillr/noble-ciphers) (XSalsa20-Poly1305, AES-256-GCM) - [zstd-codec](https://github.com/nicedayzhu/zstd-codec) (Zstd compression)
+[SimpleX Chat](https://simplex.chat/) (SimpleX Messaging Protocol and simplexmq reference implementation) - [Evgeny Poberezkin](https://github.com/epoberezkin) (smp-web spike and WebSocket server support) - [@noble/hashes](https://github.com/paulmillr/noble-hashes) (SHA-256, SHA-512, HKDF) - [@noble/curves](https://github.com/paulmillr/noble-curves) (Ed25519, X25519, X448) - [@noble/ciphers](https://github.com/paulmillr/noble-ciphers) (XSalsa20-Poly1305, AES-256-GCM) - [zstd-codec](https://github.com/nicedayzhu/zstd-codec) (Zstd compression) - [SimpleGo Protocol Analysis Team](https://github.com/saschadaemgen/SimpleGo) (49 sessions of SMP reverse-engineering, critical wire format knowledge for Season 5)
 
 ---
 

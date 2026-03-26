@@ -26,6 +26,11 @@
 
 Each season has a clear goal, a defined scope, and produces a protocol document at the end documenting all successes, failures, and learnings. Code is written by Claude Code, directed and reviewed by Sascha, planned by Prinzessin Mausi in the chat sessions.
 
+**Three-role workflow:**
+- **Prinzessin Mausi** (Claude chat): Planning, briefings, UI design, protocol analysis, documentation
+- **Der Prinz / Sascha**: Direction, PR reviews, testing, server administration, final decisions
+- **Der Ritter / Claude Code**: Implementation, receives briefings, pushes feature branches
+
 **Ground rule (all seasons):** Nothing invented. What is missing gets asked. The Prinzessin shows everything needed.
 
 All commits follow Conventional Commits format: `type(scope): description`
@@ -38,17 +43,12 @@ docs/
   RESEARCH.md                    # Browser crypto, security, design research
   seasons/
     SEASON-PLAN.md               # This file
-    SEASON-01-planning.md        # Planning & documentation
+    SEASON-01-planning.md        # Planning and documentation
     SEASON-02-transport.md       # WebSocket transport
     SEASON-03-commands.md        # SMP commands
-    SEASON-04-connection.md      # Connection flow
-    SEASON-05-encryption.md      # E2E encryption
-    SEASON-06-ui.md              # Chat UI (Intercom-level)
-    SEASON-07-integration.md     # SimpleGo integration
-    SEASON-08-hardening.md       # Production hardening
-    SEASON-09-noise.md           # GRP: Noise transport
-    SEASON-10-postquantum.md     # GRP: ML-KEM-768 post-quantum
-    SEASON-11-routing.md         # GRP: Two-hop relay routing
+    SEASON-04-connection-flow.md # Connection flow + X3DH + Double Ratchet
+    SEASON-05-real-server.md     # Chat UI + browser client + real server connectivity
+    SEASON-06-messaging.md       # Bidirectional messaging (next)
 ```
 
 ---
@@ -88,24 +88,23 @@ docs/
 
 1. **Architecture:** Direct browser-to-SMP-server via WebSocket (no CLI bridge)
 2. **Base:** Build on top of `ep/smp-web-spike`, reuse xftp-web infrastructure
-3. **Dual-profile architecture:** SMP profile for everyday use, GRP profile for high-security environments. Both profiles share the same chat UI and ChatTransport interface abstraction. This is the single most important architectural decision in Season 1.
-4. **ChatTransport interface from day one:** All transport code goes through an abstract interface, ensuring GRP can be added later without touching application-level code
+3. **Dual-profile architecture:** SMP profile for everyday use, GRP profile for high-security environments
+4. **ChatTransport interface from day one:** All transport code goes through an abstract interface
 5. **Encryption MVP:** Start with NaCl secretbox via @noble/ciphers, upgrade to Double Ratchet later
-6. **Crypto library:** @noble/curves + @noble/ciphers + @noble/hashes for both profiles (6 audits, used by Proton Mail, MetaMask)
+6. **Crypto library:** @noble/curves + @noble/ciphers + @noble/hashes for both profiles
 7. **Multi-user:** Native via SimpleX contact address system
 8. **UI ambition:** Intercom-level polish, not "functional minimum". Encryption badge is the brand.
 9. **Project name:** GoChat (ecosystem: SimpleGo, GoRelay, GoChat)
 10. **No mobile app:** SimpleX covers mobile/desktop. GoChat fills the browser gap.
-11. **GoChat extends SimpleX, does not replace it.** GRP is an additional security layer via GoRelay, not a competing protocol.
+11. **GoChat extends SimpleX, does not replace it.**
 
 ---
 
 ## Season 2: WebSocket transport client
 
-**Goal:** Browser can establish a WebSocket connection to an SMP server, complete the handshake, and send/receive raw SMP blocks. The transport class must implement the ChatTransport interface.
-
-**Status:** Complete
-**Result:** 3 tasks, 3 PRs merged, all tests passing. Transport layer stack fully operational.
+**Status:** Complete  
+**Goal:** Browser can establish a WebSocket connection to an SMP server, complete the handshake, and send/receive raw SMP blocks.
+**Result:** 3 tasks, 3 PRs merged. Transport layer stack fully operational.
 
 ### Success criteria
 
@@ -120,9 +119,8 @@ docs/
 
 ## Season 3: SMP commands
 
+**Status:** Complete  
 **Goal:** Implement all SMP commands needed for basic messaging.
-
-**Status:** Complete
 **Result:** 4 tasks, 4 PRs merged (#4, #5, #6, #7), 187 tests across 8 files. Full command layer operational with mock integration testing.
 
 ### Deliverables
@@ -145,210 +143,217 @@ docs/
 
 ---
 
-## Season 4: Connection flow (CURRENT)
+## Season 4: Connection flow
 
+**Status:** Complete  
 **Goal:** Full connection establishment from browser to SimpleX app via contact address.
+**Result:** 12 PRs merged, 413 tests across 16 files. Complete connection flow with X3DH key agreement and Double Ratchet encryption.
 
-**Status:** Current
+### Deliverables
+
+- [x] Contact address parser (both simplex:/ and https:// formats, short links v6.4+ and legacy)
+- [x] Connection state machine (7 states with validated transitions)
+- [x] Queue pair creation via ConnectionManager
+- [x] X3DH modified 4-DH key agreement (4x X448 DH + HKDF-SHA512 "SimpleXX3DH")
+- [x] Double Ratchet initialization + first encrypt (AES-256-GCM, HKDF-SHA256)
+- [x] Agent confirmation envelope (agentVersion=7, X448 SPKI keys, e2e v3)
+- [x] SMP confirmation with NaCl Layer 1 (XSalsa20-Poly1305)
+- [x] connInfo as zstd-compressed JSON (ChatMessage v1-16, x.info event)
+
+### Success criteria
+
+- [x] Can parse a SimpleX contact address link (both simplex:/ and https:// formats)
+- [x] Browser creates queue pair on SMP server (against mock)
+- [x] X3DH key exchange produces correct shared secrets
+- [x] Double Ratchet encrypts first message correctly
+- [x] Connection request fully encoded with 6 crypto layers
+
+---
+
+## Season 5: Chat UI + browser client + real server connectivity
+
+**Status:** Complete  
+**Goal:** Build the complete pipeline from browser to real SMP server - chat UI, browser client API, server infrastructure, and protocol compatibility.
+**Result:** 15 PRs merged (#19-#33), 485 tests across 19 files. First successful queue creation on real SMP v6 server from browser via WebSocket.
+
+**Scope change:** Originally planned as "E2E Encryption Hardening". Shifted to real-server connectivity because the mock tests (413 from Season 4) all passed but the real server exposed 15 protocol incompatibilities.
+
+### Deliverables
+
+**Phase 1: Chat UI**
+- [x] chat.css: 380px left-docked panel, responsive, gc- prefix, animations, prefers-reduced-motion
+- [x] chat.js: panel logic, mock/real mode, window.GoChat public API
+- [x] base.njk: chat HTML integration with data attributes for contact address and server URL
+
+**Phase 2: Browser Client**
+- [x] browser-client.ts: createBrowserClient() factory with connect/send/disconnect
+- [x] esbuild IIFE bundle: gochat-client.js (~211KB, window.createBrowserClient)
+- [x] 24 integration tests across 7 scenarios (lifecycle, reconnect, errors, rapid sends, idempotency)
+
+**Phase 3: Server Infrastructure**
+- [x] SMP server: Docker simplexchat/smp-server v6.4.5.1 on smp.simplego.dev
+- [x] WebSocket port 5225 activated, native TLS on port 5223
+- [x] Nginx WSS reverse proxy on port 8444 with Let's Encrypt TLS termination
+- [x] Contact address from own server embedded in website
+
+**Phase 4: Protocol Debugging (15 fixes)**
+- [x] ESM to IIFE bundle format
+- [x] Address parser URL decode (double-encoded parameters)
+- [x] ServerHello without certs (WebSocket mode)
+- [x] WebSocket server URL (use config, not contact address port)
+- [x] Frame reassembly for proxied 16KB blocks
+- [x] Debug logging (console.log at every step)
+- [x] Response sessionId skip for v6
+- [x] Outgoing sessionId for v6 commands
+- [x] Session wire format (position after signature)
+- [x] NEW command exact v6 format (no spaces, no basicAuth, no sndSecure)
+- [x] Ed25519 signing for NEW command (sigLen=0x40)
+- [x] SessionId in signed data with 0x20 length prefix
+- [x] Result: NEW -> IDS (queue successfully created on real server!)
+
+### Success criteria
+
+- [x] Chat panel visible and functional on website
+- [x] Browser connects to real SMP server via WebSocket
+- [x] SMP handshake completes (ServerHello/ClientHello)
+- [x] NEW command accepted by server (IDS response)
+- [x] 485 tests passing, zero regressions
+- [ ] ~~Bidirectional messaging with SimpleX app~~ (deferred to Season 6)
+
+### Key lessons
+
+- esbuild.config.mjs gets overwritten by rebases - must be IIFE, not ESM
+- SMP v6 sessionId behavior is asymmetric (in/out/signing all different)
+- Docker entrypoint resets smp-server.ini on every start
+- SimpleGo protocol team (49 sessions) provided critical wire format knowledge
+- Full closing protocol: [SEASON-05-real-server.md](SEASON-05-real-server.md)
+
+---
+
+## Season 6: Bidirectional messaging (NEXT)
+
+**Status:** Next  
+**Goal:** Complete the 7-step SimpleX connection flow so browser and SimpleX app can exchange real encrypted messages.
+
+Season 5 completed Step 1 (NEW -> IDS). Season 6 completes Steps 2-7.
+
+### The 7-step connection flow
+
+```
+1. Browser: NEW -> Queue created (IDS)           DONE (Season 5)
+2. Browser: SEND Invitation to Contact Queue      Season 6
+3. App: receives MSG, shows Connection Request    Season 6
+4. App: accepts, sends CONF back                  Season 6
+5. Browser: receives KEY                          Season 6
+6. Both: HELLO exchange                           Season 6
+7. Both: CON -> "CONNECTED"                       Season 6
+```
 
 ### Scope
 
-- `smp-web/src/address.ts` - SimpleX contact address URI parser
-- `smp-web/src/connection.ts` - Connection manager
-  - Parse SimpleX contact address URI
-  - Create queue pair (two NEW commands)
-  - X25519 key exchange
-  - Send connection request
-  - Handle connection confirmation
-- `smp-web/src/state.ts` - Connection state machine
-  - NEW -> PENDING -> CONFIRMED -> CONNECTED -> CLOSED
-  - Queue pair management
-  - Message routing (incoming MSG -> correct connection)
+- Send connection request (SKEY + SEND with X3DH encrypted invitation) to contact queue
+- Handle incoming confirmation from SimpleX app (MSG with CONF)
+- Exchange HELLO messages (both directions)
+- Achieve CON ("CONNECTED") state
+- Bidirectional encrypted messaging via Double Ratchet (decrypt incoming, encrypt outgoing)
+- E2E encryption receive side (ratchet decrypt, symmetric step, DH step)
+- Out-of-order message handling (skipped message keys)
+
+### Infrastructure tasks
+
+- Nginx proxy systemd service (survive reboot)
+- Commit esbuild.config.mjs as IIFE (prevent rebase overwrites)
+- Remove debug console.log statements from production code
+- Clean up Apache vhost_ssl.conf remnants
 
 ### Tasks for Claude Code
 
 ```
-Task references: CONN-1, CONN-2, CONN-3, CONN-4 from PROTOCOL.md
+Task references: E2E-1, E2E-2, E2E-3, E2E-4, E2E-5 from PROTOCOL.md
+Plus: SEND invitation, CONF handling, HELLO exchange, CON state
 ```
 
 ### Success criteria
 
-- [ ] Can parse a SimpleX contact address link (both simplex:/ and https:// formats)
-- [ ] Browser creates queue pair on SMP server
 - [ ] Connection request reaches SimpleX mobile/desktop app
 - [ ] Support team can accept connection
-- [ ] Bidirectional message exchange works
-- [ ] Connection state persists across page reloads
+- [ ] Browser receives confirmation and completes handshake
+- [ ] Bidirectional message exchange works (browser to app, app to browser)
+- [ ] Messages encrypted via Double Ratchet
+- [ ] Nginx proxy survives server reboot
+- [ ] No debug logging in production bundle
 
-### This is the big milestone
+### This is the milestone
 
-After this season, we have a working chat between browser and SimpleX app. Everything after this is encryption hardening and UI polish.
-
----
-
-## Season 5: End-to-end encryption
-
-**Goal:** Messages are properly encrypted, not just transported.
-
-### Scope
-
-- `smp-web/src/crypto/e2e.ts` - E2E encryption module
-  - MVP: NaCl secretbox with DH shared secret via @noble/ciphers
-  - Key derivation from X25519 agreement via @noble/curves
-  - Message padding (reuse xftp-web padding)
-- `smp-web/src/crypto/keys-store.ts` - Browser key storage
-  - IndexedDB for key material with `extractable: false`
-  - AES-256-GCM encryption at rest
-  - Key cleanup on session end
-- Web Worker isolation for all crypto operations (SEC-3)
-
-### Tasks for Claude Code
-
-```
-Task references: E2E-1 (MVP), E2E-2, E2E-3, SEC-3 from PROTOCOL.md
-```
-
-### Success criteria
-
-- [ ] Messages encrypted before sending, decrypted on receive
-- [ ] Keys stored securely in browser IndexedDB
-- [ ] Support team's SimpleX app can decrypt our messages
-- [ ] We can decrypt messages from the support team
-- [ ] Key material cleared on explicit session end
-- [ ] All crypto runs in dedicated Web Worker
-
-### Future upgrade (not this season)
-
-- X3DH key agreement for proper forward secrecy
-- Double Ratchet for ongoing forward secrecy
-- This is a separate season if we decide to pursue it
+After this season, a website visitor can click "Start Encrypted Chat", connect to the support team's SimpleX app, and exchange real encrypted messages. Everything after this is UI polish and hardening.
 
 ---
 
-## Season 6: Chat UI (Intercom-level design)
+## Season 7: Production polish and website integration
 
-**Goal:** Beautiful, polished chat interface with Intercom-level quality. The encryption badge is the brand differentiator.
-
-GoChat must achieve Intercom-level polish, not Chatwoot-level "it works". Every animation, every transition, every pixel matters. The chat panel is the first thing visitors see - it must signal quality, trust, and security.
+**Status:** Planned  
+**Goal:** Polish the chat experience to Intercom-level quality and fully integrate into the SimpleGo website.
 
 ### Scope
 
-- `chat.css` - Chat panel styles matching SimpleGo design system
-  - Panel: 380px wide, 520-550px tall, 100vh on mobile
-  - Bubble border-radius 18px (4px on tail), max-width 70-75%
-  - Dark mode: #121212 bg, #E0E0E0 text (no pure black/white)
-  - Primary color: Blue (#3B82F6 range) - signals trust
-- `chat.js` - Chat UI logic
-  - Nose-bar chat icon with unread badge
-  - Dropdown panel (same pattern as player panel)
-  - Message bubbles (outgoing right / incoming left)
-  - Text input with send button
-  - Connection status indicator
-  - Auto-scroll behavior
-- Intercom-level animation system
-  - Message appear: fade + translateY(10px->0) at 200ms ease-out
-  - Panel open: scale(0.9->1) + opacity(0->1) + translateY(20->0)
-  - Typing indicator: three 8px dots with staggered delay
-  - Launcher morph: chat bubble to X/close with 300ms rotation
-  - Launcher: 56px circular FAB, bottom-right, 20px margin
-  - All transitions: 200-300ms ease-out, only transform + opacity for 60fps
-  - All animations must respect `prefers-reduced-motion`
-- Encryption badge: persistent lock icon + "End-to-end encrypted"
-  - Profile indicator: SMP vs GRP when dual-profile is available
-- Accessibility (WCAG 2.1 AA)
-  - Chat container: `role="log"` with `aria-live="polite"`
-  - All interactive elements: visible focus indicators + keyboard operability
-  - Touch targets: minimum 44x44px
-  - Color never the sole status indicator
+- Intercom-level animation system (message appear, panel open, typing indicator, launcher morph)
 - SharedWorker for tab persistence (WS-4)
-- Message store in IndexedDB for chat history
-
-### Tasks for Claude Code
-
-```
-Task references: UI-1, UI-2, UI-3, UI-6, UI-7, UI-8, WS-4 from PROTOCOL.md
-```
-
-### Success criteria
-
-- [ ] Chat icon in nose-bar with unread count
-- [ ] Panel opens/closes with Intercom-quality animations
-- [ ] Messages display correctly with timestamps and smooth appear animation
-- [ ] Text input sends messages on Enter
-- [ ] Chat history persists across page navigation (SharedWorker + IndexedDB)
-- [ ] Works alongside the music player without conflicts
-- [ ] Encryption badge always visible, communicates security status
-- [ ] Typing indicator works with proper animation
-- [ ] WCAG 2.1 AA compliance verified
-- [ ] All animations respect prefers-reduced-motion
-- [ ] Dark mode looks professional (no pure black/white)
-
----
-
-## Season 7: SimpleGo website integration
-
-**Goal:** Chat is fully integrated into the SimpleGo website, accessible from all pages.
-
-### Scope
-
-- Add chat button to homepage (replace/augment "Explore Product")
-- Chat HTML structure in base template
+- Message persistence in IndexedDB (chat history survives page reload)
 - SPA router integration (chat survives page navigation)
-- Mobile responsive layout (full-screen chat panel on mobile)
-- Chat + Player coexistence (both in nose-bar)
+- Mobile responsive polish (full-screen panel, touch targets)
+- Encryption badge with SMP/GRP profile indicator
+- Accessibility audit (WCAG 2.1 AA)
+- Chat + Player coexistence refinement
 
 ### Tasks for Claude Code
 
 ```
-Task references: UI-4, UI-5 from PROTOCOL.md
+Task references: UI-3, UI-4, UI-5, UI-6, UI-7, UI-8, WS-4 from PROTOCOL.md
 ```
 
 ### Success criteria
 
-- [ ] Chat available on every page of the website
-- [ ] Works on mobile (full-screen chat panel)
-- [ ] SPA navigation doesn't break chat connection
-- [ ] Player and chat can both be active simultaneously
-- [ ] "Support Chat" button on homepage works
+- [ ] Intercom-quality animations (200-300ms ease-out, prefers-reduced-motion)
+- [ ] Chat history persists across page navigation and reloads
+- [ ] Works on mobile (full-screen, 44x44px touch targets)
+- [ ] WCAG 2.1 AA compliance
+- [ ] Encryption badge always visible with profile indicator
+- [ ] SharedWorker maintains connection across tabs
 
 ---
 
-## Season 8: Production hardening
+## Season 8: Production hardening + security review
 
-**Goal:** Battle-tested, deployable support chat system with complete security hardening.
+**Status:** Planned  
+**Goal:** Battle-tested, deployable encrypted support chat with complete security hardening.
 
 ### Scope
 
-- SMP server deployment on VPS (Docker)
-- TLS certificate setup (Let's Encrypt)
-- Contact address creation and configuration
-- Error handling for all edge cases
-- Offline/away state handling
-- Reconnection after network interruption
+- Content Security Policy (strict, no eval, no inline scripts)
+- Subresource Integrity for all external scripts
+- Web Worker isolation for crypto operations
+- Trust boundary documentation (honest about browser limitations)
+- Key storage (IndexedDB + AES-256-GCM encryption at rest)
 - Performance optimization (bundle size, memory)
-- Security hardening
-  - Content Security Policy (SEC-1)
-  - Subresource Integrity (SEC-2)
-  - Trust boundary documentation (SEC-4)
+- Error handling for all edge cases
 - Security review
 
 ### Tasks for Claude Code
 
 ```
-Task references: OPS-1, OPS-2, OPS-3, SEC-1, SEC-2, SEC-4 from PROTOCOL.md
+Task references: SEC-1, SEC-2, SEC-3, SEC-4, E2E-6 from PROTOCOL.md
 ```
 
 ### Success criteria
 
-- [ ] SMP server running on production VPS
-- [ ] Chat works reliably for 8+ hours without issues
-- [ ] Handles network interruptions gracefully
-- [ ] Error states shown clearly to user
-- [ ] Bundle size reasonable (< 100KB gzipped for chat module)
-- [ ] No memory leaks in long-running sessions
 - [ ] Strict CSP enforced (no eval, no inline scripts)
 - [ ] SRI hashes on all external scripts
+- [ ] All crypto runs in dedicated Web Worker
 - [ ] Security trust boundary documented transparently
+- [ ] Key material encrypted at rest in IndexedDB
+- [ ] Bundle size < 100KB gzipped
+- [ ] No memory leaks in 8+ hour sessions
+- [ ] Chat works reliably for 8+ hours
 
 ### SMP profile complete after this season
 
@@ -356,8 +361,31 @@ After Season 8, GoChat's SMP profile is production-ready. The GRP profile develo
 
 ---
 
-## Season 9: GRP - Noise transport
+## Season 9: simplex-js npm library
 
+**Status:** Planned  
+**Goal:** Extract the SMP browser client into a standalone npm library that anyone can use.
+
+### Scope
+
+- API design document for public library
+- Package scaffolding (build, bundle, tree-shake, types)
+- Extract core modules from GoChat (transport, client, commands, crypto)
+- SimpleXClient facade class for easy integration
+- Zero-dependency audit (only @noble packages)
+- Documentation and examples
+
+### Tasks for Claude Code
+
+```
+Task references: LIB-1, LIB-2, LIB-3, LIB-4, LIB-5 from PROTOCOL.md
+```
+
+---
+
+## Season 10: GRP - Noise transport
+
+**Status:** Future  
 **Goal:** Implement the Noise Protocol transport layer for the GRP profile.
 
 ### Scope
@@ -370,37 +398,16 @@ After Season 8, GoChat's SMP profile is production-ready. The GRP profile develo
 - Browser Noise implementation via @noble/ciphers and @noble/hashes
 - Connect to GoRelay server on port 7443 via WSS
 
-### Success criteria
-
-- [ ] GRP transport implements ChatTransport interface
-- [ ] Noise IK handshake completes against GoRelay server
-- [ ] Can send/receive 16KB blocks through Noise-encrypted channel
-- [ ] Rekeying works on timer and message count thresholds
-- [ ] Profile switching works at runtime
-
 ### Prerequisites
 
 - GoRelay must have GRP listener implemented (GoRelay Phase 4)
 
 ---
 
-## Season 10: GRP - Post-quantum key exchange
+## Season 11: GRP - Post-quantum key exchange
 
+**Status:** Future  
 **Goal:** Add mandatory ML-KEM-768 hybrid key exchange to the GRP transport.
-
-### Scope
-
-- Hybrid X25519 + ML-KEM-768 key exchange in the Noise handshake
-- ML-KEM-768 browser implementation evaluation and selection
-- Total handshake overhead: ~2,336 bytes
-
-### Success criteria
-
-- [ ] Hybrid key exchange completes against GoRelay server
-- [ ] ML-KEM-768 encapsulation/decapsulation works in browser
-- [ ] Handshake aborts cleanly if ML-KEM component fails
-- [ ] Key material properly zeroed after use
-- [ ] Performance acceptable (< 500ms for full hybrid handshake)
 
 ### Prerequisites
 
@@ -408,24 +415,10 @@ After Season 8, GoChat's SMP profile is production-ready. The GRP profile develo
 
 ---
 
-## Season 11: GRP - Two-hop relay routing
+## Season 12: GRP - Two-hop relay routing
 
+**Status:** Future  
 **Goal:** Implement mandatory two-hop message routing for the GRP profile.
-
-### Scope
-
-- Two-hop relay architecture via PFWD/RFWD/RRES/PRES commands
-- Per-message ephemeral key for s2d encryption
-- Five encryption layers per message
-- Cover traffic integration
-
-### Success criteria
-
-- [ ] Messages route through two GoRelay servers
-- [ ] Neither server has complete metadata
-- [ ] Per-message ephemeral keys prevent cross-queue correlation
-- [ ] Cover traffic indistinguishable from real messages
-- [ ] Latency acceptable (< 50ms added for same-region servers)
 
 ### Prerequisites
 
@@ -434,46 +427,48 @@ After Season 8, GoChat's SMP profile is production-ready. The GRP profile develo
 
 ---
 
-## Season 12+: GRP - Triple Shield and beyond
+## Season 13+: GRP - Triple Shield and beyond
 
-**Goal:** Implement the Triple Shield defense layer and additional GRP features.
+**Status:** Future  
+**Goal:** Implement the Triple Shield defense layer and additional features.
 
 ### Potential future seasons
 
 - **Triple Shield 6a:** Zero-Knowledge Queue Authentication (Schnorr DLOG via Fiat-Shamir)
 - **Triple Shield 6b:** Shamir's Secret Sharing 2-of-3 across servers
 - **Triple Shield 6c:** Steganographic Transport (Pluggable Transports: HTTPS, WebSocket, meek, obfs4)
-- **Double Ratchet encryption** - Full Signal-protocol-level forward secrecy
-- **File sharing** - Send images/files via XFTP protocol
-- **Typing indicators** - Show when support team is typing
-- **Bot integration** - Automated responses for common questions
-- **Push notifications** - Browser notifications for new messages
-- **Chat transcript export** - User can download their chat history
-- **Multiple support agents** - Route to available team member
-- **Upstream contribution** - Contribute WebSocket client back to SimpleX project
+- **Admin Panel:** Multi-conversation browser dashboard for support agents (E2E encrypted)
+- **File sharing:** Send images/files via XFTP protocol
+- **Typing indicators:** Show when support team is typing
+- **Push notifications:** Browser notifications for new messages
+- **Chat transcript export:** User can download their chat history
+- **Multiple support agents:** Route to available team member
+- **Upstream contribution:** Contribute WebSocket client back to SimpleX project
 
 ---
 
 ## Quick reference: Season overview
 
-| Season | Focus | Key output | Depends on |
-|:-------|:------|:-----------|:-----------|
-| S1 | Planning and docs | Protocol, research, season plan, dual-profile design | - |
-| S2 | WebSocket transport | `transport.ts` (ChatTransport), `client.ts` | S1 |
-| S3 | SMP commands | `commands.ts`, typed client, mock server, 187 tests | S2 |
-| S4 | Connection flow | `address.ts`, `connection.ts`, `state.ts` | S3 |
-| S5 | E2E encryption | `crypto/e2e.ts`, Web Worker, key storage | S4 |
-| S6 | Chat UI (Intercom-level) | Animations, encryption badge, accessibility, SharedWorker | S4 (S5 in parallel) |
-| S7 | Website integration | Full SimpleGo integration, mobile, SPA | S5 + S6 |
-| S8 | Hardening | Production deployment, CSP, SRI, security review | S7 |
-| S9 | GRP: Noise transport | `grp/transport.ts` (ChatTransport), Noise IK/XX | S8 + GoRelay Phase 4 |
-| S10 | GRP: Post-quantum | ML-KEM-768 hybrid key exchange in browser | S9 + GoRelay Phase 4 |
-| S11 | GRP: Two-hop routing | PFWD/RFWD/RRES/PRES, cover traffic, 5 encryption layers | S10 + GoRelay Phase 5 |
-| S12+ | GRP: Triple Shield | ZKP, Shamir, steganographic transport | S11 + GoRelay Phase 6 |
+| Season | Focus | Key output | Status |
+|:-------|:------|:-----------|:-------|
+| S1 | Planning and docs | Protocol, research, season plan, dual-profile design | Complete |
+| S2 | WebSocket transport | `transport.ts`, `client.ts`, `agent.ts` | Complete |
+| S3 | SMP commands | `commands.ts`, typed client, mock server, 187 tests | Complete |
+| S4 | Connection flow | `address.ts`, `connection.ts`, X3DH, Double Ratchet, 413 tests | Complete |
+| S5 | Chat UI + real server | Chat panel, browser-client, Nginx proxy, 15 protocol fixes, 485 tests | Complete |
+| **S6** | **Bidirectional messaging** | **7-step connection flow, encrypted chat with SimpleX app** | **Next** |
+| S7 | Production polish | Animations, SharedWorker, IndexedDB, accessibility | Planned |
+| S8 | Security hardening | CSP, SRI, Web Worker crypto, security review | Planned |
+| S9 | simplex-js library | Standalone npm package for SMP browser client | Planned |
+| S10 | GRP: Noise transport | `grp/transport.ts`, Noise IK/XX | Future |
+| S11 | GRP: Post-quantum | ML-KEM-768 hybrid key exchange | Future |
+| S12 | GRP: Two-hop routing | PFWD/RFWD/RRES/PRES, cover traffic | Future |
+| S13+ | GRP: Triple Shield | ZKP, Shamir, steganographic transport | Future |
 
-**SMP critical path:** S1 -> S2 -> S3 -> S4 -> S7 -> S8  
-**SMP parallel track:** S5 (encryption) and S6 (UI) can run alongside S4  
-**GRP track:** S9 -> S10 -> S11 -> S12+ (begins after SMP profile is production-ready)  
+**SMP critical path:** S1 -> S2 -> S3 -> S4 -> S5 -> S6 -> S7 -> S8
+**SMP parallel track:** S7 (polish) can start alongside S6
+**Library track:** S9 after S8
+**GRP track:** S10 -> S11 -> S12 -> S13+ (begins after SMP profile is production-ready)
 **GRP dependency:** GoRelay must complete its corresponding phases first
 
 ---
@@ -484,5 +479,6 @@ After Season 8, GoChat's SMP profile is production-ready. The GRP profile develo
 |------|--------|
 | 2026-03-25 | Season plan created by Prinzessin Mausi. Defined 8 seasons covering planning through production. |
 | 2026-03-25 | Season 2 complete. Marked S1 and S2 complete, S3 current. Updated Season 2 success criteria. |
-| 2026-03-25 | Dual-profile update. Expanded Season 1 deliverables with dual-profile design, deep research, community contact, GPG signing. Added key decisions 3-11 (dual-profile, ChatTransport, @noble crypto, Intercom-level UI, no mobile app). Expanded Season 6 scope from minimal to Intercom-level with animations, encryption badge, accessibility, SharedWorker. Added Seasons 9-11 for GRP profile (Noise transport, ML-KEM-768 post-quantum, two-hop relay routing). Added Season 12+ for Triple Shield and future features. Updated quick reference with GRP dependency chain. Added ground rule. |
-| 2026-03-25 | Season 3 complete. 4 tasks, 4 PRs (#4-#7), 187 tests. Marked S3 complete with full deliverables and success criteria. Marked S4 current. Updated quick reference S3 output. |
+| 2026-03-25 | Dual-profile update. Expanded Season 1 deliverables with dual-profile design, deep research, community contact, GPG signing. Added key decisions 3-11. Expanded Season 6 scope to Intercom-level. Added Seasons 9-11 for GRP profile. Added Season 12+ for Triple Shield. |
+| 2026-03-25 | Season 3 complete. 4 tasks, 4 PRs (#4-#7), 187 tests. |
+| 2026-03-26 | Season 5 complete. Scope shifted from E2E hardening to real-server connectivity. 4 phases: Chat UI, Browser Client (3 tasks), Server Infrastructure (Docker + Nginx WSS proxy), Protocol Debugging (15 fixes). 485 tests, 15 PRs (#19-#33). First NEW -> IDS on real SMP v6 server. Restructured future seasons: S6 = bidirectional messaging, S7 = production polish (was S6), S8 = security hardening (unchanged), S9 = simplex-js library (was S9), S10-S13 = GRP track (renumbered). Season 4 closing protocol reference added. |
