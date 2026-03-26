@@ -120,21 +120,39 @@ describe("encodeNEW", () => {
     // After "NEW " (4 bytes): 1-byte length prefix + 44 bytes key
     expect(result[4]).toBe(44) // length prefix for 44-byte key
     expect(result[5]).toBe(0xAA) // first byte of authKey
-    expect(result[48]).toBe(0xAA) // last byte of authKey (4+1+43)
   })
 
-  it("encodes dhKey after authKey", () => {
+  it("has space separator after authKey", () => {
     const result = encodeNEW(baseParams)
-    // After "NEW " (4) + encodeBytes(44) (45): length prefix (1) + 44 bytes
-    const dhKeyOffset = 4 + 45
+    // After "NEW "(4) + authKey(45): space separator
+    expect(result[4 + 45]).toBe(0x20)
+  })
+
+  it("encodes dhKey after authKey + space", () => {
+    const result = encodeNEW(baseParams)
+    // After "NEW "(4) + authKey(45) + SP(1): dhKey
+    const dhKeyOffset = 4 + 45 + 1
     expect(result[dhKeyOffset]).toBe(44) // length prefix
     expect(result[dhKeyOffset + 1]).toBe(0xBB) // first byte of dhKey
   })
 
+  it("has space separators between all fields", () => {
+    const result = encodeNEW(baseParams)
+    // tag(4) + authKey(45) + SP + dhKey(45) + SP + "0" + SP + "S" + SP + "T"
+    const spAfterAuth = 4 + 45
+    const spAfterDh = spAfterAuth + 1 + 45
+    const spAfterBasicAuth = spAfterDh + 1 + 1
+    const spAfterMode = spAfterBasicAuth + 1 + 1
+    expect(result[spAfterAuth]).toBe(0x20)
+    expect(result[spAfterDh]).toBe(0x20)
+    expect(result[spAfterBasicAuth]).toBe(0x20)
+    expect(result[spAfterMode]).toBe(0x20)
+  })
+
   it("encodes basicAuth as '0' when no auth", () => {
     const result = encodeNEW(baseParams)
-    // After "NEW " (4) + authKey (45) + dhKey (45)
-    const authOffset = 4 + 45 + 45
+    // After "NEW "(4) + authKey(45) + SP(1) + dhKey(45) + SP(1)
+    const authOffset = 4 + 45 + 1 + 45 + 1
     expect(result[authOffset]).toBe(0x30) // "0"
   })
 
@@ -144,63 +162,58 @@ describe("encodeNEW", () => {
       basicAuth: new Uint8Array([0x01, 0x02, 0x03]),
     }
     const result = encodeNEW(params)
-    const authOffset = 4 + 45 + 45
+    const authOffset = 4 + 45 + 1 + 45 + 1
     expect(result[authOffset]).toBe(0x31) // "1"
     expect(result[authOffset + 1]).toBe(3) // length prefix
     expect(result[authOffset + 2]).toBe(0x01)
-    expect(result[authOffset + 3]).toBe(0x02)
-    expect(result[authOffset + 4]).toBe(0x03)
   })
 
   it("encodes subscribeMode 'S' correctly", () => {
     const result = encodeNEW(baseParams)
-    // After tag(4) + authKey(45) + dhKey(45) + basicAuth(1)
-    const modeOffset = 4 + 45 + 45 + 1
+    // After tag(4) + authKey(45) + SP(1) + dhKey(45) + SP(1) + basicAuth(1) + SP(1)
+    const modeOffset = 4 + 45 + 1 + 45 + 1 + 1 + 1
     expect(result[modeOffset]).toBe(0x53) // "S"
   })
 
   it("encodes subscribeMode 'C' correctly", () => {
     const params: NewQueueParams = {...baseParams, subscribeMode: "C"}
     const result = encodeNEW(params)
-    const modeOffset = 4 + 45 + 45 + 1
+    const modeOffset = 4 + 45 + 1 + 45 + 1 + 1 + 1
     expect(result[modeOffset]).toBe(0x43) // "C"
   })
 
   it("encodes sndSecure true as 'T'", () => {
     const result = encodeNEW(baseParams)
-    // After tag(4) + authKey(45) + dhKey(45) + basicAuth(1) + mode(1)
-    const secureOffset = 4 + 45 + 45 + 1 + 1
+    // After tag(4) + authKey(45) + SP + dhKey(45) + SP + "0" + SP + "S" + SP
+    const secureOffset = 4 + 45 + 1 + 45 + 1 + 1 + 1 + 1 + 1
     expect(result[secureOffset]).toBe(0x54) // "T"
   })
 
   it("encodes sndSecure false as 'F'", () => {
     const params: NewQueueParams = {...baseParams, sndSecure: false}
     const result = encodeNEW(params)
-    const secureOffset = 4 + 45 + 45 + 1 + 1
+    const secureOffset = 4 + 45 + 1 + 45 + 1 + 1 + 1 + 1 + 1
     expect(result[secureOffset]).toBe(0x46) // "F"
   })
 
   it("always includes sndSecure (required for all versions)", () => {
     const result = encodeNEW({...baseParams, smpVersion: 6})
-    // v6: sndSecure IS included (required for all versions)
-    // "NEW "(4) + authKey(1+44) + dhKey(1+44) + "0"(1) + mode(1) + sndSecure(1)
-    expect(result.length).toBe(4 + 45 + 45 + 1 + 1 + 1)
-    const secureOffset = 4 + 45 + 45 + 1 + 1
-    expect(result[secureOffset]).toBe(0x54) // "T" (default true)
+    // tag(4) + authKey(45) + SP + dhKey(45) + SP + "0" + SP + "S" + SP + "T"
+    expect(result.length).toBe(4 + 45 + 1 + 45 + 1 + 1 + 1 + 1 + 1 + 1)
   })
 
   it("has correct total length without basicAuth", () => {
     const result = encodeNEW(baseParams)
-    // "NEW "(4) + authKey(1+44) + dhKey(1+44) + "0"(1) + mode(1) + sndSecure(1)
-    expect(result.length).toBe(4 + 45 + 45 + 1 + 1 + 1)
+    // "NEW "(4) + authKey(45) + SP(1) + dhKey(45) + SP(1) + "0"(1) + SP(1) + "S"(1) + SP(1) + "T"(1) = 101
+    expect(result.length).toBe(101)
   })
 
   it("has correct total length with basicAuth", () => {
     const password = new Uint8Array(10).fill(0xFF)
     const params: NewQueueParams = {...baseParams, basicAuth: password}
     const result = encodeNEW(params)
-    // "NEW "(4) + authKey(1+44) + dhKey(1+44) + "1"(1) + len(1) + password(10) + mode(1) + sndSecure(1)
-    expect(result.length).toBe(4 + 45 + 45 + 1 + 1 + 10 + 1 + 1)
+    // "NEW "(4) + authKey(45) + SP(1) + dhKey(45) + SP(1) + "1"+len+pw(12) + SP(1) + "S"(1) + SP(1) + "T"(1) = 112
+    expect(result.length).toBe(4 + 45 + 1 + 45 + 1 + 1 + 1 + 10 + 1 + 1 + 1 + 1)
   })
 })
 

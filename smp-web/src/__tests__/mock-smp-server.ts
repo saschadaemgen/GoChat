@@ -162,21 +162,26 @@ export class MockSMPServer {
 
   private handleNEW(corrId: Uint8Array, command: Uint8Array): void {
     // Parse NEW params: skip "NEW " (4 bytes), then read keys
+    // Fields separated by spaces per SMP ABNF
     const d = new Decoder(command.subarray(4))
     const recipientAuthKey = this.readShortString(d)
+    this.skipSpace(d)
     const recipientDhKey = this.readShortString(d)
 
-    // Read basicAuth
+    // Read basicAuth (preceded by space)
+    this.skipSpace(d)
     const authFlag = d.anyByte()
     if (authFlag === 0x31) {
-      // "1" + Word16 BE password - skip it
+      // "1" + shortString password - skip it
       this.readShortString(d)
     }
 
-    // Read subscribeMode and optional sndSecure (v9+ only)
+    // Read subscribeMode and sndSecure (preceded by spaces)
+    this.skipSpace(d)
     const subMode = String.fromCharCode(d.anyByte())
     let sndSecure = false
     if (d.remaining() > 0) {
+      this.skipSpace(d)
       const sndSecureFlag = String.fromCharCode(d.anyByte())
       sndSecure = sndSecureFlag === "T"
     }
@@ -394,6 +399,12 @@ export class MockSMPServer {
   private readShortString(d: Decoder): Uint8Array {
     const len = d.anyByte()
     return d.take(len)
+  }
+
+  private skipSpace(d: Decoder): void {
+    if (d.remaining() > 0 && d.buf[d.offset()] === 0x20) {
+      d.anyByte() // consume space
+    }
   }
 
   private sendResponse(corrId: Uint8Array, entityId: Uint8Array, responseCommand: Uint8Array): void {
