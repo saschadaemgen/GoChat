@@ -6,6 +6,7 @@ import {
   encodeBytes, decodeBytes,
   decodeLarge
 } from "@simplex-chat/xftp-web/dist/protocol/encoding.js"
+import {ed25519} from "@noble/curves/ed25519"
 
 // readTag/readSpace inlined from xftp-web/protocol/commands.ts to avoid
 // pulling libsodium through the commands.ts -> keys.ts import chain.
@@ -39,20 +40,37 @@ export function encodeTransmission(
   corrId: Uint8Array,
   entityId: Uint8Array,
   command: Uint8Array,
-  sessionId?: Uint8Array
+  sessionId?: Uint8Array,
+  signKey?: Uint8Array
 ): Uint8Array {
-  const parts: Uint8Array[] = []
-  // Auth/signature field (sigLen=0x00 for unsigned commands)
-  parts.push(encodeBytes(new Uint8Array(0)))
-  // For SMP v6: sessionId goes AFTER auth, BEFORE corrId
-  if (sessionId) {
-    parts.push(encodeBytes(sessionId))
-  }
-  parts.push(
+  // The signed data is [corrId shortString][entityId shortString][command]
+  // SessionId is NOT included in the signature.
+  const signedData = concatBytes(
     encodeBytes(corrId),
     encodeBytes(entityId),
     command
   )
+
+  const parts: Uint8Array[] = []
+
+  if (signKey) {
+    // Signed transmission: [sigLen=0x40][64B Ed25519 signature]
+    const signature = ed25519.sign(signedData, signKey)
+    parts.push(new Uint8Array([0x40])) // sigLen = 64
+    parts.push(signature)
+  } else {
+    // Unsigned transmission: [sigLen=0x00]
+    parts.push(new Uint8Array([0x00]))
+  }
+
+  // For SMP v6: sessionId goes AFTER sig, BEFORE corrId
+  if (sessionId) {
+    parts.push(encodeBytes(sessionId))
+  }
+
+  // Append the signed data (corrId + entityId + command)
+  parts.push(signedData)
+
   return concatBytes(...parts)
 }
 

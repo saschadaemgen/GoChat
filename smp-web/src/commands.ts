@@ -24,7 +24,8 @@ function ascii(s: string): Uint8Array {
 // -- Command parameter types
 
 export interface NewQueueParams {
-  recipientAuthKey: Uint8Array   // Ed25519 SPKI DER (44 bytes)
+  recipientAuthKey: Uint8Array   // Ed25519 SPKI DER (44 bytes) - public key in command body
+  recipientAuthPrivateKey?: Uint8Array // Ed25519 private key (32 bytes) - for signing the transmission
   recipientDhKey: Uint8Array     // X25519 SPKI DER (44 bytes)
   subscribeMode: "S" | "C"      // S = subscribe on create, C = create only
   sndSecure?: boolean            // T = sender can secure queue, default false

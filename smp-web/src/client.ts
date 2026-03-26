@@ -373,7 +373,8 @@ export class SMPClientImpl implements SMPClient {
   }
 
   // Send a typed command and wait for the corrId-matched response.
-  private sendTypedCommand(entityId: Uint8Array, command: Uint8Array): Promise<SMPResponse> {
+  // signKey: optional Ed25519 private key (32 bytes) for signing the command.
+  private sendTypedCommand(entityId: Uint8Array, command: Uint8Array, signKey?: Uint8Array): Promise<SMPResponse> {
     if (this.currentState !== "ready") {
       if (this.debugFn) {
         this.debugFn("sendTypedCommand rejected: state=" + this.currentState, command.subarray(0, 16))
@@ -384,7 +385,7 @@ export class SMPClientImpl implements SMPClient {
     const corrId = generateCorrId()
     // SMP v6: include sessionId AFTER auth, BEFORE corrId
     const sessId = this.smpVersion < 7 ? this.sessionId : undefined
-    const transmission = encodeTransmission(corrId, entityId, command, sessId)
+    const transmission = encodeTransmission(corrId, entityId, command, sessId, signKey)
     const block = buildCommandBlock(transmission)
     const key = toHex(corrId)
 
@@ -470,11 +471,13 @@ export class SMPClientImpl implements SMPClient {
   // -- Typed command methods
 
   async createQueue(params: NewQueueParams): Promise<IDSResponse> {
-    console.log("[SMP] createQueue: calling sendTypedCommand with NEW, smpVersion=" + this.smpVersion + ", state=" + this.currentState)
+    console.log("[SMP] createQueue: calling sendTypedCommand with NEW, smpVersion=" + this.smpVersion + ", state=" + this.currentState + ", signed=" + (params.recipientAuthPrivateKey ? "YES" : "no"))
     const newParams = {...params, smpVersion: this.smpVersion}
     const cmd = encodeNEW(newParams)
     console.log("[SMP] createQueue: NEW cmd " + cmd.length + "B, hex:", toHex(cmd.subarray(0, 48)))
-    const response = await this.sendTypedCommand(new Uint8Array(0), cmd)
+    // NEW command must be signed with the recipientAuth private key.
+    // The server verifies the signature using the public key from the command body.
+    const response = await this.sendTypedCommand(new Uint8Array(0), cmd, params.recipientAuthPrivateKey)
     if (response.type === "IDS") {
       return {
         recipientId: response.recipientId,
