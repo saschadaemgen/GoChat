@@ -265,65 +265,64 @@ export class SMPClientImpl implements SMPClient {
     let blockCount = 0
     this.transport.onMessage((block: Uint8Array) => {
       blockCount++
-      if (this.debugFn) {
-        this.debugFn("Incoming block #" + blockCount + " (first 64B)", block.subarray(0, 64))
-      }
+      console.log("[SMP] dispatch: incoming block #" + blockCount + ", " + block.length + "B, first 32:", toHex(block.subarray(0, 32)))
       try {
-        // Parse ALL transmissions from the 16KB block.
-        // SMP servers batch multiple transmissions per block (txCount >= 1).
-        // Example: SUB response + MSG delivery in one block (txCount=2).
         const transmissions = parseAllTransmissions(block)
-        if (this.debugFn) {
-          this.debugFn("Block #" + blockCount + " txCount", new Uint8Array([transmissions.length]))
-        }
-        for (const txBytes of transmissions) {
-          this.dispatchSingleTransmission(txBytes)
+        console.log("[SMP] dispatch: block #" + blockCount + " parsed, txCount=" + transmissions.length)
+        for (let i = 0; i < transmissions.length; i++) {
+          console.log("[SMP] dispatch: tx[" + i + "] " + transmissions[i].length + "B, first 32:", toHex(transmissions[i].subarray(0, 32)))
+          this.dispatchSingleTransmission(transmissions[i])
         }
       } catch (e) {
-        // Protocol error in incoming block. Log for debugging.
-        if (this.debugFn) {
-          const msg = e instanceof Error ? e.message : String(e)
-          this.debugFn("Block #" + blockCount + " parse error: " + msg, block.subarray(0, 64))
-        }
+        const msg = e instanceof Error ? e.message : String(e)
+        console.log("[SMP] dispatch: PARSE ERROR on block #" + blockCount + ": " + msg)
+        console.log("[SMP] dispatch: block first 64:", toHex(block.subarray(0, 64)))
       }
     })
   }
 
   private dispatchSingleTransmission(transmissionBytes: Uint8Array): void {
     try {
-      // Decode the transmission - for v6, sessionId is on the wire
       const hasSessionId = this.smpVersion < 4
       const td = new Decoder(transmissionBytes)
       const {corrId, entityId, command} = decodeTransmission(td, hasSessionId)
 
-      // Dispatch by corrId:
-      // - Non-empty corrId = response to our command
-      // - Empty corrId = server push (MSG notification)
+      console.log("[SMP] dispatch: corrId=" + toHex(corrId) + " (" + corrId.length + "B), entityId=" + toHex(entityId) + " (" + entityId.length + "B), cmd " + command.length + "B first 8:", toHex(command.subarray(0, 8)))
+
+      // List pending corrIds for comparison
+      const pendingKeys = Array.from(this.pendingCommands.keys())
+      console.log("[SMP] dispatch: pending corrIds: [" + pendingKeys.join(", ").substring(0, 200) + "]")
+
       if (corrId.length > 0) {
         const key = toHex(corrId)
         const pending = this.pendingCommands.get(key)
         if (pending) {
-          // Matched a pending typed command - resolve Promise
+          console.log("[SMP] dispatch: MATCHED corrId " + key.substring(0, 16) + "...")
           this.pendingCommands.delete(key)
           clearTimeout(pending.timer)
           try {
             const response = decodeResponse(new Decoder(command))
+            console.log("[SMP] dispatch: response type=" + response.type)
             pending.resolve(response)
           } catch (parseErr) {
+            const msg = parseErr instanceof Error ? parseErr.message : String(parseErr)
+            console.log("[SMP] dispatch: response PARSE ERROR: " + msg)
             pending.reject(parseErr instanceof Error ? parseErr : new Error(String(parseErr)))
           }
         } else {
-          // No pending typed command - fall through to raw handler
+          console.log("[SMP] dispatch: NO MATCH for corrId " + key.substring(0, 16) + "... (unmatched response)")
           if (this.responseHandler !== null) {
             this.responseHandler(corrId, entityId, command)
           }
         }
       } else {
-        // Server push - dispatch to typed handlers first, then raw handler
+        console.log("[SMP] dispatch: empty corrId -> server push")
         this.dispatchServerPush(entityId, command)
       }
-    } catch (_e) {
-      // Failed to dispatch single transmission. Continue with others.
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      console.log("[SMP] dispatch: TRANSMISSION DECODE ERROR: " + msg)
+      console.log("[SMP] dispatch: raw tx first 32:", toHex(transmissionBytes.subarray(0, 32)))
     }
   }
 
@@ -362,9 +361,8 @@ export class SMPClientImpl implements SMPClient {
     const block = buildCommandBlock(transmission)
     const key = toHex(corrId)
 
-    if (this.debugFn) {
-      this.debugFn("sendTypedCommand: sending " + block.length + "B, transport=" + this.transport.state, command.subarray(0, 16))
-    }
+    console.log("[SMP] sendTypedCommand: corrId=" + key.substring(0, 16) + "..., entityId=" + toHex(entityId) + ", cmd first 4:", toHex(command.subarray(0, 4)))
+    console.log("[SMP] sendTypedCommand: transmission " + transmission.length + "B, block " + block.length + "B")
 
     return new Promise<SMPResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
