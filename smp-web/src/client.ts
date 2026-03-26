@@ -283,7 +283,12 @@ export class SMPClientImpl implements SMPClient {
 
   private dispatchSingleTransmission(transmissionBytes: Uint8Array): void {
     try {
-      const hasSessionId = this.smpVersion < 4
+      // SMP v6 server responses include sessionId as the first field.
+      // Real server testing confirmed: v6 response starts with 32-byte
+      // sessionId which was being misread as the corrId (32B vs 24B).
+      // Server sends sessionId in responses even though client commands
+      // may omit it. Use < 7 for receiving, < 4 for sending.
+      const hasSessionId = this.smpVersion < 7
       const td = new Decoder(transmissionBytes)
       const {corrId, entityId, command} = decodeTransmission(td, hasSessionId)
 
