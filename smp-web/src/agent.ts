@@ -231,8 +231,33 @@ class SMPClientAgentImpl implements SMPClientAgent {
   ): void {
     const transport = client.transport
     if (transport instanceof SMPWebSocketTransport) {
+      const connectedAt = Date.now()
       transport.onClose(() => {
-        this.handleDisconnect(server, clientPromise, "WebSocket connection closed")
+        const uptime = Date.now() - connectedAt
+        if (uptime < 5000) {
+          // Connection dropped within 5 seconds of establishment.
+          // This typically means the server rejected our handshake
+          // (e.g. wrong keyHash in ClientHello). Do NOT auto-reconnect
+          // because the same handshake would fail again, creating an
+          // infinite reconnect loop.
+          if (this.destroyed) return
+          const key = serverKey(server)
+          const cur = this.connections.get(key)
+          if (cur && cur.client === clientPromise) {
+            this.connections.delete(key)
+            this.servers.delete(key)
+          }
+          this.emitEvent(server, {
+            type: "disconnected",
+            reason: "Connection dropped immediately after handshake (possible handshake rejection)",
+          })
+          this.emitEvent(server, {
+            type: "reconnect_failed",
+            reason: "Not reconnecting: connection was too short-lived (uptime " + uptime + "ms)",
+          })
+        } else {
+          this.handleDisconnect(server, clientPromise, "WebSocket connection closed")
+        }
       })
     }
   }
