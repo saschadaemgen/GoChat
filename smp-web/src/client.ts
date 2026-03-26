@@ -45,13 +45,16 @@ export interface SMPClientConfig {
   keepaliveIntervalMs?: number // default 30000 (30s PING interval)
   handshakeTimeoutMs?: number  // default 15000
   commandTimeoutMs?: number    // default 30000 (30s command response timeout)
+  /** Optional debug callback for wire-level diagnostics */
+  onDebug?: (label: string, data: Uint8Array) => void
 }
 
-const DEFAULT_CLIENT_CONFIG: Required<SMPClientConfig> = {
+const DEFAULT_CLIENT_CONFIG = {
   connectTimeoutMs: 15000,
   keepaliveIntervalMs: 30000,
   handshakeTimeoutMs: 15000,
   commandTimeoutMs: 30000,
+  onDebug: undefined as ((label: string, data: Uint8Array) => void) | undefined,
 }
 
 // -- Response helper types
@@ -235,6 +238,7 @@ export class SMPClientImpl implements SMPClient {
   private readonly keepaliveIntervalMs: number
   private readonly commandTimeoutMs: number
   private readonly pendingCommands: Map<string, PendingCommand> = new Map()
+  private debugFn: ((label: string, data: Uint8Array) => void) | null = null
 
   constructor(
     sessionId: Uint8Array,
@@ -242,12 +246,14 @@ export class SMPClientImpl implements SMPClient {
     transport: ChatTransport,
     keepaliveIntervalMs: number,
     commandTimeoutMs: number = 30000,
+    debugFn?: (label: string, data: Uint8Array) => void,
   ) {
     this.sessionId = sessionId
     this.smpVersion = smpVersion
     this.transport = transport
     this.keepaliveIntervalMs = keepaliveIntervalMs
     this.commandTimeoutMs = commandTimeoutMs
+    this.debugFn = debugFn ?? null
     this.setupDispatch()
   }
 
@@ -256,18 +262,29 @@ export class SMPClientImpl implements SMPClient {
   }
 
   private setupDispatch(): void {
+    let blockCount = 0
     this.transport.onMessage((block: Uint8Array) => {
+      blockCount++
+      if (this.debugFn) {
+        this.debugFn("Incoming block #" + blockCount + " (first 64B)", block.subarray(0, 64))
+      }
       try {
         // Parse ALL transmissions from the 16KB block.
         // SMP servers batch multiple transmissions per block (txCount >= 1).
         // Example: SUB response + MSG delivery in one block (txCount=2).
         const transmissions = parseAllTransmissions(block)
+        if (this.debugFn) {
+          this.debugFn("Block #" + blockCount + " txCount", new Uint8Array([transmissions.length]))
+        }
         for (const txBytes of transmissions) {
           this.dispatchSingleTransmission(txBytes)
         }
-      } catch (_e) {
-        // Protocol error in incoming block.
-        // Do not crash the dispatch loop. Reconnection handles dead connections.
+      } catch (e) {
+        // Protocol error in incoming block. Log for debugging.
+        if (this.debugFn) {
+          const msg = e instanceof Error ? e.message : String(e)
+          this.debugFn("Block #" + blockCount + " parse error: " + msg, block.subarray(0, 64))
+        }
       }
     })
   }
@@ -275,7 +292,7 @@ export class SMPClientImpl implements SMPClient {
   private dispatchSingleTransmission(transmissionBytes: Uint8Array): void {
     try {
       // Decode the transmission - for v6, sessionId is on the wire
-      const hasSessionId = this.smpVersion < 7
+      const hasSessionId = this.smpVersion < 4
       const td = new Decoder(transmissionBytes)
       const {corrId, entityId, command} = decodeTransmission(td, hasSessionId)
 
@@ -337,7 +354,7 @@ export class SMPClientImpl implements SMPClient {
 
     const corrId = generateCorrId()
     // For SMP v6 (implySessId = False): include sessionId in the transmission
-    const sessId = this.smpVersion < 7 ? this.sessionId : undefined
+    const sessId = this.smpVersion < 4 ? this.sessionId : undefined
     const transmission = encodeTransmission(corrId, entityId, command, sessId)
     const block = buildCommandBlock(transmission)
     const key = toHex(corrId)
@@ -386,7 +403,7 @@ export class SMPClientImpl implements SMPClient {
     this.keepaliveTimer = setInterval(() => {
       if (this.currentState !== "ready") return
       const corrId = generateCorrId()
-      const sessId = this.smpVersion < 7 ? this.sessionId : undefined
+      const sessId = this.smpVersion < 4 ? this.sessionId : undefined
       const transmission = encodeTransmission(corrId, new Uint8Array(0), encodePING(), sessId)
       const block = buildCommandBlock(transmission)
       this.transport.send(block).catch(() => {
@@ -509,7 +526,8 @@ export async function connectSMP(
   server: SMPServerAddress,
   config?: Partial<SMPClientConfig>
 ): Promise<SMPClient> {
-  const cfg: Required<SMPClientConfig> = {...DEFAULT_CLIENT_CONFIG, ...config}
+  const cfg = {...DEFAULT_CLIENT_CONFIG, ...config}
+  const debug = cfg.onDebug ?? null
 
   // 1. Create transport and connect
   const transport = new SMPWebSocketTransport({connectTimeoutMs: cfg.connectTimeoutMs})
@@ -518,9 +536,19 @@ export async function connectSMP(
   try {
     // 2. Wait for ServerHello (first 16KB block from server)
     const serverHelloBlock = await waitForBlock(transport, cfg.handshakeTimeoutMs)
+    if (debug) debug("ServerHello raw (first 64 bytes)", serverHelloBlock.subarray(0, 64))
 
     // 3. Decode ServerHello
     const serverHello = decodeSMPServerHandshake(serverHelloBlock)
+    if (debug) {
+      debug("ServerHello sessionId", serverHello.sessionId)
+      debug("ServerHello vRange", new Uint8Array([
+        (serverHello.smpVersionRange.minVersion >> 8) & 0xFF,
+        serverHello.smpVersionRange.minVersion & 0xFF,
+        (serverHello.smpVersionRange.maxVersion >> 8) & 0xFF,
+        serverHello.smpVersionRange.maxVersion & 0xFF,
+      ]))
+    }
 
     // 4. Verify server identity (only if certificate chain is present).
     // WebSocket connections via proxy send a simplified ServerHello
@@ -549,6 +577,10 @@ export async function connectSMP(
       smpVersion,
       keyHash: server.keyHash,
     })
+    if (debug) {
+      debug("ClientHello full block (first 64 bytes)", clientHello.subarray(0, 64))
+      debug("ClientHello keyHash", server.keyHash)
+    }
     await transport.send(clientHello)
 
     // 7. Return client with command dispatch
@@ -558,6 +590,7 @@ export async function connectSMP(
       transport,
       cfg.keepaliveIntervalMs,
       cfg.commandTimeoutMs,
+      debug ?? undefined,
     )
   } catch (e) {
     transport.close()

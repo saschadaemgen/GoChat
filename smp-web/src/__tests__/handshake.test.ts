@@ -249,3 +249,61 @@ describe("decodeSMPServerHandshake WebSocket format", () => {
     expect(result.signedKeyDer).toEqual(new Uint8Array(80).fill(0x33))
   })
 })
+
+// -- ClientHello byte-level encoding verification
+
+describe("ClientHello byte-level encoding", () => {
+  it("produces correct wire bytes for v6 with known keyHash", () => {
+    const keyHash = new Uint8Array(32)
+    for (let i = 0; i < 32; i++) keyHash[i] = i + 1 // 01 02 03 ... 20
+
+    const block = encodeSMPClientHandshake({smpVersion: 6, keyHash})
+
+    // Block should be exactly 16384 bytes
+    expect(block.length).toBe(16384)
+
+    // First 2 bytes: content length = 35 (Word16 BE: 0x00 0x23)
+    // Content: Word16(6) = 0x00 0x06, shortString(keyHash) = 0x20 + 32 bytes
+    // Total content: 2 + 1 + 32 = 35 = 0x23
+    expect(block[0]).toBe(0x00) // content length high
+    expect(block[1]).toBe(0x23) // content length low = 35
+
+    // Version: 0x00 0x06
+    expect(block[2]).toBe(0x00)
+    expect(block[3]).toBe(0x06)
+
+    // keyHash shortString: length prefix = 0x20 (32)
+    expect(block[4]).toBe(0x20)
+
+    // keyHash data: 01 02 03 ... 20
+    for (let i = 0; i < 32; i++) {
+      expect(block[5 + i]).toBe(i + 1)
+    }
+
+    // Padding starts at offset 2 + 35 = 37
+    expect(block[37]).toBe(0x23) // '#' padding
+  })
+
+  it("uses correct format: blockPad(Word16(version) + shortString(keyHash))", () => {
+    // Per SimpleGo protocol team: no sessionId in ClientHello.
+    // Format is: blockPad(Word16(smpVersion) + encodeBytes(keyHash))
+    const keyHash = new Uint8Array(32).fill(0xFF)
+    const block = encodeSMPClientHandshake({smpVersion: 7, keyHash})
+
+    // Unpad to verify content structure
+    const content = blockUnpad(block)
+    expect(content.length).toBe(35) // 2 (version) + 1 (len) + 32 (hash)
+
+    // Version = 7
+    expect(content[0]).toBe(0x00)
+    expect(content[1]).toBe(0x07)
+
+    // shortString length = 32
+    expect(content[2]).toBe(0x20)
+
+    // keyHash bytes
+    for (let i = 0; i < 32; i++) {
+      expect(content[3 + i]).toBe(0xFF)
+    }
+  })
+})
