@@ -16,7 +16,7 @@
 **Ecosystem:** SimpleGo (hardware) / GoRelay (relay server) / GoChat (browser client)  
 **Date:** 2026-03-25  
 **Branch analyzed:** `ep/smp-web-spike` on `simplex-chat/simplexmq`  
-**Status:** Season 4 complete, Season 5 (E2E encryption hardening) next
+**Status:** Season 5 complete, Season 6 (bidirectional messaging + invitation flow) next
 
 ---
 
@@ -306,6 +306,60 @@ All transport code must implement the `ChatTransport` interface defined in secti
   - Use binary WebSocket frames (not text) to avoid 33% Base64 overhead
   - Multiplex multiple SMP queues over a single WebSocket per server
 
+### 5.1b Browser client and real-server connectivity (Season 5)
+
+**Priority:** Completed in Season 5.
+
+Season 5 shifted scope from E2E encryption hardening to real-server connectivity. The original E2E tasks (E2E-1 through E2E-6) remain for a future season. Season 5 built the complete pipeline from browser to real SMP server, including chat UI, browser client API, server infrastructure, and 15 protocol fixes for SMP v6 compatibility.
+
+**Tasks:**
+
+- [x] **BC-1:** Browser client API (`browser-client.ts`)
+  - `createBrowserClient(config)` factory with connect/send/disconnect
+  - Wraps ConnectionManager with callbacks (onMessage, onStatusChange, onError)
+  - Detects real vs mock mode based on available dependencies
+  - 16 unit tests, 24 integration tests
+
+- [x] **BC-2:** Browser bundle (esbuild)
+  - IIFE format with `window.createBrowserClient` export
+  - Single-file `gochat-client.js` (~211KB)
+  - `npm run build:browser` script
+  - CRITICAL: esbuild.config.mjs gets overwritten by rebases - must be IIFE, not ESM
+
+- [x] **BC-3:** Browser client integration tests
+  - 24 tests across 7 scenarios (lifecycle, reconnect, errors, rapid sends, idempotency)
+  - Uses MockSMPServer from Season 3/4
+  - Tests _agent injection for testability
+
+- [x] **CHAT-1:** Chat panel UI
+  - chat.css: 380px panel, left-docked flush, responsive, gc- prefix, animations, prefers-reduced-motion
+  - chat.js: panel logic, mock/real mode detection, window.GoChat public API
+  - base.njk: chat HTML in base template (outside #page-content for SPA persistence)
+  - Design: incoming bubbles with cyan border, outgoing with accent color + 2px tail corner
+  - Encryption badge with shimmer animation
+  - Mobile: full-screen below 768px
+
+- [x] **INFRA-1:** SMP server deployment
+  - Docker: `simplexchat/smp-server:latest` v6.4.5.1
+  - Host: smp.simplego.dev (194.164.197.247)
+  - Port 5223: native TLS, Port 5225: WebSocket
+  - Fingerprint: `7qw4hvuS-PvTHbotgtg_xiwrhFUk_s1q2upUQrGIWow=`
+
+- [x] **INFRA-2:** Nginx WSS reverse proxy
+  - Standalone nginx on port 8444, TLS termination with Let's Encrypt cert
+  - proxy_ssl with UnsafeLegacyRenegotiation for SMP backend
+  - Config: `/etc/nginx/smp-proxy.conf`
+
+- [x] **INFRA-3:** Contact address setup
+  - SimpleX Desktop app test profile with own SMP server
+  - Contact address embedded in base.njk via data attributes
+
+- [x] **PROTO-1 through PROTO-15:** Real server protocol fixes
+  - 15 PRs (#19 through #33) fixing SMP v6 wire format compatibility
+  - Fixes: IIFE bundle, URL decode, ServerHello certs, WebSocket URL, frame reassembly, v6 sessionId (in/out), txCount batching, keyHash, response dispatch, session wire format, NEW command syntax, Ed25519 signing, sessionId in signed data
+  - Result: NEW command accepted, IDS response received (queue created on real server)
+  - Critical assistance from SimpleGo protocol analysis team (49 sessions of SMP reverse-engineering)
+
 ### 5.2 Layer 2: SMP command implementation
 
 **Priority:** High - needed for any message exchange.
@@ -375,6 +429,8 @@ This implements the "duplex connection over simplex queues" pattern. In Haskell 
   - SKEY + SEND to contact queue, state -> PENDING
 
 ### 5.4 Layer 4: End-to-end encryption
+
+> **Note:** These tasks were originally planned for Season 5 but were deferred when the season scope shifted to real-server connectivity. They remain the next priority for completing the bidirectional messaging flow.
 
 **Priority:** High - messages must be encrypted.
 
@@ -580,17 +636,32 @@ These tasks define the GRP profile implementation. They are documented here for 
 4. Deploy SMP server on VPS (OPS-1, OPS-2)
 5. Test: full connection flow from browser to SimpleX mobile app
 
-### Phase 3: Chat UI (Season 5-6)
+### Phase 3: Chat UI and real-server connectivity (Season 5)
 
-**Goal:** Intercom-level chat interface integrated into SimpleGo website.
+**Goal:** Chat UI integrated, browser client connects to real SMP server.
 
-1. SharedWorker for tab persistence (WS-4)
-2. Intercom-level panel and animations (UI-1, UI-2, UI-6)
-3. Encryption badge and profile indicator (UI-7)
-4. Message persistence in IndexedDB (UI-3)
-5. SPA router integration (UI-5)
-6. Mobile responsive layout (UI-4)
-7. Accessibility audit (UI-8)
+**Status: COMPLETE (Season 5)**
+
+1. Chat panel UI with left-docked design, responsive, animations (CHAT-1)
+2. Browser client API wrapping ConnectionManager (BC-1, BC-2, BC-3)
+3. SMP server deployed with WebSocket support (INFRA-1)
+4. Nginx WSS reverse proxy for browser TLS (INFRA-2)
+5. Contact address from own server (INFRA-3)
+6. 15 protocol fixes for SMP v6 real-server compatibility (PROTO-1:15)
+7. Result: Browser creates queue on real SMP server (NEW -> IDS)
+8. Test count: 485 tests across 19 files
+
+### Phase 3b: Bidirectional messaging (Season 6)
+
+**Goal:** Complete the 7-step SimpleX connection flow so browser and SimpleX app can exchange messages.
+
+1. Send invitation to contact queue (SKEY + SEND with connection request)
+2. Receive and process connection confirmation from SimpleX app
+3. Exchange HELLO messages (both directions)
+4. Achieve CON ("CONNECTED") state
+5. Bidirectional encrypted messaging via Double Ratchet
+6. Remove debug console.log statements
+7. Nginx proxy persistence (systemd service)
 
 ### Phase 4: Hardening (Season 7-8)
 
@@ -655,7 +726,12 @@ GoChat/
       ratchet.ts                    # Double Ratchet init + first encrypt AES-256-GCM (S4)
       agent-envelope.ts             # Agent confirmation encoding (S4)
       connection-request.ts         # Connection request builder + zstd (S4)
-      __tests__/                    # 413 tests across 16 files
+      browser-client.ts             # High-level browser API (S5)
+      __tests__/                    # 485 tests across 19 files
+
++-- src/assets/css/chat.css         # Chat panel styles (S5, lives in SimpleGo www)
++-- src/assets/js/chat.js           # Chat panel logic (S5, lives in SimpleGo www)
++-- _includes/base.njk              # Chat HTML integration (S5, lives in SimpleGo www)
 
   xftp-web/                         # Shared infrastructure (upstream)
     src/
@@ -721,7 +797,64 @@ GoChat/
 | `OK` | Server -> Client | `OK` | Success |
 | `ERR` | Server -> Client | `ERR <errorType>` | Error |
 
-### 7.5 GRP cipher suite reference (for documentation, not code yet)
+### 7.5 SMP v6 wire format reference (Season 5)
+
+Documented during 15 protocol fixes against real SMP v6.4.5.1 server, with critical assistance from the SimpleGo protocol analysis team (49 sessions, 81 bugs, 270 lessons).
+
+**ServerHello (WebSocket mode - no certs):**
+```
+[2B contentLen][versionMin 2B][versionMax 2B][sessIdLen 1B][sessionId 32B]['#' padding]
+Example: 00 25 00 06 00 06 20 [32B sid] 23 23...
+```
+
+**ClientHello:**
+```
+[2B contentLen][version 2B][keyHashLen 1B][keyHash 32B]['#' padding]
+keyHash = SHA256 of server CA certificate SPKI (from contact address fingerprint)
+```
+
+**Batch framing (mandatory since v4):**
+```
+[2B contentLen BE][1B txCount][2B txLen BE][transmission]['#' padding to 16384]
+```
+
+**v6 command transmission:**
+```
+[sigLen=0x40][64B Ed25519 signature]
+[sessIdLen=0x20][32B sessionId]
+[corrIdLen=0x18][24B corrId]
+[entityIdLen][entityId]
+[command bytes]
+```
+
+**v6 signed data (CRITICAL):**
+```
+signedData = [0x20][sessionId 32B] + [corrIdLen][corrId] + [entityIdLen][entityId] + [command]
+```
+The 0x20 length prefix before sessionId MUST be included. Without it: ERR AUTH.
+
+**v6 NEW command:**
+```
+"NEW " [0x2C][44B Ed25519 SPKI authKey][0x2C][44B X25519 SPKI dhKey]"S"
+```
+No spaces between fields. No basicAuth. No sndSecure. Keys use 1-byte shortString prefix.
+
+**v6 response transmission (incoming):**
+```
+[sessIdLen=0x20][32B sessionId][corrIdLen][corrId][entityIdLen][entityId][response]
+```
+SessionId present in responses for v6 (implySessId=false). Must skip before reading corrId.
+
+**SPKI key formats:**
+- Ed25519 (OID 2b 65 70): `30 2a 30 05 06 03 2b 65 70 03 21 00 [32B key]` = 44 bytes
+- X25519 (OID 2b 65 6e): `30 2a 30 05 06 03 2b 65 6e 03 21 00 [32B key]` = 44 bytes
+
+**Asymmetric v6 sessionId behavior (WebSocket):**
+- Outgoing commands: sessionId NOT sent (server reads from TLS channel binding via proxy)
+- Incoming responses: sessionId IS present (must skip when parsing)
+- Signing: sessionId IS included in signed data with 0x20 length prefix
+
+### 7.6 GRP cipher suite reference (for documentation, not code yet)
 
 ```
 GRP/1 cipher suite (non-negotiable):
@@ -859,6 +992,14 @@ GoChat is one component of the SimpleGo ecosystem for encrypted communication ac
 | LIB-3 | Library | Extract core modules from GoChat | S9 |
 | LIB-4 | Library | SimpleXClient facade class | S9 |
 | LIB-5 | Library | Zero-dependency audit | S9 |
+| BC-1 | Browser Client | Browser client API (browser-client.ts) | S5 DONE |
+| BC-2 | Browser Client | Browser bundle (esbuild IIFE) | S5 DONE |
+| BC-3 | Browser Client | Integration tests (24 tests, 7 scenarios) | S5 DONE |
+| CHAT-1 | Chat UI | Chat panel (CSS, JS, HTML, left-docked, responsive) | S5 DONE |
+| INFRA-1 | Infrastructure | SMP server Docker deployment (smp.simplego.dev) | S5 DONE |
+| INFRA-2 | Infrastructure | Nginx WSS reverse proxy (port 8444) | S5 DONE |
+| INFRA-3 | Infrastructure | Contact address setup | S5 DONE |
+| PROTO-1:15 | Protocol | 15 real-server SMP v6 protocol fixes | S5 DONE |
 | GRP-1 | GRP Transport | Noise Protocol transport | S10 |
 | GRP-2 | GRP Transport | ML-KEM-768 post-quantum | S10 |
 | GRP-3 | GRP Transport | Two-hop relay routing | S11 |
@@ -874,3 +1015,4 @@ GoChat is one component of the SimpleGo ecosystem for encrypted communication ac
 | 2026-03-25 | Major update: added dual-profile architecture (SMP + GRP), ChatTransport interface requirement, new task categories (GRP-1 to GRP-4, SEC-1 to SEC-5, UI-6 to UI-8, WS-4), browser-specific risk assessment, ecosystem context, ground rules, task registry. |
 | 2026-03-25 | Season 2 complete. WS-1, WS-2, WS-3 implemented: SMPWebSocketTransport, SMPClient with handshake and dispatch, SMPClientAgent with exponential backoff reconnection. Updated code map and task registry. |
 | 2026-03-25 | Season 4 complete. CONN-1 to CONN-4 implemented: contact address parser, connection state machine, queue pair creation, connection request with X3DH + Double Ratchet (6 crypto layers). 226 new tests (413 total). All CMD tasks marked done (Season 3). Added E2E-4/5/6 tasks for Season 5. Added LIB-1 to LIB-5 for Season 9 (simplex-js library). Updated code map and dependencies. |
+| 2026-03-26 | Season 5 complete. Scope shifted from E2E hardening to real-server connectivity. Built chat UI with left-docked panel design (Phase 1), browser client API with esbuild IIFE bundle and 24 integration tests (Phase 2), SMP server infrastructure with Docker + Nginx WSS proxy on port 8444 (Phase 3), and 15 protocol fixes for real SMP v6 server compatibility including sessionId handling, batch framing, Ed25519 signing, and exact NEW command format (Phase 4). 485 tests total across 19 files. First successful NEW -> IDS on real server from browser via WebSocket. Critical protocol knowledge from SimpleGo team (49 sessions of SMP reverse-engineering). Original E2E tasks (E2E-1 to E2E-6) deferred to Season 6. Added SMP v6 wire format reference (Section 7.5). |
