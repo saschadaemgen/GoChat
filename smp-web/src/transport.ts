@@ -40,6 +40,10 @@ export class SMPWebSocketTransport implements ChatTransport {
   private messageHandler: TransportEventHandler | null = null
   private closeHandler: (() => void) | null = null
   private readonly config: Required<SMPTransportConfig>
+  // Receive buffer for reassembling fragmented WebSocket frames.
+  // WSS reverse proxies (e.g. Nginx) may split SMP's 16KB blocks
+  // across multiple WebSocket messages.
+  private recvBuffer: Uint8Array = new Uint8Array(0)
 
   constructor(config?: SMPTransportConfig) {
     this.config = {...DEFAULT_CONFIG, ...config}
@@ -125,18 +129,28 @@ export class SMPWebSocketTransport implements ChatTransport {
         })
 
         ws.addEventListener("message", (event: MessageEvent) => {
-          const data = event.data as ArrayBuffer
-          if (data.byteLength !== SMP_BLOCK_SIZE) {
-            const error = new SMPTransportError(
-              "BLOCK_SIZE",
-              "Received block of " + data.byteLength + " bytes, expected " + SMP_BLOCK_SIZE
-            )
-            // Close the connection on protocol violation
-            this.close()
-            throw error
+          const chunk = new Uint8Array(event.data as ArrayBuffer)
+
+          // Append chunk to receive buffer
+          if (this.recvBuffer.length === 0) {
+            this.recvBuffer = chunk
+          } else {
+            const combined = new Uint8Array(this.recvBuffer.length + chunk.length)
+            combined.set(this.recvBuffer, 0)
+            combined.set(chunk, this.recvBuffer.length)
+            this.recvBuffer = combined
           }
-          if (this.messageHandler !== null) {
-            this.messageHandler(new Uint8Array(data))
+
+          // Process complete 16KB blocks from the buffer.
+          // WSS reverse proxies may fragment or coalesce frames,
+          // so a single WebSocket message may contain a partial block,
+          // a complete block, or multiple blocks.
+          while (this.recvBuffer.length >= SMP_BLOCK_SIZE) {
+            const block = this.recvBuffer.slice(0, SMP_BLOCK_SIZE)
+            this.recvBuffer = this.recvBuffer.slice(SMP_BLOCK_SIZE)
+            if (this.messageHandler !== null) {
+              this.messageHandler(block)
+            }
           }
         })
       } catch (e) {
@@ -178,6 +192,7 @@ export class SMPWebSocketTransport implements ChatTransport {
   }
 
   close(): void {
+    this.recvBuffer = new Uint8Array(0)
     if (this.ws === null) {
       this.currentState = "disconnected"
       return
