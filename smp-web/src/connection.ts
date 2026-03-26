@@ -379,7 +379,11 @@ export class ConnectionManager {
       console.log("[SMP] sendInvitation: entityId (contact senderId) = " + toHex(contactSenderIdBytes) + " (" + contactSenderIdBytes.length + "B)")
 
       // 4. SEND the invitation (unsigned, flag='F' = no push notification)
-      console.log("[SMP] sendInvitation: sending SEND command, encMessage=" + smpEncConfirmation.length + "B")
+      console.log("[SMP] sendInvitation: smpEncConfirmation=" + smpEncConfirmation.length + "B, first 8:", Array.from(smpEncConfirmation.subarray(0, 8)).map(b => b.toString(16).padStart(2, "0")).join(" "))
+      if (smpEncConfirmation.length < 100) {
+        console.log("[SMP] sendInvitation: WARNING - encMessage too small! Expected ~16008B, got " + smpEncConfirmation.length + "B")
+      }
+      console.log("[SMP] sendInvitation: calling client.sendMessage with " + smpEncConfirmation.length + "B body")
       await client.sendMessage(contactSenderIdBytes, {
         notification: false,
         encMessage: smpEncConfirmation,
