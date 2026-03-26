@@ -421,15 +421,15 @@ describe("encodeTransmission v6 sessionId", () => {
     expect(eid).toEqual(entityId)
   })
 
-  it("v6 format (with sessionId): sessionId + auth + corrId + entityId + command", () => {
+  it("v6 format (with sessionId): auth + sessionId + corrId + entityId + command", () => {
     const tx = encodeTransmission(corrId, entityId, command, sessionId)
     const d = new Decoder(tx)
-    const sid = decodeBytes(d)      // sessionId (first field for v6)
-    const auth = decodeBytes(d)     // empty auth
+    const auth = decodeBytes(d)     // empty auth (sigLen=0x00)
+    const sid = decodeBytes(d)      // sessionId AFTER auth
     const cid = decodeBytes(d)      // corrId
     const eid = decodeBytes(d)      // entityId
-    expect(sid).toEqual(sessionId)
     expect(auth.length).toBe(0)
+    expect(sid).toEqual(sessionId)
     expect(cid).toEqual(corrId)
     expect(eid).toEqual(entityId)
   })

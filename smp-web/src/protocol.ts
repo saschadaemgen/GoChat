@@ -26,14 +26,14 @@ function readSpace(d: Decoder): void {
 }
 
 // -- Transmission encoding (Protocol.hs:2201-2203)
-// encodeTransmission_ v (CorrId corrId, queueId, command) =
-//   smpEncode (corrId, queueId) <> encodeProtocol v command
 //
-// SMP v6 (implySessId = False): sessionId IS on the wire
-//   [sessId shortString] [auth shortString] [corrId shortString] [entityId shortString] [command]
+// SMP v6 wire format (from SimpleGo protocol team, 49 sessions of debugging):
+//   [sigLen][signature?][sessIdLen=0x20][sessionId 32B][corrIdLen][corrId][entityIdLen][entityId][cmd]
+//   Signature covers: [corrId][entityId][cmd] (sessionId is NOT signed)
+//   For unsigned commands: sigLen=0x00 (no signature bytes)
 //
 // SMP v7+ (implySessId = True): sessionId is NOT on the wire
-//   [auth shortString] [corrId shortString] [entityId shortString] [command]
+//   [sigLen][signature?][corrIdLen][corrId][entityIdLen][entityId][cmd]
 
 export function encodeTransmission(
   corrId: Uint8Array,
@@ -42,12 +42,13 @@ export function encodeTransmission(
   sessionId?: Uint8Array
 ): Uint8Array {
   const parts: Uint8Array[] = []
-  // For SMP v6 (implySessId = False): prepend sessionId as shortString
+  // Auth/signature field (sigLen=0x00 for unsigned commands)
+  parts.push(encodeBytes(new Uint8Array(0)))
+  // For SMP v6: sessionId goes AFTER auth, BEFORE corrId
   if (sessionId) {
     parts.push(encodeBytes(sessionId))
   }
   parts.push(
-    encodeBytes(new Uint8Array(0)), // empty auth (unsigned)
     encodeBytes(corrId),
     encodeBytes(entityId),
     command
@@ -57,8 +58,8 @@ export function encodeTransmission(
 
 // -- Transmission parsing (Protocol.hs:1629-1642)
 //
-// SMP v6 (implySessId = False): sessionId IS on the wire
-// SMP v7+ (implySessId = True): sessionId is NOT on the wire
+// SMP v6: [sigLen][sig?][sessId shortString][corrId][entityId][cmd]
+// SMP v7: [sigLen][sig?][corrId][entityId][cmd]
 
 export interface RawTransmission {
   corrId: Uint8Array
@@ -67,11 +68,11 @@ export interface RawTransmission {
 }
 
 export function decodeTransmission(d: Decoder, hasSessionId?: boolean): RawTransmission {
-  // For SMP v6: read and discard sessionId from wire
+  const _auth = decodeBytes(d) // sigLen + signature (empty for unsigned)
+  // For SMP v6: read and discard sessionId AFTER auth, BEFORE corrId
   if (hasSessionId) {
-    decodeBytes(d) // sessionId (present on wire for v6, skipped)
+    decodeBytes(d) // sessionId
   }
-  const _auth = decodeBytes(d) // authenticator (empty for unsigned)
   const corrId = decodeBytes(d)
   const entityId = decodeBytes(d)
   const command = d.takeAll()
