@@ -162,16 +162,15 @@ export class MockSMPServer {
 
   private handleNEW(corrId: Uint8Array, command: Uint8Array): void {
     // Parse NEW params: skip "NEW " (4 bytes), then read keys
-    // All ByteString fields use Word16 BE (2-byte) length prefix
     const d = new Decoder(command.subarray(4))
-    const recipientAuthKey = this.readLargeString(d)
-    const recipientDhKey = this.readLargeString(d)
+    const recipientAuthKey = this.readShortString(d)
+    const recipientDhKey = this.readShortString(d)
 
     // Read basicAuth
     const authFlag = d.anyByte()
     if (authFlag === 0x31) {
       // "1" + Word16 BE password - skip it
-      this.readLargeString(d)
+      this.readShortString(d)
     }
 
     // Read subscribeMode and optional sndSecure (v9+ only)
@@ -245,7 +244,7 @@ export class MockSMPServer {
 
     // Parse KEY: skip "KEY " (4 bytes), read key (Word16 BE prefix)
     const d = new Decoder(command.subarray(4))
-    const senderAuthKey = this.readLargeString(d)
+    const senderAuthKey = this.readShortString(d)
     queue.senderAuthKey = senderAuthKey
 
     this.sendResponse(corrId, entityId, ascii("OK"))
@@ -260,7 +259,7 @@ export class MockSMPServer {
 
     // Parse SKEY: skip "SKEY " (5 bytes), read key (Word16 BE prefix)
     const d = new Decoder(command.subarray(5))
-    const senderAuthKey = this.readLargeString(d)
+    const senderAuthKey = this.readShortString(d)
     queue.senderAuthKey = senderAuthKey
 
     this.sendResponse(corrId, entityId, ascii("OK"))
@@ -394,14 +393,6 @@ export class MockSMPServer {
 
   private readShortString(d: Decoder): Uint8Array {
     const len = d.anyByte()
-    return d.take(len)
-  }
-
-  // Read a Word16 BE length-prefixed field (used for all ByteString fields in SMP commands)
-  private readLargeString(d: Decoder): Uint8Array {
-    const hi = d.anyByte()
-    const lo = d.anyByte()
-    const len = (hi << 8) | lo
     return d.take(len)
   }
 

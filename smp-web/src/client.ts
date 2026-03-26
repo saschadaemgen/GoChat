@@ -471,7 +471,6 @@ export class SMPClientImpl implements SMPClient {
 
   async createQueue(params: NewQueueParams): Promise<IDSResponse> {
     console.log("[SMP] createQueue: calling sendTypedCommand with NEW, smpVersion=" + this.smpVersion + ", state=" + this.currentState)
-    // Pass smpVersion so encodeNEW can omit v9+ fields for v6 servers
     const newParams = {...params, smpVersion: this.smpVersion}
     const cmd = encodeNEW(newParams)
     console.log("[SMP] createQueue: NEW cmd " + cmd.length + "B, hex:", toHex(cmd.subarray(0, 48)))
