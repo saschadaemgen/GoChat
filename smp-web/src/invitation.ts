@@ -54,22 +54,21 @@ export function buildInvitationConnInfo(displayName: string): Uint8Array {
 // -- smpConfirmation with sender key
 
 /**
- * Build smpConfirmation with embedded sender auth key (non-SKEY flow).
+ * Build ClientMessage (the plaintext inside NaCl encryption).
  *
- * Layout:
- *   [1 byte]    'K' (0x4B) - sender key follows
- *   [1 byte]    length of sender auth key (44)
- *   [44 bytes]  Ed25519 SPKI sender auth key
- *   [variable]  confirmationBody = Agent Envelope
+ * Layout (from SimpleGo protocol team):
+ *   [1 byte]    'K' (0x4B) = PHConfirmation
+ *   [44 bytes]  Ed25519 SPKI sender auth key (NO length prefix!)
+ *   [REST]      AgentMsgEnvelope (tail - everything after the 44B SPKI)
  */
-function buildSmpConfirmationWithKey(
+function buildClientMessage(
   senderAuthKeySPKI: Uint8Array,
   agentEnvelope: Uint8Array
 ): Uint8Array {
-  const result = new Uint8Array(1 + 1 + 44 + agentEnvelope.length)
+  // NO length prefix before the 44-byte SPKI key!
+  const result = new Uint8Array(1 + 44 + agentEnvelope.length)
   let offset = 0
-  result[offset++] = 0x4B // 'K'
-  result[offset++] = 44
+  result[offset++] = 0x4B // 'K' = PHConfirmation
   result.set(senderAuthKeySPKI, offset)
   offset += 44
   result.set(agentEnvelope, offset)
@@ -188,10 +187,10 @@ export function buildInvitation(
     encryptedConnInfo: connInfo, // NOT ratchet-encrypted for initial invitation
   })
 
-  // 4. Build smpConfirmation with sender auth key
+  // 4. Build ClientMessage with sender auth key (NO length prefix before SPKI!)
   const senderAuth = generateEd25519KeyPair()
   const senderAuthKeySPKI = encodeEd25519PublicKey(senderAuth.publicKey)
-  const smpConfirmation = buildSmpConfirmationWithKey(senderAuthKeySPKI, agentEnvelope)
+  const clientMessage = buildClientMessage(senderAuthKeySPKI, agentEnvelope)
 
   // 5. NaCl Layer 1 encryption
   // Compute shared secret: X25519 DH(bob_e2eDh, alice_dh_from_contact_uri)
@@ -203,14 +202,15 @@ export function buildInvitation(
   // Build Bob's X25519 DH public key in SPKI format for the header
   const bobDhPublicSPKI = encodeX25519PublicKey(conn.keys.e2eDh.publicKey)
 
+  // ClientMsgEnvelope: phVersion = 4 (SMP Client v4, NOT v6!)
   const smpEncConfirmation = buildSmpEncConfirmation(
-    smpVersion,
+    4, // phVersion = 4, fixed per SimpleGo protocol team
     bobDhPublicSPKI,
-    smpConfirmation,
+    clientMessage,
     sharedSecret
   )
 
-  console.log("[SMP] buildInvitation: connInfo=" + connInfo.length + "B, agentEnvelope=" + agentEnvelope.length + "B, smpConfirmation=" + smpConfirmation.length + "B, smpEncConfirmation=" + smpEncConfirmation.length + "B")
+  console.log("[SMP] buildInvitation: connInfo=" + connInfo.length + "B, agentEnvelope=" + agentEnvelope.length + "B, clientMessage=" + clientMessage.length + "B, smpEncConfirmation=" + smpEncConfirmation.length + "B")
 
   return {smpEncConfirmation, senderAuthKeySPKI, ratchetKeyPair, ephemeralKeyPair}
 }
