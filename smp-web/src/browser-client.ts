@@ -101,7 +101,18 @@ class BrowserClientImpl implements BrowserClient {
       })
 
       // 2. Initiate connection (parse address, create queue)
-      this.conn = await this.connManager.initiateConnection(this.config.contactAddress)
+      if (this.config.onError) {
+        // Log progress for debugging
+        try {
+          this.conn = await this.connManager.initiateConnection(this.config.contactAddress)
+        } catch (initErr) {
+          // Re-throw with more context
+          const msg = initErr instanceof Error ? initErr.message : String(initErr)
+          throw new Error("initiateConnection failed: " + msg)
+        }
+      } else {
+        this.conn = await this.connManager.initiateConnection(this.config.contactAddress)
+      }
 
       // 3. Listen for state changes
       this.unsubscribeState = this.conn.state.onStateChange((event: ConnectionStateEvent) => {
