@@ -199,6 +199,7 @@ export class ConnectionManager {
 
       const ids = await client.createQueue({
         recipientAuthKey: encodeEd25519PublicKey(keys.recipientAuth.publicKey),
+        recipientAuthPrivateKey: keys.recipientAuth.privateKey, // Ed25519 private key for signing
         recipientDhKey: encodeX25519PublicKey(keys.recipientDh.publicKey),
         subscribeMode: this.config.subscribeMode ?? "S",
         sndSecure: this.config.sndSecure ?? true,
