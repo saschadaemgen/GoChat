@@ -21,6 +21,7 @@ import {
   verifyServerIdentity,
   buildCommandBlock,
   parseResponseBlock,
+  parseAllTransmissions,
 } from "./handshake.js"
 import {
   encodeNEW, encodeSUB, encodeKEY, encodeSKEY, encodeSEND,
@@ -257,43 +258,56 @@ export class SMPClientImpl implements SMPClient {
   private setupDispatch(): void {
     this.transport.onMessage((block: Uint8Array) => {
       try {
-        // Parse the 16KB block into raw transmission bytes
-        const transmissionBytes = parseResponseBlock(block)
-        // Decode the transmission: auth, corrId, entityId, command
-        const td = new Decoder(transmissionBytes)
-        const {corrId, entityId, command} = decodeTransmission(td)
-
-        // Dispatch by corrId:
-        // - Non-empty corrId = response to our command
-        // - Empty corrId = server push (MSG notification)
-        if (corrId.length > 0) {
-          const key = toHex(corrId)
-          const pending = this.pendingCommands.get(key)
-          if (pending) {
-            // Matched a pending typed command - resolve Promise
-            this.pendingCommands.delete(key)
-            clearTimeout(pending.timer)
-            try {
-              const response = decodeResponse(new Decoder(command))
-              pending.resolve(response)
-            } catch (parseErr) {
-              pending.reject(parseErr instanceof Error ? parseErr : new Error(String(parseErr)))
-            }
-          } else {
-            // No pending typed command - fall through to raw handler
-            if (this.responseHandler !== null) {
-              this.responseHandler(corrId, entityId, command)
-            }
-          }
-        } else {
-          // Server push - dispatch to typed handlers first, then raw handler
-          this.dispatchServerPush(entityId, command)
+        // Parse ALL transmissions from the 16KB block.
+        // SMP servers batch multiple transmissions per block (txCount >= 1).
+        // Example: SUB response + MSG delivery in one block (txCount=2).
+        const transmissions = parseAllTransmissions(block)
+        for (const txBytes of transmissions) {
+          this.dispatchSingleTransmission(txBytes)
         }
       } catch (_e) {
         // Protocol error in incoming block.
         // Do not crash the dispatch loop. Reconnection handles dead connections.
       }
     })
+  }
+
+  private dispatchSingleTransmission(transmissionBytes: Uint8Array): void {
+    try {
+      // Decode the transmission - for v6, sessionId is on the wire
+      const hasSessionId = this.smpVersion < 7
+      const td = new Decoder(transmissionBytes)
+      const {corrId, entityId, command} = decodeTransmission(td, hasSessionId)
+
+      // Dispatch by corrId:
+      // - Non-empty corrId = response to our command
+      // - Empty corrId = server push (MSG notification)
+      if (corrId.length > 0) {
+        const key = toHex(corrId)
+        const pending = this.pendingCommands.get(key)
+        if (pending) {
+          // Matched a pending typed command - resolve Promise
+          this.pendingCommands.delete(key)
+          clearTimeout(pending.timer)
+          try {
+            const response = decodeResponse(new Decoder(command))
+            pending.resolve(response)
+          } catch (parseErr) {
+            pending.reject(parseErr instanceof Error ? parseErr : new Error(String(parseErr)))
+          }
+        } else {
+          // No pending typed command - fall through to raw handler
+          if (this.responseHandler !== null) {
+            this.responseHandler(corrId, entityId, command)
+          }
+        }
+      } else {
+        // Server push - dispatch to typed handlers first, then raw handler
+        this.dispatchServerPush(entityId, command)
+      }
+    } catch (_e) {
+      // Failed to dispatch single transmission. Continue with others.
+    }
   }
 
   private dispatchServerPush(entityId: Uint8Array, command: Uint8Array): void {
@@ -322,7 +336,9 @@ export class SMPClientImpl implements SMPClient {
     }
 
     const corrId = generateCorrId()
-    const transmission = encodeTransmission(corrId, entityId, command)
+    // For SMP v6 (implySessId = False): include sessionId in the transmission
+    const sessId = this.smpVersion < 7 ? this.sessionId : undefined
+    const transmission = encodeTransmission(corrId, entityId, command, sessId)
     const block = buildCommandBlock(transmission)
     const key = toHex(corrId)
 
@@ -370,7 +386,8 @@ export class SMPClientImpl implements SMPClient {
     this.keepaliveTimer = setInterval(() => {
       if (this.currentState !== "ready") return
       const corrId = generateCorrId()
-      const transmission = encodeTransmission(corrId, new Uint8Array(0), encodePING())
+      const sessId = this.smpVersion < 7 ? this.sessionId : undefined
+      const transmission = encodeTransmission(corrId, new Uint8Array(0), encodePING(), sessId)
       const block = buildCommandBlock(transmission)
       this.transport.send(block).catch(() => {
         // Send failed - connection may be dead.

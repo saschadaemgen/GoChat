@@ -28,18 +28,37 @@ function readSpace(d: Decoder): void {
 // -- Transmission encoding (Protocol.hs:2201-2203)
 // encodeTransmission_ v (CorrId corrId, queueId, command) =
 //   smpEncode (corrId, queueId) <> encodeProtocol v command
+//
+// SMP v6 (implySessId = False): sessionId IS on the wire
+//   [sessId shortString] [auth shortString] [corrId shortString] [entityId shortString] [command]
+//
+// SMP v7+ (implySessId = True): sessionId is NOT on the wire
+//   [auth shortString] [corrId shortString] [entityId shortString] [command]
 
-export function encodeTransmission(corrId: Uint8Array, entityId: Uint8Array, command: Uint8Array): Uint8Array {
-  return concatBytes(
-    encodeBytes(new Uint8Array(0)), // empty auth
+export function encodeTransmission(
+  corrId: Uint8Array,
+  entityId: Uint8Array,
+  command: Uint8Array,
+  sessionId?: Uint8Array
+): Uint8Array {
+  const parts: Uint8Array[] = []
+  // For SMP v6 (implySessId = False): prepend sessionId as shortString
+  if (sessionId) {
+    parts.push(encodeBytes(sessionId))
+  }
+  parts.push(
+    encodeBytes(new Uint8Array(0)), // empty auth (unsigned)
     encodeBytes(corrId),
     encodeBytes(entityId),
     command
   )
+  return concatBytes(...parts)
 }
 
 // -- Transmission parsing (Protocol.hs:1629-1642)
-// For implySessId = True (v7+): no sessId on wire
+//
+// SMP v6 (implySessId = False): sessionId IS on the wire
+// SMP v7+ (implySessId = True): sessionId is NOT on the wire
 
 export interface RawTransmission {
   corrId: Uint8Array
@@ -47,7 +66,11 @@ export interface RawTransmission {
   command: Uint8Array
 }
 
-export function decodeTransmission(d: Decoder): RawTransmission {
+export function decodeTransmission(d: Decoder, hasSessionId?: boolean): RawTransmission {
+  // For SMP v6: read and discard sessionId from wire
+  if (hasSessionId) {
+    decodeBytes(d) // sessionId (present on wire for v6, skipped)
+  }
   const _auth = decodeBytes(d) // authenticator (empty for unsigned)
   const corrId = decodeBytes(d)
   const entityId = decodeBytes(d)
