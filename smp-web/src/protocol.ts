@@ -43,13 +43,21 @@ export function encodeTransmission(
   sessionId?: Uint8Array,
   signKey?: Uint8Array
 ): Uint8Array {
-  // The signed data is [corrId shortString][entityId shortString][command]
-  // SessionId is NOT included in the signature.
-  const signedData = concatBytes(
+  // The tail (corrId + entityId + command) appears both in the
+  // signed data and on the wire after sessionId.
+  const tail = concatBytes(
     encodeBytes(corrId),
     encodeBytes(entityId),
     command
   )
+
+  // For v6: signed data INCLUDES sessionId WITH its length prefix!
+  // signedData = [0x20][32B sessionId] + [corrId][entityId][command]
+  // SimpleGo team confirmed: the 0x20 length prefix byte MUST be present.
+  // Without it: ERR AUTH. This cost SimpleGo a full day to discover.
+  const signedData = sessionId
+    ? concatBytes(encodeBytes(sessionId), tail)
+    : tail
 
   const parts: Uint8Array[] = []
 
@@ -63,13 +71,13 @@ export function encodeTransmission(
     parts.push(new Uint8Array([0x00]))
   }
 
-  // For SMP v6: sessionId goes AFTER sig, BEFORE corrId
+  // For SMP v6: sessionId goes AFTER sig, BEFORE corrId on the wire
   if (sessionId) {
     parts.push(encodeBytes(sessionId))
   }
 
-  // Append the signed data (corrId + entityId + command)
-  parts.push(signedData)
+  // Append tail (corrId + entityId + command)
+  parts.push(tail)
 
   return concatBytes(...parts)
 }
