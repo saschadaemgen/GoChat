@@ -3,15 +3,14 @@
 // Each encoder returns raw command bytes (tag + parameters).
 // The caller wraps them via encodeTransmission() and buildCommandBlock().
 //
-// Wire format: ALL ByteString fields in SMP commands use Word16 Big-Endian
-// (2-byte) length prefix (encodeLarge), NOT shortString (1-byte prefix).
-// This matches the Haskell smpEncode instance for ByteString:
-//   smpEncode s = smpEncode @Word16 (fromIntegral $ B.length s) <> s
-// Confirmed by SimpleGo protocol team (Session 4, bug #24/26/27/28).
+// Wire format: keys use 1-byte shortString length prefix (encodeBytes).
+// Confirmed by SimpleGo protocol team byte-for-byte wire capture:
+//   NEW [0x2C][44B authKey][0x2C][44B dhKey]0ST
+// Fields after keys are single ASCII chars with NO length prefix.
 
 import {
   concatBytes,
-  encodeLarge,
+  encodeBytes,
 } from "@simplex-chat/xftp-web/dist/protocol/encoding.js"
 
 // -- ASCII helper (local copy to avoid pulling libsodium via xftp-web commands.ts)
@@ -28,9 +27,9 @@ export interface NewQueueParams {
   recipientAuthKey: Uint8Array   // Ed25519 SPKI DER (44 bytes)
   recipientDhKey: Uint8Array     // X25519 SPKI DER (44 bytes)
   subscribeMode: "S" | "C"      // S = subscribe on create, C = create only
-  sndSecure?: boolean            // T = sender can secure queue (v9+ ONLY, omit for v6)
+  sndSecure?: boolean            // T = sender can secure queue, default false
   basicAuth?: Uint8Array         // optional server password
-  smpVersion?: number            // negotiated version (controls which fields are sent)
+  smpVersion?: number            // negotiated version (for future use)
 }
 
 export interface SendParams {
@@ -45,32 +44,27 @@ export interface EnableNotificationsParams {
 
 // -- Command encoders
 
-// NEW <SP> encodeLarge(authKey) encodeLarge(dhKey) basicAuth subscribeMode [sndSecure]
-// basicAuth = "0" / "1" encodeLarge(password)
-// sndSecure is v9+ ONLY - omit for v6 servers (causes ERR CMD SYNTAX if present)
+// NEW <SP> encodeBytes(authKey) encodeBytes(dhKey) basicAuth subscribeMode sndSecure
+// Keys: 1-byte length prefix (shortString) - confirmed by SimpleGo protocol team
+// basicAuth: "0" (no auth) or "1" + encodeBytes(password) - single ASCII char + optional data
+// subscribeMode: "S" or "C" - single ASCII char
+// sndSecure: "T" or "F" - single ASCII char, REQUIRED for ALL versions
 export function encodeNEW(params: NewQueueParams): Uint8Array {
   const tag = ascii("NEW ")
-  const authKey = encodeLarge(params.recipientAuthKey)
-  const dhKey = encodeLarge(params.recipientDhKey)
+  const authKey = encodeBytes(params.recipientAuthKey)
+  const dhKey = encodeBytes(params.recipientDhKey)
 
   let basicAuth: Uint8Array
   if (params.basicAuth !== undefined) {
-    basicAuth = concatBytes(new Uint8Array([0x31]), encodeLarge(params.basicAuth))
+    basicAuth = concatBytes(new Uint8Array([0x31]), encodeBytes(params.basicAuth))
   } else {
     basicAuth = new Uint8Array([0x30]) // "0" = no auth
   }
 
   const subscribeMode = ascii(params.subscribeMode)
+  const sndSecure = ascii(params.sndSecure ? "T" : "F")
 
-  // sndSecure is a v9+ field. For v6 servers, omit it entirely.
-  const version = params.smpVersion ?? 7
-  if (version >= 9) {
-    const sndSecure = ascii(params.sndSecure ? "T" : "F")
-    return concatBytes(tag, authKey, dhKey, basicAuth, subscribeMode, sndSecure)
-  }
-
-  // v6-v8: no sndSecure field
-  return concatBytes(tag, authKey, dhKey, basicAuth, subscribeMode)
+  return concatBytes(tag, authKey, dhKey, basicAuth, subscribeMode, sndSecure)
 }
 
 // SUB (no parameters)
@@ -78,14 +72,14 @@ export function encodeSUB(): Uint8Array {
   return ascii("SUB")
 }
 
-// KEY <SP> encodeLarge(senderAuthKey)
+// KEY <SP> encodeBytes(senderAuthKey)
 export function encodeKEY(senderAuthKey: Uint8Array): Uint8Array {
-  return concatBytes(ascii("KEY "), encodeLarge(senderAuthKey))
+  return concatBytes(ascii("KEY "), encodeBytes(senderAuthKey))
 }
 
-// SKEY <SP> encodeLarge(senderAuthKey)
+// SKEY <SP> encodeBytes(senderAuthKey)
 export function encodeSKEY(senderAuthKey: Uint8Array): Uint8Array {
-  return concatBytes(ascii("SKEY "), encodeLarge(senderAuthKey))
+  return concatBytes(ascii("SKEY "), encodeBytes(senderAuthKey))
 }
 
 // SEND <SP> msgFlags <SP> smpEncMessage
@@ -99,10 +93,10 @@ export function encodeSEND(params: SendParams): Uint8Array {
   )
 }
 
-// ACK <SP> encodeLarge(msgId)
+// ACK <SP> encodeBytes(msgId)
 // msgId = 24 bytes, encoded as shortString
 export function encodeACK(msgId: Uint8Array): Uint8Array {
-  return concatBytes(ascii("ACK "), encodeLarge(msgId))
+  return concatBytes(ascii("ACK "), encodeBytes(msgId))
 }
 
 // DEL (no parameters)
@@ -120,12 +114,12 @@ export function encodeGET(): Uint8Array {
   return ascii("GET")
 }
 
-// NKEY <SP> encodeLarge(notifierKey) encodeLarge(recipientNtfDhKey)
+// NKEY <SP> encodeBytes(notifierKey) encodeBytes(recipientNtfDhKey)
 export function encodeNKEY(params: EnableNotificationsParams): Uint8Array {
   return concatBytes(
     ascii("NKEY "),
-    encodeLarge(params.notifierKey),
-    encodeLarge(params.recipientNtfDhKey)
+    encodeBytes(params.notifierKey),
+    encodeBytes(params.recipientNtfDhKey)
   )
 }
 
