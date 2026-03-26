@@ -85,14 +85,14 @@ class BrowserClientImpl implements BrowserClient {
 
     try {
       // 1. Create agent and connection manager
+      console.log("[SMP] BrowserClient.connect: creating agent, serverUrl=" + (this.config.serverUrl || "(none)"))
       this.agent = this.config._agent ?? newSMPAgent()
 
       // Parse serverUrl to override WebSocket connection host:port.
-      // The contact address contains the SMP protocol address (e.g. port 5223)
-      // but browsers need the WSS proxy (e.g. port 443).
       const queueServer = this.config.serverUrl
         ? parseServerUrl(this.config.serverUrl)
         : undefined
+      console.log("[SMP] BrowserClient.connect: queueServer=" + JSON.stringify(queueServer))
 
       this.connManager = new ConnectionManager(this.agent, {
         subscribeMode: "S",
@@ -101,17 +101,14 @@ class BrowserClientImpl implements BrowserClient {
       })
 
       // 2. Initiate connection (parse address, create queue)
-      if (this.config.onError) {
-        // Log progress for debugging
-        try {
-          this.conn = await this.connManager.initiateConnection(this.config.contactAddress)
-        } catch (initErr) {
-          // Re-throw with more context
-          const msg = initErr instanceof Error ? initErr.message : String(initErr)
-          throw new Error("initiateConnection failed: " + msg)
-        }
-      } else {
+      console.log("[SMP] BrowserClient.connect: calling initiateConnection")
+      try {
         this.conn = await this.connManager.initiateConnection(this.config.contactAddress)
+        console.log("[SMP] BrowserClient.connect: initiateConnection SUCCEEDED")
+      } catch (initErr) {
+        const msg = initErr instanceof Error ? initErr.message : String(initErr)
+        console.log("[SMP] BrowserClient.connect: initiateConnection FAILED: " + msg)
+        throw new Error("initiateConnection failed: " + msg)
       }
 
       // 3. Listen for state changes

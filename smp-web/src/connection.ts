@@ -155,12 +155,15 @@ export class ConnectionManager {
 
   async initiateConnection(contactAddressUri: string): Promise<ManagedConnection> {
     // 1. Parse the contact address
+    console.log("[SMP] initiateConnection: parsing contact address")
     const contactAddress = parseContactAddress(contactAddressUri)
+    console.log("[SMP] initiateConnection: format=" + contactAddress.format)
 
     // 2. Create state machine
     const state = new ConnectionStateMachine()
 
     // 3. Generate key pairs
+    console.log("[SMP] initiateConnection: generating key pairs")
     const keys: ConnectionKeys = {
       recipientAuth: generateEd25519KeyPair(),
       recipientDh: generateX25519KeyPair(),
@@ -175,6 +178,7 @@ export class ConnectionManager {
 
     // 5. Determine target server for Bob's receiving queue
     const targetServer = this.resolveTargetServer(contactAddress)
+    console.log("[SMP] initiateConnection: target server=" + targetServer.hosts[0] + ":" + targetServer.port + ", identity=" + (targetServer.serverIdentity ? targetServer.serverIdentity.substring(0, 12) + "..." : "(empty)"))
 
     // 6. Create managed connection (initially without receiveQueue)
     const conn: ManagedConnection = {
@@ -188,7 +192,10 @@ export class ConnectionManager {
     // 7. Create receiving queue on the SMP server
     try {
       const serverAddress = toSMPServerAddress(targetServer)
+      console.log("[SMP] initiateConnection: keyHash=" + serverAddress.keyHash.length + "B, first 4 bytes: " + Array.from(serverAddress.keyHash.subarray(0, 4)).map(b => b.toString(16).padStart(2, "0")).join(" "))
+      console.log("[SMP] initiateConnection: calling agent.getClient")
       const client = await this.agent.getClient(serverAddress)
+      console.log("[SMP] initiateConnection: agent.getClient returned, calling createQueue")
 
       const ids = await client.createQueue({
         recipientAuthKey: encodeEd25519PublicKey(keys.recipientAuth.publicKey),
@@ -196,6 +203,7 @@ export class ConnectionManager {
         subscribeMode: this.config.subscribeMode ?? "S",
         sndSecure: this.config.sndSecure ?? true,
       })
+      console.log("[SMP] initiateConnection: createQueue returned IDS, recipientId=" + ids.recipientId.length + "B")
 
       // 8. Store receive queue info
       conn.receiveQueue = {
