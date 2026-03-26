@@ -361,7 +361,7 @@ export class SMPClientImpl implements SMPClient {
 
     const corrId = generateCorrId()
     // For SMP v6 (implySessId = False): include sessionId in the transmission
-    const sessId = this.smpVersion < 4 ? this.sessionId : undefined
+    const sessId = this.smpVersion < 7 ? this.sessionId : undefined
     const transmission = encodeTransmission(corrId, entityId, command, sessId)
     const block = buildCommandBlock(transmission)
     const key = toHex(corrId)
@@ -419,7 +419,7 @@ export class SMPClientImpl implements SMPClient {
     this.keepaliveTimer = setInterval(() => {
       if (this.currentState !== "ready") return
       const corrId = generateCorrId()
-      const sessId = this.smpVersion < 4 ? this.sessionId : undefined
+      const sessId = this.smpVersion < 7 ? this.sessionId : undefined
       const transmission = encodeTransmission(corrId, new Uint8Array(0), encodePING(), sessId)
       const block = buildCommandBlock(transmission)
       this.transport.send(block).catch(() => {
