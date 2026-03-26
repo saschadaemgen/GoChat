@@ -1,16 +1,15 @@
 // esbuild config for browser bundle.
 // Resolves bare import specifiers that vitest handles via aliases.
-
 import {build} from "esbuild"
 import path from "path"
 import {fileURLToPath} from "url"
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-
 await build({
   entryPoints: ["src/browser-client.ts"],
   bundle: true,
-  format: "esm",
+  format: "iife",
+  globalName: "GoChatClient",
+  footer: { js: "window.createBrowserClient = GoChatClient.createBrowserClient;" },
   outfile: "dist/gochat-client.js",
   target: "es2022",
   platform: "browser",
@@ -26,5 +25,4 @@ await build({
     "@noble/ciphers/salsa": path.resolve(__dirname, "node_modules/@noble/ciphers/salsa.js"),
   },
 })
-
 console.log("Built dist/gochat-client.js")
