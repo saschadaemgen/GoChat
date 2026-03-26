@@ -101,10 +101,15 @@ function serverToString(server: {hosts: string[]; port: number}): string {
 function toSMPServerAddress(server: {hosts: string[]; port: number; serverIdentity: string}): SMPServerAddress {
   // SMPServerAddress uses host (string), port (number), keyHash (Uint8Array)
   // The keyHash is the SHA-256 fingerprint of the CA cert, base64url-decoded.
-  // For now, we pass a placeholder since the real verification happens in the
-  // TLS handshake. The mock tests use fake servers anyway.
-  // In production, the serverIdentity from the URI would be decoded to keyHash.
+  // It MUST be the real server fingerprint from the contact address - the SMP
+  // server verifies this in the ClientHello and rejects the connection if wrong.
   const keyHash = base64urlDecode(server.serverIdentity)
+  if (keyHash.length === 0) {
+    // For mock tests: use 32 zero bytes when no identity is available.
+    // For production: this should never happen - the contact address
+    // always contains the server fingerprint.
+    return {host: server.hosts[0], port: server.port, keyHash: new Uint8Array(32)}
+  }
   return {
     host: server.hosts[0],
     port: server.port,
@@ -113,7 +118,7 @@ function toSMPServerAddress(server: {hosts: string[]; port: number; serverIdenti
 }
 
 function base64urlDecode(s: string): Uint8Array {
-  if (!s || s.length === 0) return new Uint8Array(32) // placeholder for empty identity
+  if (!s || s.length === 0) return new Uint8Array(0)
   let b64 = s.replace(/-/g, "+").replace(/_/g, "/")
   while (b64.length % 4 !== 0) b64 += "="
   const bin = atob(b64)
