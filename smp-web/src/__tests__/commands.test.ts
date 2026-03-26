@@ -101,12 +101,16 @@ describe("tag-only commands", () => {
 
 // -- NEW command tests
 
+// v6 NEW format (confirmed by SimpleGo working C code, byte for byte):
+//   "NEW " [0x2C][44B authKey SPKI] [0x2C][44B dhKey SPKI] "S"
+// No spaces between fields. No basicAuth. No sndSecure.
+// Total: 4 + 45 + 45 + 1 = 95 bytes.
+
 describe("encodeNEW", () => {
   const baseParams: NewQueueParams = {
     recipientAuthKey: fakeKey(0xAA),
     recipientDhKey: fakeKey(0xBB),
     subscribeMode: "S",
-    sndSecure: true,
   }
 
   it("starts with ASCII 'NEW '", () => {
@@ -115,105 +119,68 @@ describe("encodeNEW", () => {
     expect(result[3]).toBe(0x20) // space after tag
   })
 
-  it("encodes authKey with 1-byte length prefix after tag", () => {
+  it("encodes authKey with 1-byte length prefix (0x2C = 44)", () => {
     const result = encodeNEW(baseParams)
-    // After "NEW " (4 bytes): 1-byte length prefix + 44 bytes key
-    expect(result[4]).toBe(44) // length prefix for 44-byte key
+    expect(result[4]).toBe(0x2C) // 44 decimal
     expect(result[5]).toBe(0xAA) // first byte of authKey
+    expect(result[48]).toBe(0xAA) // last byte of authKey (4+1+43)
   })
 
-  it("has space separator after authKey", () => {
+  it("encodes dhKey immediately after authKey (no space)", () => {
     const result = encodeNEW(baseParams)
-    // After "NEW "(4) + authKey(45): space separator
-    expect(result[4 + 45]).toBe(0x20)
+    // After "NEW "(4) + authKey shortString(45) = offset 49
+    expect(result[49]).toBe(0x2C) // dhKey length prefix = 44
+    expect(result[50]).toBe(0xBB) // first byte of dhKey
   })
 
-  it("encodes dhKey after authKey + space", () => {
+  it("encodes subscribeMode immediately after dhKey (no space)", () => {
     const result = encodeNEW(baseParams)
-    // After "NEW "(4) + authKey(45) + SP(1): dhKey
-    const dhKeyOffset = 4 + 45 + 1
-    expect(result[dhKeyOffset]).toBe(44) // length prefix
-    expect(result[dhKeyOffset + 1]).toBe(0xBB) // first byte of dhKey
-  })
-
-  it("has space separators between all fields", () => {
-    const result = encodeNEW(baseParams)
-    // tag(4) + authKey(45) + SP + dhKey(45) + SP + "0" + SP + "S" + SP + "T"
-    const spAfterAuth = 4 + 45
-    const spAfterDh = spAfterAuth + 1 + 45
-    const spAfterBasicAuth = spAfterDh + 1 + 1
-    const spAfterMode = spAfterBasicAuth + 1 + 1
-    expect(result[spAfterAuth]).toBe(0x20)
-    expect(result[spAfterDh]).toBe(0x20)
-    expect(result[spAfterBasicAuth]).toBe(0x20)
-    expect(result[spAfterMode]).toBe(0x20)
-  })
-
-  it("encodes basicAuth as '0' when no auth", () => {
-    const result = encodeNEW(baseParams)
-    // After "NEW "(4) + authKey(45) + SP(1) + dhKey(45) + SP(1)
-    const authOffset = 4 + 45 + 1 + 45 + 1
-    expect(result[authOffset]).toBe(0x30) // "0"
-  })
-
-  it("encodes basicAuth as '1' + shortString when auth provided", () => {
-    const params: NewQueueParams = {
-      ...baseParams,
-      basicAuth: new Uint8Array([0x01, 0x02, 0x03]),
-    }
-    const result = encodeNEW(params)
-    const authOffset = 4 + 45 + 1 + 45 + 1
-    expect(result[authOffset]).toBe(0x31) // "1"
-    expect(result[authOffset + 1]).toBe(3) // length prefix
-    expect(result[authOffset + 2]).toBe(0x01)
-  })
-
-  it("encodes subscribeMode 'S' correctly", () => {
-    const result = encodeNEW(baseParams)
-    // After tag(4) + authKey(45) + SP(1) + dhKey(45) + SP(1) + basicAuth(1) + SP(1)
-    const modeOffset = 4 + 45 + 1 + 45 + 1 + 1 + 1
-    expect(result[modeOffset]).toBe(0x53) // "S"
+    // After "NEW "(4) + authKey(45) + dhKey(45) = offset 94
+    expect(result[94]).toBe(0x53) // "S"
   })
 
   it("encodes subscribeMode 'C' correctly", () => {
     const params: NewQueueParams = {...baseParams, subscribeMode: "C"}
     const result = encodeNEW(params)
-    const modeOffset = 4 + 45 + 1 + 45 + 1 + 1 + 1
-    expect(result[modeOffset]).toBe(0x43) // "C"
+    expect(result[94]).toBe(0x43) // "C"
   })
 
-  it("encodes sndSecure true as 'T'", () => {
+  it("has correct total length: 95 bytes", () => {
     const result = encodeNEW(baseParams)
-    // After tag(4) + authKey(45) + SP + dhKey(45) + SP + "0" + SP + "S" + SP
-    const secureOffset = 4 + 45 + 1 + 45 + 1 + 1 + 1 + 1 + 1
-    expect(result[secureOffset]).toBe(0x54) // "T"
+    // "NEW "(4) + authKey(1+44) + dhKey(1+44) + "S"(1) = 95
+    expect(result.length).toBe(95)
   })
 
-  it("encodes sndSecure false as 'F'", () => {
-    const params: NewQueueParams = {...baseParams, sndSecure: false}
-    const result = encodeNEW(params)
-    const secureOffset = 4 + 45 + 1 + 45 + 1 + 1 + 1 + 1 + 1
-    expect(result[secureOffset]).toBe(0x46) // "F"
-  })
-
-  it("always includes sndSecure (required for all versions)", () => {
-    const result = encodeNEW({...baseParams, smpVersion: 6})
-    // tag(4) + authKey(45) + SP + dhKey(45) + SP + "0" + SP + "S" + SP + "T"
-    expect(result.length).toBe(4 + 45 + 1 + 45 + 1 + 1 + 1 + 1 + 1 + 1)
-  })
-
-  it("has correct total length without basicAuth", () => {
+  it("has NO spaces between key fields", () => {
     const result = encodeNEW(baseParams)
-    // "NEW "(4) + authKey(45) + SP(1) + dhKey(45) + SP(1) + "0"(1) + SP(1) + "S"(1) + SP(1) + "T"(1) = 101
-    expect(result.length).toBe(101)
+    // Byte after authKey should be dhKey length prefix, not space
+    expect(result[4 + 45]).not.toBe(0x20)
+    expect(result[4 + 45]).toBe(0x2C) // dhKey length prefix
   })
 
-  it("has correct total length with basicAuth", () => {
-    const password = new Uint8Array(10).fill(0xFF)
-    const params: NewQueueParams = {...baseParams, basicAuth: password}
-    const result = encodeNEW(params)
-    // "NEW "(4) + authKey(45) + SP(1) + dhKey(45) + SP(1) + "1"+len+pw(12) + SP(1) + "S"(1) + SP(1) + "T"(1) = 112
-    expect(result.length).toBe(4 + 45 + 1 + 45 + 1 + 1 + 1 + 10 + 1 + 1 + 1 + 1)
+  it("does NOT include basicAuth or sndSecure", () => {
+    const result = encodeNEW(baseParams)
+    // Total should be exactly 95, not longer
+    expect(result.length).toBe(95)
+    // Last byte is subscribeMode, nothing after it
+    expect(result[result.length - 1]).toBe(0x53) // "S"
+  })
+
+  it("exact byte sequence matches SimpleGo reference", () => {
+    // Build expected bytes: "NEW " + [0x2C][44xAA] + [0x2C][44xBB] + "S"
+    const expected = new Uint8Array(95)
+    expected[0] = 0x4E // N
+    expected[1] = 0x45 // E
+    expected[2] = 0x57 // W
+    expected[3] = 0x20 // space
+    expected[4] = 0x2C // authKey length = 44
+    expected.fill(0xAA, 5, 49) // 44 bytes authKey
+    expected[49] = 0x2C // dhKey length = 44
+    expected.fill(0xBB, 50, 94) // 44 bytes dhKey
+    expected[94] = 0x53 // "S"
+
+    const result = encodeNEW(baseParams)
+    expect(result).toEqual(expected)
   })
 })
 

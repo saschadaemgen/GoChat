@@ -44,29 +44,18 @@ export interface EnableNotificationsParams {
 
 // -- Command encoders
 
-// SMP ABNF: createCmd = %s"NEW " smpPublicAuthKey SP dhPubKey [SP smpBasicAuth] [SP subscribeMode] [SP sndSecure]
-// Space (0x20) separates EVERY field after the tag.
-// Keys: 1-byte length prefix (shortString) - confirmed by SimpleGo protocol team
-// basicAuth: "0" (no auth) or "1" + encodeBytes(password)
-// subscribeMode: "S" or "C"
-// sndSecure: "T" or "F" - REQUIRED for ALL versions
+// v6 NEW format (confirmed by SimpleGo working C code, byte for byte):
+//   "NEW " [0x2C][44B authKey SPKI] [0x2C][44B dhKey SPKI] "S"
+// No spaces between fields (shortString is self-delimiting).
+// No basicAuth field. No sndSecure field.
+// Total: 4 + 45 + 45 + 1 = 95 bytes.
 export function encodeNEW(params: NewQueueParams): Uint8Array {
-  const SP = new Uint8Array([0x20])
-  const tag = ascii("NEW ")
-  const authKey = encodeBytes(params.recipientAuthKey)
-  const dhKey = encodeBytes(params.recipientDhKey)
-
-  let basicAuth: Uint8Array
-  if (params.basicAuth !== undefined) {
-    basicAuth = concatBytes(new Uint8Array([0x31]), encodeBytes(params.basicAuth))
-  } else {
-    basicAuth = new Uint8Array([0x30]) // "0" = no auth
-  }
-
-  const subscribeMode = ascii(params.subscribeMode)
-  const sndSecure = ascii(params.sndSecure ? "T" : "F")
-
-  return concatBytes(tag, authKey, SP, dhKey, SP, basicAuth, SP, subscribeMode, SP, sndSecure)
+  return concatBytes(
+    ascii("NEW "),
+    encodeBytes(params.recipientAuthKey),  // [0x2C][44B Ed25519 SPKI]
+    encodeBytes(params.recipientDhKey),     // [0x2C][44B X25519 SPKI]
+    ascii(params.subscribeMode)             // "S" or "C", no space prefix
+  )
 }
 
 // SUB (no parameters)

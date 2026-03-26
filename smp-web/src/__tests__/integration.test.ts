@@ -117,7 +117,8 @@ describe("Scenario 2: Fast v9 procedure (sndSecure)", () => {
       sndSecure: true,
     })
 
-    expect(ids.sndSecure).toBe(true)
+    // v6 format does not include sndSecure, mock always returns false
+    expect(ids.sndSecure).toBe(false)
 
     // 2. Secure queue by sender (v9 flow)
     await client.secureQueueSender(ids.senderId, fakeKey(0x33))

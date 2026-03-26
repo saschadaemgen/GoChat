@@ -161,30 +161,13 @@ export class MockSMPServer {
   // -- Command handlers
 
   private handleNEW(corrId: Uint8Array, command: Uint8Array): void {
-    // Parse NEW params: skip "NEW " (4 bytes), then read keys
-    // Fields separated by spaces per SMP ABNF
+    // Parse v6 NEW: "NEW " [authKey shortString][dhKey shortString][subMode char]
+    // No spaces between fields. No basicAuth. No sndSecure.
     const d = new Decoder(command.subarray(4))
     const recipientAuthKey = this.readShortString(d)
-    this.skipSpace(d)
     const recipientDhKey = this.readShortString(d)
-
-    // Read basicAuth (preceded by space)
-    this.skipSpace(d)
-    const authFlag = d.anyByte()
-    if (authFlag === 0x31) {
-      // "1" + shortString password - skip it
-      this.readShortString(d)
-    }
-
-    // Read subscribeMode and sndSecure (preceded by spaces)
-    this.skipSpace(d)
     const subMode = String.fromCharCode(d.anyByte())
-    let sndSecure = false
-    if (d.remaining() > 0) {
-      this.skipSpace(d)
-      const sndSecureFlag = String.fromCharCode(d.anyByte())
-      sndSecure = sndSecureFlag === "T"
-    }
+    const sndSecure = false
 
     const recipientId = generateId(24)
     const senderId = generateId(24)
