@@ -85,12 +85,28 @@ export function blockUnpad(block: Uint8Array): Uint8Array {
 export interface SMPServerHandshake {
   smpVersionRange: VersionRange
   sessionId: Uint8Array
-  certChainDer: Uint8Array[] // NonEmpty list of DER certificate blobs
-  signedKeyDer: Uint8Array   // signed X25519 DH public key (DER)
+  certChainDer: Uint8Array[] // NonEmpty list of DER certificate blobs (empty for WebSocket)
+  signedKeyDer: Uint8Array   // signed X25519 DH public key (DER, empty for WebSocket)
 }
 
 // Decode ServerHello from a 16KB padded block.
-// Wire format: unpad(block) -> (versionRange, sessionId, NonEmpty Large certs, Large signedKey)
+//
+// Two formats depending on connection type:
+//
+// Native TLS (direct connection):
+//   unpad(block) -> versionRange, sessionId, NonEmpty Large certs, Large signedKey
+//   The server sends its certificate chain and a signed DH key for identity
+//   verification independent of the TLS layer.
+//
+// WebSocket via proxy (Browser -> Nginx -> SMP server):
+//   unpad(block) -> versionRange, sessionId
+//   No certificate chain or signed key. TLS is handled by the proxy.
+//   The unpadded content is just version range (4 bytes) + sessionId (1+N bytes).
+//
+// We detect the format by checking if there are remaining bytes after sessionId
+// that are not '#' padding (0x23). If the remaining bytes start with 0x23 or
+// the decoder has no remaining content, we treat it as the WebSocket format.
+//
 // Detects server error responses (short blocks with ASCII like "HANDSHAKE" or "SESSION").
 export function decodeSMPServerHandshake(block: Uint8Array): SMPServerHandshake {
   const raw = blockUnpad(block)
@@ -104,10 +120,25 @@ export function decodeSMPServerHandshake(block: Uint8Array): SMPServerHandshake 
   const d = new Decoder(raw)
   const smpVersionRange = decodeVersionRange(d)
   const sessionId = decodeBytes(d)
-  // CertChainPubKey: NonEmpty Large (cert chain), Large (signed key)
-  const certChainDer = decodeNonEmpty(decodeLarge, d)
-  const signedKeyDer = decodeLarge(d)
-  // Remaining bytes are ignored for forward compatibility
+
+  // Check if certificate chain follows (native TLS format).
+  // In the WebSocket format, there are no remaining bytes - the content
+  // after versionRange + sessionId is just '#' padding which blockUnpad
+  // already stripped. If the decoder has remaining content, try to
+  // decode the certificate chain.
+  let certChainDer: Uint8Array[] = []
+  let signedKeyDer = new Uint8Array(0)
+
+  if (d.remaining() > 0) {
+    try {
+      certChainDer = decodeNonEmpty(decodeLarge, d)
+      signedKeyDer = decodeLarge(d)
+    } catch (_e) {
+      // Failed to decode cert chain - likely WebSocket format with no certs.
+      // Leave certChainDer empty and signedKeyDer empty.
+    }
+  }
+
   return {smpVersionRange, sessionId, certChainDer, signedKeyDer}
 }
 

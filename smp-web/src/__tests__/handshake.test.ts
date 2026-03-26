@@ -11,6 +11,7 @@ import {
 import type {VersionRange, SMPClientHandshake} from "../handshake.js"
 import {SMPTransportError} from "../types.js"
 import {SMP_BLOCK_SIZE} from "../transport.js"
+import {concatBytes, encodeBytes, encodeLarge, encodeWord16} from "@simplex-chat/xftp-web/dist/protocol/encoding.js"
 
 describe("encodeSMPClientHandshake", () => {
   it("produces a 16384-byte block", () => {
@@ -166,5 +167,85 @@ describe("constantTimeEqual", () => {
     const a = new Uint8Array([1, 2])
     const b = new Uint8Array([1, 2, 3])
     expect(constantTimeEqual(a, b)).toBe(false)
+  })
+})
+
+// -- WebSocket ServerHello (simplified format without certificate chain)
+
+describe("decodeSMPServerHandshake WebSocket format", () => {
+  it("decodes real SMP server WebSocket ServerHello", () => {
+    // Real data from smp.simplego.dev:8444 (via Nginx WSS proxy).
+    // The ServerHello contains only version range + sessionId,
+    // no certificate chain or signed DH key.
+    //
+    // Raw block starts with:
+    // 00 25 = length prefix (37 bytes)
+    // 00 06 00 06 = version range min=6, max=6
+    // 20 = sessionId length (32)
+    // [32 bytes sessionId]
+    // 23 23 23... = '#' padding
+    const sessionIdBytes = new Uint8Array([
+      0x4c, 0x04, 0x8e, 0x33, 0xae, 0xcb, 0xb9, 0x51,
+      0xf8, 0x9f, 0x6d, 0x1c, 0xc7, 0xd9, 0x7f, 0xdb,
+      0xb4, 0x5c, 0xe6, 0x83, 0x00, 0x29, 0x10, 0x00,
+      0xd8, 0xc3, 0xfa, 0xb5, 0x16, 0xec, 0x59, 0x32,
+    ])
+
+    // Build the content: versionRange(4) + sessionId(1+32) = 37 bytes
+    const content = new Uint8Array(37)
+    content[0] = 0x00; content[1] = 0x06 // min version 6
+    content[2] = 0x00; content[3] = 0x06 // max version 6
+    content[4] = 0x20 // sessionId length = 32
+    content.set(sessionIdBytes, 5)
+
+    // Pad to 16KB block
+    const block = blockPad(content)
+    expect(block.length).toBe(SMP_BLOCK_SIZE)
+
+    // Decode
+    const result = decodeSMPServerHandshake(block)
+    expect(result.smpVersionRange.minVersion).toBe(6)
+    expect(result.smpVersionRange.maxVersion).toBe(6)
+    expect(result.sessionId).toEqual(sessionIdBytes)
+    expect(result.certChainDer).toEqual([]) // no certs in WebSocket format
+    expect(result.signedKeyDer).toEqual(new Uint8Array(0)) // no signed key
+  })
+
+  it("decodes WebSocket ServerHello with version range v6-v7", () => {
+    const sessionId = new Uint8Array(24).fill(0xAB) // 24-byte sessionId
+
+    const content = new Uint8Array(4 + 1 + 24) // vRange + sessId
+    content[0] = 0x00; content[1] = 0x06 // min 6
+    content[2] = 0x00; content[3] = 0x07 // max 7
+    content[4] = 24 // sessionId length
+    content.set(sessionId, 5)
+
+    const block = blockPad(content)
+    const result = decodeSMPServerHandshake(block)
+
+    expect(result.smpVersionRange).toEqual({minVersion: 6, maxVersion: 7})
+    expect(result.sessionId).toEqual(sessionId)
+    expect(result.certChainDer.length).toBe(0)
+  })
+
+  it("still decodes full format with certificate chain", () => {
+    // Verify backward compatibility: if cert chain is present, it is decoded.
+    // Build a minimal valid full-format ServerHello.
+    const vRange = concatBytes(encodeWord16(6), encodeWord16(7))
+    const sessId = encodeBytes(new Uint8Array(32).fill(0x11))
+    // NonEmpty Large cert chain: count=1, then one Large cert blob
+    const fakeCert = new Uint8Array(100).fill(0x22)
+    const certChain = concatBytes(new Uint8Array([1]), encodeLarge(fakeCert)) // count + Large(cert)
+    const signedKey = encodeLarge(new Uint8Array(80).fill(0x33))
+
+    const content = concatBytes(vRange, sessId, certChain, signedKey)
+    const block = blockPad(content)
+    const result = decodeSMPServerHandshake(block)
+
+    expect(result.smpVersionRange).toEqual({minVersion: 6, maxVersion: 7})
+    expect(result.sessionId).toEqual(new Uint8Array(32).fill(0x11))
+    expect(result.certChainDer.length).toBe(1)
+    expect(result.certChainDer[0]).toEqual(fakeCert)
+    expect(result.signedKeyDer).toEqual(new Uint8Array(80).fill(0x33))
   })
 })

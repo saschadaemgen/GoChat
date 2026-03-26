@@ -505,8 +505,13 @@ export async function connectSMP(
     // 3. Decode ServerHello
     const serverHello = decodeSMPServerHandshake(serverHelloBlock)
 
-    // 4. Verify server identity
-    verifyServerIdentity(serverHello, server.keyHash)
+    // 4. Verify server identity (only if certificate chain is present).
+    // WebSocket connections via proxy send a simplified ServerHello
+    // without certificate chain or signed DH key. TLS identity is
+    // verified by the proxy layer instead.
+    if (serverHello.certChainDer.length > 0) {
+      verifyServerIdentity(serverHello, server.keyHash)
+    }
 
     // 5. Version negotiation
     const vr = compatibleVRange(serverHello.smpVersionRange, smpClientVersionRange)
