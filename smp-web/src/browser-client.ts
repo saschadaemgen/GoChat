@@ -145,13 +145,15 @@ class BrowserClientImpl implements BrowserClient {
       // Get the SMP client for the contact queue server.
       // If serverUrl is configured, use its host:port for the WebSocket
       // connection (the WSS proxy), not the SMP protocol port.
+      // The keyHash comes from the contact address server identity
+      // (needed for the SMP handshake even through a proxy).
       const wssServer = this.config.serverUrl
         ? parseServerUrl(this.config.serverUrl)
         : null
       const serverAddress = {
         host: wssServer ? wssServer.hosts[0] : this.conn.contactQueue.server.hosts[0],
         port: wssServer ? wssServer.port : this.conn.contactQueue.server.port,
-        keyHash: new Uint8Array(32), // Placeholder for MVP
+        keyHash: base64urlDecode(this.conn.contactQueue.server.serverIdentity),
       }
       const client = await this.agent!.getClient(serverAddress)
 
@@ -252,10 +254,17 @@ class BrowserClientImpl implements BrowserClient {
       serverPort = this.conn.contactAddress.data.server.port
     }
 
+    // Get the server identity from the contact address for keyHash
+    let serverIdentity = ""
+    if (this.conn.contactAddress.format === "full") {
+      serverIdentity = this.conn.contactAddress.data.smpQueues[0].server.serverIdentity
+    } else {
+      serverIdentity = this.conn.contactAddress.data.server.serverIdentity
+    }
     const serverAddress = {
       host: serverHost,
       port: serverPort,
-      keyHash: new Uint8Array(32), // Placeholder
+      keyHash: base64urlDecode(serverIdentity),
     }
 
     // Get client and register typed message handler

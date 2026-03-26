@@ -483,3 +483,66 @@ describe("Multiple connections", () => {
     expect(mgr.getActiveConnections().length).toBe(3)
   })
 })
+
+// -- Server identity (keyHash) propagation
+
+describe("Server identity propagation", () => {
+  it("passes server identity from contact address as keyHash to getClient", async () => {
+    let capturedServer: SMPServerAddress | null = null
+    const mockClient = createMockClient()
+    const agent: SMPClientAgent = {
+      async getClient(server: SMPServerAddress) {
+        capturedServer = server
+        return mockClient
+      },
+      async reconnect(server: SMPServerAddress) { return mockClient },
+      closeServer() {},
+      closeAll() {},
+      onConnectionChange() {},
+    }
+
+    const mgr = new ConnectionManager(agent)
+    await mgr.initiateConnection(buildLegacyContactURI())
+
+    // SAMPLE_IDENTITY = "u2dS9sG8nMNURyZwqASV4yROM28YQxY37YKx2OLSuPA"
+    // The keyHash should be the base64url-decoded identity, not all zeros
+    expect(capturedServer).not.toBeNull()
+    expect(capturedServer!.keyHash.length).toBeGreaterThan(0)
+    // Should NOT be all zeros
+    expect(capturedServer!.keyHash.some(b => b !== 0)).toBe(true)
+  })
+
+  it("preserves server identity when queueServer override is used", async () => {
+    let capturedServer: SMPServerAddress | null = null
+    const mockClient = createMockClient()
+    const agent: SMPClientAgent = {
+      async getClient(server: SMPServerAddress) {
+        capturedServer = server
+        return mockClient
+      },
+      async reconnect(server: SMPServerAddress) { return mockClient },
+      closeServer() {},
+      closeAll() {},
+      onConnectionChange() {},
+    }
+
+    // Use queueServer override (like serverUrl in browser-client)
+    // with empty serverIdentity - but the contact address HAS the identity
+    const mgr = new ConnectionManager(agent, {
+      queueServer: {
+        hosts: ["proxy.example.com"],
+        port: 443,
+        serverIdentity: "", // empty - should be filled from contact address
+      },
+    })
+
+    await mgr.initiateConnection(buildLegacyContactURI())
+
+    // Should use proxy host:port but contact address identity
+    expect(capturedServer).not.toBeNull()
+    expect(capturedServer!.host).toBe("proxy.example.com")
+    expect(capturedServer!.port).toBe(443)
+    // keyHash should come from SAMPLE_IDENTITY, not be all zeros
+    expect(capturedServer!.keyHash.some(b => b !== 0)).toBe(true)
+  })
+})

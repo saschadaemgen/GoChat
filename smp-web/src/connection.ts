@@ -333,9 +333,26 @@ export class ConnectionManager {
   }
 
   private resolveTargetServer(contactAddress: ParsedContactAddress): {hosts: string[]; port: number; serverIdentity: string} {
-    // Priority: explicit config > address-derived
+    // Extract the server identity from the contact address.
+    // This is the SHA-256 fingerprint of the SMP server's CA cert,
+    // needed for the ClientHello keyHash even when connecting via WSS proxy.
+    let addressIdentity = ""
+    if (contactAddress.format === "full") {
+      addressIdentity = contactAddress.data.smpQueues[0].server.serverIdentity
+    } else {
+      addressIdentity = contactAddress.data.server.serverIdentity
+    }
+
+    // Priority: explicit config (host:port) > address-derived
+    // But ALWAYS preserve the server identity from the contact address
+    // for the SMP handshake keyHash, even when overriding host:port
+    // with a WSS proxy URL.
     if (this.config.queueServer) {
-      return this.config.queueServer
+      return {
+        hosts: this.config.queueServer.hosts,
+        port: this.config.queueServer.port,
+        serverIdentity: this.config.queueServer.serverIdentity || addressIdentity,
+      }
     }
 
     if (contactAddress.format === "full") {
