@@ -166,32 +166,38 @@ describe("encodeNEW", () => {
     expect(result[modeOffset]).toBe(0x43) // "C"
   })
 
-  it("encodes sndSecure true as 'T'", () => {
-    const result = encodeNEW(baseParams)
+  it("encodes sndSecure true as 'T' for v9", () => {
+    const result = encodeNEW({...baseParams, smpVersion: 9})
     // After tag(4) + authKey(45) + dhKey(45) + basicAuth(1) + mode(1)
     const secureOffset = 4 + 45 + 45 + 1 + 1
     expect(result[secureOffset]).toBe(0x54) // "T"
   })
 
-  it("encodes sndSecure false as 'F'", () => {
-    const params: NewQueueParams = {...baseParams, sndSecure: false}
+  it("encodes sndSecure false as 'F' for v9", () => {
+    const params: NewQueueParams = {...baseParams, sndSecure: false, smpVersion: 9}
     const result = encodeNEW(params)
     const secureOffset = 4 + 45 + 45 + 1 + 1
     expect(result[secureOffset]).toBe(0x46) // "F"
   })
 
-  it("has correct total length without basicAuth", () => {
-    const result = encodeNEW(baseParams)
-    // "NEW "(4) + authKey(1+44) + dhKey(1+44) + "0"(1) + mode(1) + secure(1)
-    expect(result.length).toBe(4 + 45 + 45 + 1 + 1 + 1)
+  it("omits sndSecure for v6", () => {
+    const result = encodeNEW({...baseParams, smpVersion: 6})
+    // v6: no sndSecure field
+    expect(result.length).toBe(4 + 45 + 45 + 1 + 1)
   })
 
-  it("has correct total length with basicAuth", () => {
+  it("has correct total length without basicAuth (v6, no sndSecure)", () => {
+    const result = encodeNEW({...baseParams, smpVersion: 6})
+    // "NEW "(4) + authKey(1+44) + dhKey(1+44) + "0"(1) + mode(1)
+    expect(result.length).toBe(4 + 45 + 45 + 1 + 1)
+  })
+
+  it("has correct total length with basicAuth (v6, no sndSecure)", () => {
     const password = new Uint8Array(10).fill(0xFF)
-    const params: NewQueueParams = {...baseParams, basicAuth: password}
+    const params: NewQueueParams = {...baseParams, basicAuth: password, smpVersion: 6}
     const result = encodeNEW(params)
-    // "NEW "(4) + authKey(1+44) + dhKey(1+44) + "1"(1) + len(1) + password(10) + mode(1) + secure(1)
-    expect(result.length).toBe(4 + 45 + 45 + 1 + 1 + 10 + 1 + 1)
+    // "NEW "(4) + authKey(1+44) + dhKey(1+44) + "1"(1) + len(1) + password(10) + mode(1)
+    expect(result.length).toBe(4 + 45 + 45 + 1 + 1 + 10 + 1)
   })
 })
 

@@ -173,10 +173,13 @@ export class MockSMPServer {
       this.readShortString(d)
     }
 
-    // Read subscribeMode and sndSecure
+    // Read subscribeMode and optional sndSecure (v9+ only)
     const subMode = String.fromCharCode(d.anyByte())
-    const sndSecureFlag = String.fromCharCode(d.anyByte())
-    const sndSecure = sndSecureFlag === "T"
+    let sndSecure = false
+    if (d.remaining() > 0) {
+      const sndSecureFlag = String.fromCharCode(d.anyByte())
+      sndSecure = sndSecureFlag === "T"
+    }
 
     const recipientId = generateId(24)
     const senderId = generateId(24)
