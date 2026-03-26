@@ -191,6 +191,9 @@ export interface SMPClient {
 
   // Register typed handler for END (subscription takeover) server pushes.
   onSubscriptionEnd(handler: SubscriptionEndHandler): void
+
+  // Diagnostic: send PING and verify PONG response. Returns "PONG" on success.
+  diagnosticPing(): Promise<string>
 }
 
 // -- PING command encoding
@@ -259,6 +262,25 @@ export class SMPClientImpl implements SMPClient {
 
   get state(): SMPClientState {
     return this.currentState
+  }
+
+  /**
+   * Diagnostic: send a raw PING with explicit sessionId to test wire format.
+   * Logs the exact bytes sent and received for protocol debugging.
+   * Call this after connectSMP to verify the session is valid.
+   */
+  async diagnosticPing(): Promise<string> {
+    console.log("[SMP] diagnosticPing: sessionId=" + toHex(this.sessionId) + " (" + this.sessionId.length + "B)")
+
+    try {
+      const response = await this.sendTypedCommand(new Uint8Array(0), encodePING())
+      console.log("[SMP] diagnosticPing: response type=" + response.type)
+      return response.type // "PONG" = success
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      console.log("[SMP] diagnosticPing: FAILED: " + msg)
+      return "ERROR: " + msg
+    }
   }
 
   private setupDispatch(): void {
@@ -360,17 +382,15 @@ export class SMPClientImpl implements SMPClient {
     }
 
     const corrId = generateCorrId()
-    // Do NOT include sessionId in outgoing commands.
-    // Over WebSocket, the connection itself identifies the session.
-    // The server returns ERR SESSION if sessionId is included.
-    // (SessionId IS present in server responses and must be skipped
-    // when parsing - see dispatchSingleTransmission hasSessionId.)
-    const transmission = encodeTransmission(corrId, entityId, command)
+    // SMP v6: include sessionId AFTER auth, BEFORE corrId
+    const sessId = this.smpVersion < 7 ? this.sessionId : undefined
+    const transmission = encodeTransmission(corrId, entityId, command, sessId)
     const block = buildCommandBlock(transmission)
     const key = toHex(corrId)
 
     console.log("[SMP] sendTypedCommand: corrId=" + key.substring(0, 16) + "..., entityId=" + toHex(entityId) + ", cmd first 4:", toHex(command.subarray(0, 4)))
-    console.log("[SMP] sendTypedCommand: transmission " + transmission.length + "B, block " + block.length + "B")
+    console.log("[SMP] sendTypedCommand: sessId=" + (sessId ? toHex(sessId.subarray(0, 8)) + "... (" + sessId.length + "B)" : "none") + ", transmission " + transmission.length + "B")
+    console.log("[SMP] sendTypedCommand: transmission first 48:", toHex(transmission.subarray(0, 48)))
 
     return new Promise<SMPResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -422,8 +442,8 @@ export class SMPClientImpl implements SMPClient {
     this.keepaliveTimer = setInterval(() => {
       if (this.currentState !== "ready") return
       const corrId = generateCorrId()
-      // No sessionId in outgoing commands (WebSocket session is implicit)
-      const transmission = encodeTransmission(corrId, new Uint8Array(0), encodePING())
+      const sessId = this.smpVersion < 7 ? this.sessionId : undefined
+      const transmission = encodeTransmission(corrId, new Uint8Array(0), encodePING(), sessId)
       const block = buildCommandBlock(transmission)
       this.transport.send(block).catch(() => {
         // Send failed - connection may be dead.
