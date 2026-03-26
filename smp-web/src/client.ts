@@ -360,9 +360,12 @@ export class SMPClientImpl implements SMPClient {
     }
 
     const corrId = generateCorrId()
-    // For SMP v6 (implySessId = False): include sessionId in the transmission
-    const sessId = this.smpVersion < 7 ? this.sessionId : undefined
-    const transmission = encodeTransmission(corrId, entityId, command, sessId)
+    // Do NOT include sessionId in outgoing commands.
+    // Over WebSocket, the connection itself identifies the session.
+    // The server returns ERR SESSION if sessionId is included.
+    // (SessionId IS present in server responses and must be skipped
+    // when parsing - see dispatchSingleTransmission hasSessionId.)
+    const transmission = encodeTransmission(corrId, entityId, command)
     const block = buildCommandBlock(transmission)
     const key = toHex(corrId)
 
@@ -419,8 +422,8 @@ export class SMPClientImpl implements SMPClient {
     this.keepaliveTimer = setInterval(() => {
       if (this.currentState !== "ready") return
       const corrId = generateCorrId()
-      const sessId = this.smpVersion < 7 ? this.sessionId : undefined
-      const transmission = encodeTransmission(corrId, new Uint8Array(0), encodePING(), sessId)
+      // No sessionId in outgoing commands (WebSocket session is implicit)
+      const transmission = encodeTransmission(corrId, new Uint8Array(0), encodePING())
       const block = buildCommandBlock(transmission)
       this.transport.send(block).catch(() => {
         // Send failed - connection may be dead.
