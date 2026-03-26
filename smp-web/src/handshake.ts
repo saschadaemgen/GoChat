@@ -354,13 +354,30 @@ export function buildCommandBlock(transmission: Uint8Array): Uint8Array {
   return blockPad(batch)
 }
 
-// Parse a 16KB response block into raw transmission bytes.
+// Parse a 16KB response block into raw transmission bytes (first only).
 // Format: blockUnpad -> [count] + decodeLarge(transmission)
+// For backward compatibility. Use parseAllTransmissions for multi-tx blocks.
 export function parseResponseBlock(block: Uint8Array): Uint8Array {
   const raw = blockUnpad(block)
   const d = new Decoder(raw)
   const count = d.anyByte()
   if (count < 1) throw new Error("Empty batch (count=0)")
-  // Read first transmission (we only process one per block)
+  // Read first transmission only
   return decodeLarge(d)
+}
+
+// Parse ALL transmissions from a 16KB block.
+// SMP servers batch multiple transmissions per block (txCount >= 1).
+// Example: SUB OK response + MSG delivery in one block (txCount=2).
+export function parseAllTransmissions(block: Uint8Array): Uint8Array[] {
+  const raw = blockUnpad(block)
+  const d = new Decoder(raw)
+  const count = d.anyByte()
+  if (count < 1) throw new Error("Empty batch (count=0)")
+  const transmissions: Uint8Array[] = []
+  for (let i = 0; i < count; i++) {
+    if (d.remaining() < 2) break // not enough data for another Large prefix
+    transmissions.push(decodeLarge(d))
+  }
+  return transmissions
 }

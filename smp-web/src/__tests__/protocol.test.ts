@@ -1,7 +1,8 @@
 import {describe, it, expect} from "vitest"
-import {Decoder, concatBytes, encodeBytes, encodeLarge} from "@simplex-chat/xftp-web/dist/protocol/encoding.js"
-import {decodeResponse, decodeError} from "../protocol.js"
+import {Decoder, concatBytes, encodeBytes, decodeBytes, encodeLarge} from "@simplex-chat/xftp-web/dist/protocol/encoding.js"
+import {decodeResponse, decodeError, encodeTransmission, decodeTransmission} from "../protocol.js"
 import type {SMPResponse, SMPError} from "../protocol.js"
+import {blockPad, parseAllTransmissions, buildCommandBlock} from "../handshake.js"
 
 // -- Helpers
 
@@ -398,5 +399,144 @@ describe("ERR responses", () => {
 describe("unknown response tag", () => {
   it("throws error for unknown tag", () => {
     expect(() => decode(ascii("XYZZY"))).toThrow("unknown SMP response: XYZZY")
+  })
+})
+
+// -- Transmission encoding with sessionId (v6 vs v7)
+
+describe("encodeTransmission v6 sessionId", () => {
+  const corrId = new Uint8Array(24).fill(0xAA)
+  const entityId = new Uint8Array(16).fill(0xBB)
+  const command = ascii("PING")
+  const sessionId = new Uint8Array(32).fill(0xCC)
+
+  it("v7 format (no sessionId): auth + corrId + entityId + command", () => {
+    const tx = encodeTransmission(corrId, entityId, command)
+    const d = new Decoder(tx)
+    const auth = decodeBytes(d)     // empty auth
+    const cid = decodeBytes(d)      // corrId
+    const eid = decodeBytes(d)      // entityId
+    expect(auth.length).toBe(0)
+    expect(cid).toEqual(corrId)
+    expect(eid).toEqual(entityId)
+  })
+
+  it("v6 format (with sessionId): sessionId + auth + corrId + entityId + command", () => {
+    const tx = encodeTransmission(corrId, entityId, command, sessionId)
+    const d = new Decoder(tx)
+    const sid = decodeBytes(d)      // sessionId (first field for v6)
+    const auth = decodeBytes(d)     // empty auth
+    const cid = decodeBytes(d)      // corrId
+    const eid = decodeBytes(d)      // entityId
+    expect(sid).toEqual(sessionId)
+    expect(auth.length).toBe(0)
+    expect(cid).toEqual(corrId)
+    expect(eid).toEqual(entityId)
+  })
+
+  it("v6 transmission is longer than v7 by sessionId shortString size", () => {
+    const txV7 = encodeTransmission(corrId, entityId, command)
+    const txV6 = encodeTransmission(corrId, entityId, command, sessionId)
+    // v6 is longer by 1 (length prefix) + 32 (sessionId) = 33 bytes
+    expect(txV6.length).toBe(txV7.length + 33)
+  })
+})
+
+describe("decodeTransmission v6 sessionId", () => {
+  const corrId = new Uint8Array(24).fill(0xDD)
+  const entityId = new Uint8Array(16).fill(0xEE)
+  const command = ascii("OK")
+  const sessionId = new Uint8Array(32).fill(0xFF)
+
+  it("decodes v7 format (no sessionId) correctly", () => {
+    const tx = encodeTransmission(corrId, entityId, command)
+    const d = new Decoder(tx)
+    const result = decodeTransmission(d, false)
+    expect(result.corrId).toEqual(corrId)
+    expect(result.entityId).toEqual(entityId)
+  })
+
+  it("decodes v6 format (with sessionId) correctly", () => {
+    const tx = encodeTransmission(corrId, entityId, command, sessionId)
+    const d = new Decoder(tx)
+    const result = decodeTransmission(d, true)
+    expect(result.corrId).toEqual(corrId)
+    expect(result.entityId).toEqual(entityId)
+  })
+
+  it("roundtrips v6 encode/decode correctly", () => {
+    const tx = encodeTransmission(corrId, entityId, command, sessionId)
+    const d = new Decoder(tx)
+    const result = decodeTransmission(d, true)
+    expect(result.corrId).toEqual(corrId)
+    expect(result.entityId).toEqual(entityId)
+    expect(result.command).toEqual(command)
+  })
+})
+
+// -- Multi-transmission block parsing
+
+describe("parseAllTransmissions", () => {
+  it("parses single-transmission block (txCount=1)", () => {
+    const tx = encodeTransmission(
+      new Uint8Array(24).fill(0x11),
+      new Uint8Array(0),
+      ascii("OK")
+    )
+    const block = buildCommandBlock(tx) // uses txCount=1
+    const result = parseAllTransmissions(block)
+    expect(result.length).toBe(1)
+  })
+
+  it("parses multi-transmission block (txCount=2)", () => {
+    const tx1 = encodeTransmission(
+      new Uint8Array(24).fill(0x11),
+      new Uint8Array(16).fill(0x22),
+      ascii("OK")
+    )
+    const tx2 = encodeTransmission(
+      new Uint8Array(0), // empty corrId = server push
+      new Uint8Array(16).fill(0x33),
+      concatBytes(ascii("MSG "), encodeBytes(new Uint8Array(24).fill(0x44)), ascii("hello"))
+    )
+
+    // Manually build a 2-transmission batch block
+    const batch = concatBytes(
+      new Uint8Array([2]),    // txCount = 2
+      encodeLarge(tx1),
+      encodeLarge(tx2)
+    )
+    const block = blockPad(batch)
+
+    const result = parseAllTransmissions(block)
+    expect(result.length).toBe(2)
+
+    // Verify first transmission
+    const d1 = new Decoder(result[0])
+    const t1 = decodeTransmission(d1)
+    expect(t1.corrId).toEqual(new Uint8Array(24).fill(0x11))
+
+    // Verify second transmission
+    const d2 = new Decoder(result[1])
+    const t2 = decodeTransmission(d2)
+    expect(t2.corrId.length).toBe(0) // server push (empty corrId)
+  })
+
+  it("parses txCount=3 block", () => {
+    const makeTx = (fill: number) => encodeTransmission(
+      new Uint8Array(24).fill(fill),
+      new Uint8Array(0),
+      ascii("PONG")
+    )
+    const batch = concatBytes(
+      new Uint8Array([3]),
+      encodeLarge(makeTx(0x01)),
+      encodeLarge(makeTx(0x02)),
+      encodeLarge(makeTx(0x03))
+    )
+    const block = blockPad(batch)
+
+    const result = parseAllTransmissions(block)
+    expect(result.length).toBe(3)
   })
 })

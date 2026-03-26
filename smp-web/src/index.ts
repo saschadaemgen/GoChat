@@ -47,6 +47,7 @@ export {
   blockUnpad,
   buildCommandBlock,
   parseResponseBlock,
+  parseAllTransmissions,
 } from "./handshake.js"
 
 // SMP client with handshake and command dispatch
