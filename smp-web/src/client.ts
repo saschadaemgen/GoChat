@@ -444,6 +444,7 @@ export class SMPClientImpl implements SMPClient {
   // -- Typed command methods
 
   async createQueue(params: NewQueueParams): Promise<IDSResponse> {
+    console.log("[SMP] createQueue: calling sendTypedCommand with NEW, state=" + this.currentState + ", transport=" + this.transport.state)
     const response = await this.sendTypedCommand(new Uint8Array(0), encodeNEW(params))
     if (response.type === "IDS") {
       return {
@@ -543,16 +544,20 @@ export async function connectSMP(
   const debug = cfg.onDebug ?? null
 
   // 1. Create transport and connect
+  console.log("[SMP] connectSMP: connecting to wss://" + server.host + ":" + server.port)
   const transport = new SMPWebSocketTransport({connectTimeoutMs: cfg.connectTimeoutMs})
   await transport.connect(server)
+  console.log("[SMP] connectSMP: WebSocket OPEN, waiting for ServerHello")
 
   try {
     // 2. Wait for ServerHello (first 16KB block from server)
     const serverHelloBlock = await waitForBlock(transport, cfg.handshakeTimeoutMs)
+    console.log("[SMP] connectSMP: ServerHello received, " + serverHelloBlock.length + "B")
     if (debug) debug("ServerHello raw (first 64 bytes)", serverHelloBlock.subarray(0, 64))
 
     // 3. Decode ServerHello
     const serverHello = decodeSMPServerHandshake(serverHelloBlock)
+    console.log("[SMP] connectSMP: ServerHello decoded, version=" + serverHello.smpVersionRange.minVersion + "-" + serverHello.smpVersionRange.maxVersion + ", sessionId=" + serverHello.sessionId.length + "B, certs=" + serverHello.certChainDer.length)
     if (debug) {
       debug("ServerHello sessionId", serverHello.sessionId)
       debug("ServerHello vRange", new Uint8Array([
@@ -584,20 +589,20 @@ export async function connectSMP(
       )
     }
     const smpVersion = vr.maxVersion
+    console.log("[SMP] connectSMP: negotiated version=" + smpVersion)
 
     // 6. Send ClientHello
     const clientHello = encodeSMPClientHandshake({
       smpVersion,
       keyHash: server.keyHash,
     })
+    console.log("[SMP] connectSMP: sending ClientHello, version=" + smpVersion + ", keyHash=" + server.keyHash.length + "B")
     if (debug) {
       debug("ClientHello full block (first 64 bytes)", clientHello.subarray(0, 64))
       debug("ClientHello keyHash", server.keyHash)
     }
     await transport.send(clientHello)
-    if (debug) {
-      debug("ClientHello sent, transport state", new TextEncoder().encode(transport.state))
-    }
+    console.log("[SMP] connectSMP: ClientHello sent, transport.state=" + transport.state)
 
     // After ClientHello, the SMP handshake is COMPLETE.
     // There is NO server response to ClientHello.
@@ -605,10 +610,8 @@ export async function connectSMP(
     // (Confirmed by SimpleGo protocol analysis.)
 
     // 7. Verify transport is still open after sending ClientHello.
-    // If the server rejected our handshake, the WebSocket may already
-    // be in CLOSING state. The send() above would succeed (buffered)
-    // but no data actually reaches the server.
     if (transport.state !== "connected") {
+      console.log("[SMP] connectSMP: TRANSPORT DEAD after ClientHello! state=" + transport.state)
       throw new SMPTransportError(
         "HANDSHAKE",
         "Transport disconnected after ClientHello (state: " + transport.state + "). " +
@@ -617,9 +620,7 @@ export async function connectSMP(
     }
 
     // 8. Return client with command dispatch
-    if (debug) {
-      debug("connectSMP complete, creating SMPClient", new Uint8Array([smpVersion]))
-    }
+    console.log("[SMP] connectSMP: HANDSHAKE COMPLETE, creating SMPClient v" + smpVersion)
     return new SMPClientImpl(
       serverHello.sessionId,
       smpVersion,

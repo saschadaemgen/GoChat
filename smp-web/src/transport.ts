@@ -26,6 +26,12 @@ import {SMPTransportError} from "./types.js"
 // (which requires libsodium-wrappers-sumo). This is a fixed protocol constant.
 export const SMP_BLOCK_SIZE = 16384
 
+function toHexShort(bytes: Uint8Array): string {
+  let s = ""
+  for (const b of bytes) s += (b < 16 ? "0" : "") + b.toString(16) + " "
+  return s.trim()
+}
+
 export interface SMPTransportConfig {
   connectTimeoutMs?: number
 }
@@ -126,7 +132,9 @@ export class SMPWebSocketTransport implements ChatTransport {
 
         ws.addEventListener("message", (event: MessageEvent) => {
           const data = event.data as ArrayBuffer
+          console.log("[SMP] transport.onmessage: received " + data.byteLength + "B")
           if (data.byteLength !== SMP_BLOCK_SIZE) {
+            console.log("[SMP] transport.onmessage: BLOCK_SIZE ERROR, got " + data.byteLength + " expected " + SMP_BLOCK_SIZE)
             const error = new SMPTransportError(
               "BLOCK_SIZE",
               "Received block of " + data.byteLength + " bytes, expected " + SMP_BLOCK_SIZE
@@ -137,6 +145,8 @@ export class SMPWebSocketTransport implements ChatTransport {
           }
           if (this.messageHandler !== null) {
             this.messageHandler(new Uint8Array(data))
+          } else {
+            console.log("[SMP] transport.onmessage: NO handler registered, message dropped!")
           }
         })
       } catch (e) {
@@ -155,14 +165,17 @@ export class SMPWebSocketTransport implements ChatTransport {
 
   async send(block: Uint8Array): Promise<void> {
     if (this.currentState !== "connected") {
+      console.log("[SMP] transport.send REJECTED: state=" + this.currentState)
       throw new SMPTransportError("CLOSED", "Cannot send: transport is not connected")
     }
     if (block.length !== SMP_BLOCK_SIZE) {
+      console.log("[SMP] transport.send REJECTED: block size=" + block.length)
       throw new SMPTransportError(
         "BLOCK_SIZE",
         "Block must be exactly " + SMP_BLOCK_SIZE + " bytes, got " + block.length
       )
     }
+    console.log("[SMP] transport.send: " + block.length + "B, first 4 bytes:", toHexShort(block.subarray(0, 4)))
     this.ws!.send(block)
   }
 
