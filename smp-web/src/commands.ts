@@ -25,8 +25,9 @@ export interface NewQueueParams {
   recipientAuthKey: Uint8Array   // Ed25519 SPKI DER (44 bytes)
   recipientDhKey: Uint8Array     // X25519 SPKI DER (44 bytes)
   subscribeMode: "S" | "C"      // S = subscribe on create, C = create only
-  sndSecure: boolean             // T = sender can secure queue (v9+)
+  sndSecure?: boolean            // T = sender can secure queue (v9+ ONLY, omit for v6)
   basicAuth?: Uint8Array         // optional server password
+  smpVersion?: number            // negotiated version (controls which fields are sent)
 }
 
 export interface SendParams {
@@ -41,8 +42,9 @@ export interface EnableNotificationsParams {
 
 // -- Command encoders
 
-// NEW <SP> encodeBytes(authKey) encodeBytes(dhKey) basicAuth subscribeMode sndSecure
+// NEW <SP> encodeBytes(authKey) encodeBytes(dhKey) basicAuth subscribeMode [sndSecure]
 // basicAuth = "0" / "1" encodeBytes(password)
+// sndSecure is v9+ ONLY - omit for v6 servers (causes ERR CMD SYNTAX if present)
 export function encodeNEW(params: NewQueueParams): Uint8Array {
   const tag = ascii("NEW ")
   const authKey = encodeBytes(params.recipientAuthKey)
@@ -56,9 +58,16 @@ export function encodeNEW(params: NewQueueParams): Uint8Array {
   }
 
   const subscribeMode = ascii(params.subscribeMode)
-  const sndSecure = ascii(params.sndSecure ? "T" : "F")
 
-  return concatBytes(tag, authKey, dhKey, basicAuth, subscribeMode, sndSecure)
+  // sndSecure is a v9+ field. For v6 servers, omit it entirely.
+  const version = params.smpVersion ?? 7
+  if (version >= 9) {
+    const sndSecure = ascii(params.sndSecure ? "T" : "F")
+    return concatBytes(tag, authKey, dhKey, basicAuth, subscribeMode, sndSecure)
+  }
+
+  // v6-v8: no sndSecure field
+  return concatBytes(tag, authKey, dhKey, basicAuth, subscribeMode)
 }
 
 // SUB (no parameters)

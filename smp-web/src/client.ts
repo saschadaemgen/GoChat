@@ -470,8 +470,12 @@ export class SMPClientImpl implements SMPClient {
   // -- Typed command methods
 
   async createQueue(params: NewQueueParams): Promise<IDSResponse> {
-    console.log("[SMP] createQueue: calling sendTypedCommand with NEW, state=" + this.currentState + ", transport=" + this.transport.state)
-    const response = await this.sendTypedCommand(new Uint8Array(0), encodeNEW(params))
+    console.log("[SMP] createQueue: calling sendTypedCommand with NEW, smpVersion=" + this.smpVersion + ", state=" + this.currentState)
+    // Pass smpVersion so encodeNEW can omit v9+ fields for v6 servers
+    const newParams = {...params, smpVersion: this.smpVersion}
+    const cmd = encodeNEW(newParams)
+    console.log("[SMP] createQueue: NEW cmd " + cmd.length + "B, hex:", toHex(cmd.subarray(0, 48)))
+    const response = await this.sendTypedCommand(new Uint8Array(0), cmd)
     if (response.type === "IDS") {
       return {
         recipientId: response.recipientId,

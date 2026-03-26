@@ -15,12 +15,12 @@ function fakeKey(fill: number): Uint8Array {
   return new Uint8Array(44).fill(fill)
 }
 
-function createTestSetup(): {client: SMPClientImpl; transport: MockTransport; server: MockSMPServer} {
+function createTestSetup(smpVersion = 7): {client: SMPClientImpl; transport: MockTransport; server: MockSMPServer} {
   const transport = new MockTransport()
   const server = new MockSMPServer(transport)
   server.start()
   const sessionId = new Uint8Array(32).fill(0x01)
-  const client = new SMPClientImpl(sessionId, 7, transport, 30000, 5000)
+  const client = new SMPClientImpl(sessionId, smpVersion, transport, 30000, 5000)
   return {client, transport, server}
 }
 
@@ -98,7 +98,7 @@ describe("Scenario 2: Fast v9 procedure (sndSecure)", () => {
   let server: MockSMPServer
 
   beforeEach(() => {
-    const setup = createTestSetup()
+    const setup = createTestSetup(9) // v9 for sndSecure support
     client = setup.client
     server = setup.server
   })
@@ -109,7 +109,7 @@ describe("Scenario 2: Fast v9 procedure (sndSecure)", () => {
   })
 
   it("completes NEW(sndSecure) -> SKEY -> SUB -> SEND -> MSG -> ACK flow", async () => {
-    // 1. Create queue with sndSecure and create-only mode
+    // 1. Create queue with sndSecure and create-only mode (v9)
     const ids = await client.createQueue({
       recipientAuthKey: fakeKey(0x11),
       recipientDhKey: fakeKey(0x22),
