@@ -25,6 +25,7 @@ import type {SMPClientAgent} from "./agent.js"
 import type {SMPServerAddress} from "./types.js"
 import {buildConnectionRequest} from "./connection-request.js"
 import type {ConnectionRequestParams} from "./connection-request.js"
+import {buildInvitation} from "./invitation.js"
 
 // -- Types
 
@@ -316,6 +317,85 @@ export class ConnectionManager {
       conn.state.transition("error", {
         code: "REQUEST_SEND_FAILED",
         message: err instanceof Error ? err.message : "Unknown error",
+        cause: err instanceof Error ? err : undefined,
+      })
+      throw err
+    }
+  }
+
+  /**
+   * Send a connection invitation to the contact queue (Step 2).
+   * Simpler than sendConnectionRequest - no X3DH/Double Ratchet needed.
+   * Uses NaCl Layer 1 encryption only.
+   *
+   * The connection must be in QUEUE_CREATED state with a non-null contactQueue.
+   * After success, state transitions to PENDING.
+   */
+  async sendInvitation(
+    connectionId: string,
+    displayName: string
+  ): Promise<void> {
+    const conn = this.connections.get(connectionId)
+    if (!conn) throw new Error("Connection not found: " + connectionId)
+
+    if (conn.state.state !== "QUEUE_CREATED") {
+      throw new Error("Connection must be in QUEUE_CREATED state, got: " + conn.state.state)
+    }
+
+    if (!conn.contactQueue) {
+      throw new Error("Cannot send invitation: contactQueue is null (short link not resolved)")
+    }
+
+    try {
+      console.log("[SMP] sendInvitation: building invitation for '" + displayName + "'")
+
+      // 1. Build the invitation (NaCl-encrypted agent envelope with our keys)
+      const {smpEncConfirmation} = buildInvitation(conn, displayName, 6)
+
+      // 2. Get SMP client for the contact queue server.
+      // The contact queue may be on a DIFFERENT server than our queue.
+      // We need a separate connection with its own sessionId.
+      const contactServer = toSMPServerAddress({
+        hosts: conn.contactQueue.server.hosts,
+        port: conn.contactQueue.server.port,
+        serverIdentity: conn.contactQueue.server.serverIdentity,
+      })
+
+      // If using a WSS proxy, override host:port but keep server identity
+      let serverForConnection = contactServer
+      if (this.config.queueServer) {
+        serverForConnection = toSMPServerAddress({
+          hosts: this.config.queueServer.hosts,
+          port: this.config.queueServer.port,
+          serverIdentity: conn.contactQueue.server.serverIdentity,
+        })
+      }
+
+      console.log("[SMP] sendInvitation: connecting to contact queue server " + serverForConnection.host + ":" + serverForConnection.port)
+      const client = await this.agent.getClient(serverForConnection)
+
+      // 3. The entityId for SEND = senderId from the contact address URI
+      const contactSenderIdBytes = base64urlDecode(conn.contactQueue.senderId)
+      console.log("[SMP] sendInvitation: entityId (contact senderId) = " + toHex(contactSenderIdBytes) + " (" + contactSenderIdBytes.length + "B)")
+
+      // 4. SEND the invitation (unsigned, flag='F' = no push notification)
+      console.log("[SMP] sendInvitation: sending SEND command, encMessage=" + smpEncConfirmation.length + "B")
+      await client.sendMessage(contactSenderIdBytes, {
+        notification: false,
+        encMessage: smpEncConfirmation,
+      })
+      console.log("[SMP] sendInvitation: SEND accepted by server (OK)")
+
+      // 5. Drive state machine to PENDING
+      conn.state.transition("sendRequest")
+      console.log("[SMP] sendInvitation: state -> PENDING")
+
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error"
+      console.log("[SMP] sendInvitation: FAILED: " + msg)
+      conn.state.transition("error", {
+        code: "REQUEST_SEND_FAILED",
+        message: msg,
         cause: err instanceof Error ? err : undefined,
       })
       throw err
