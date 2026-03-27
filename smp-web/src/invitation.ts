@@ -68,8 +68,7 @@ function buildSMPQueueInfo(
   const hb = new TextEncoder().encode(host)
   const pb = new TextEncoder().encode(String(port))
   const p: number[] = []
-  p.push(0x01) // clientVersion (1 byte)
-  p.push(0x00, 0x04) // smpVersionRange (uint16 BE = v4)
+  p.push(0x00, 0x04) // clientVersion (uint16 BE, value 4)
   p.push(0x01) // hostCount = 1
   p.push(hb.length); for (const b of hb) p.push(b)
   if (port !== 5223) { p.push(pb.length); for (const b of pb) p.push(b) } else p.push(0)
