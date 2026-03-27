@@ -24,6 +24,7 @@ import {
   generateX448KeyPair,
   generateX25519KeyPair,
   encodeX25519PublicKey,
+  encodeX448PublicKey,
 } from "./crypto-utils.js"
 import type {KeyPair} from "./crypto-utils.js"
 import type {ManagedConnection} from "./connection.js"
@@ -75,18 +76,23 @@ function buildConnReqURI(
   host: string,
   port: number,
   senderId: Uint8Array,
-  e2eDhSPKI: Uint8Array,
+  e2ePubKey1SPKI: Uint8Array,
+  e2ePubKey2SPKI: Uint8Array,
 ): string {
-  // smp queue URI: smp://FINGERPRINT@HOST:PORT/QUEUE_ID
+  // smp queue URI: smp://FINGERPRINT@HOST:PORT/QUEUE_ID#/?v=1-4&q=m
+  // q=m = QMMessaging (messaging queue, not contact queue)
   const senderIdB64 = b64urlEncode(senderId)
-  const smpUri = "smp://" + serverIdentity + "@" + host + ":" + port + "/" + senderIdB64
+  const smpUri = "smp://" + serverIdentity + "@" + host + ":" + port + "/" + senderIdB64 + "#/?v=1-4&q=m"
 
-  // e2e params: v=1-4&dh=BASE64URL_SPKI
-  const dhB64 = b64urlEncode(e2eDhSPKI)
-  const e2eParams = "v=1-4&dh=" + dhB64
+  // e2e params: v=2-3&x3dh=KEY1_BASE64,KEY2_BASE64
+  // Two X448 SPKI keys (68B each) for X3DH ratchet initialization
+  const key1B64 = b64urlEncode(e2ePubKey1SPKI)
+  const key2B64 = b64urlEncode(e2ePubKey2SPKI)
+  const e2eParams = "v=2-3&x3dh=" + key1B64 + "," + key2B64
 
   // Full URI with URL-encoded components in fragment
-  return "simplex:/invitation#/?v=1-4&smp=" + encodeURIComponent(smpUri) + "&e2e=" + encodeURIComponent(e2eParams)
+  // Outer v=2-7 (agent version range)
+  return "simplex:/invitation#/?v=2-7&smp=" + encodeURIComponent(smpUri) + "&e2e=" + encodeURIComponent(e2eParams)
 }
 
 // -- AgentInvitation encoding
@@ -170,24 +176,25 @@ export async function buildInvitation(
   console.log("[SMP] DIAG NaCl dh= base64url:", aliceDhBase64)
   console.log("[SMP] DIAG NaCl peer_dh RAW (" + aliceDhRaw.length + "B):", hex(aliceDhRaw, 32))
 
-  // Generate X448 keypairs for future ratchet use.
-  // NOT used for encryption in this message - kept for later X3DH.
-  const ratchetKeyPair = generateX448KeyPair()
-  const ephemeralKeyPair = generateX448KeyPair()
+  // Generate X448 keypairs for X3DH ratchet initialization.
+  // These go into the connReq URI e2e params so the peer can do X3DH.
+  const ratchetKeyPair = generateX448KeyPair()   // e2ePubKey1
+  const ephemeralKeyPair = generateX448KeyPair()  // e2ePubKey2
 
   // === connInfo: profile JSON ===
   const connInfo = buildInvitationConnInfo(displayName)
 
-  // === connReq: our invitation URI ===
-  const e2eDhKeyPair = generateX25519KeyPair()
-  const e2eDhSPKI = encodeX25519PublicKey(e2eDhKeyPair.publicKey)
+  // === connReq: our invitation URI with X448 keys ===
+  const ratchetSPKI = encodeX448PublicKey(ratchetKeyPair.publicKey)    // 68B
+  const ephemeralSPKI = encodeX448PublicKey(ephemeralKeyPair.publicKey) // 68B
 
   const connReqURI = buildConnReqURI(
     conn.contactQueue.server.serverIdentity,
     conn.contactQueue.server.hosts[0],
     5223,
     conn.receiveQueue.senderId,
-    e2eDhSPKI,
+    ratchetSPKI,
+    ephemeralSPKI,
   )
   console.log("[SMP] DIAG connReq URI:", connReqURI)
   console.log("[SMP] DIAG connReq URI length:", connReqURI.length)
