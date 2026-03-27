@@ -1,24 +1,20 @@
-// Invitation builder for initial contact request (Step 2 of connection flow).
+// Invitation builder for initial contact request (Step 2).
 //
-// Two encryption layers:
+// Crypto parameters from SimpleGo C implementation (smp_ratchet.c).
+// Ratchet version 3. All HKDF uses SHA-512.
 //
-// Layer 1 (inner): encConnInfo - Double Ratchet with AES-256-GCM
-//   X3DH key agreement (X448) -> HKDF -> chain keys
-//   Header: AES-256-GCM(headerKey, randomIV, rcAD, MsgHeader 88B) -> emHeader 123B
-//   Body:   AES-256-GCM(messageKey, messageIV, rcAD+emHeader, paddedPayload 14832B)
-//   Wire:   [1B hdrLen=123][123B emHeader][16B bodyAuthTag][14832B bodyEncrypted]
-//   Total encConnInfo: 14972 bytes
+// Layer 1 (inner): encConnInfo - Double Ratchet v3 with AES-256-GCM
+//   X3DH: 3 X448 DH ops -> HKDF-SHA512(salt=64zeros, info="SimpleXX3DH") -> HKs, NHKr, RK
+//   Root KDF: HKDF-SHA512(salt=RK, ikm=dh_out, info="SimpleXRootRatchet") -> RK', CKs, NHKs
+//   Chain KDF: HKDF-SHA512(salt=empty, ikm=CKs, info="SimpleXChainRatchet") -> CK', mk, msg_iv, hdr_iv
+//   Header: AES-256-GCM(HKs, hdr_iv, rcAD, MsgHeader 88B) -> emHeader 124B
+//   Body: AES-256-GCM(mk, msg_iv, rcAD+emHeader, padded 14832B) -> encConnInfo 14974B
 //
-// Layer 2 (outer): cmEncBody - NaCl XSalsa20-Poly1305
-//   Key: X25519 DH(pubHeaderDh.private, alice_dh_from_uri)
-//   Plaintext: ClientMessage padded to 15904B
-//   Total cmEncBody: 15920 bytes
-//
-// Total SEND body (ClientMsgEnvelope): 15992 bytes
+// Layer 2 (outer): cmEncBody - NaCl XSalsa20-Poly1305 (unchanged)
 
 import {xsalsa20poly1305} from "@noble/ciphers/salsa"
 import {hkdf} from "@noble/hashes/hkdf"
-import {sha256} from "@noble/hashes/sha256"
+import {sha512} from "@noble/hashes/sha512"
 import {
   generateX448KeyPair,
   generateX25519KeyPair,
@@ -26,11 +22,10 @@ import {
   encodeEd25519PublicKey,
   encodeX448PublicKey,
   encodeX25519PublicKey,
+  x448DH,
   x25519DH,
 } from "./crypto-utils.js"
 import type {KeyPair} from "./crypto-utils.js"
-import {performX3DH} from "./x3dh.js"
-import type {X3DHKeys} from "./x3dh.js"
 import {buildAgentConfirmation} from "./agent-envelope.js"
 import type {ManagedConnection} from "./connection.js"
 
@@ -39,259 +34,242 @@ import type {ManagedConnection} from "./connection.js"
 const E2E_ENC_CONN_INFO_LENGTH = 14832
 const E2E_ENC_CONFIRMATION_LENGTH = 15904
 const HEADER_PAD_SIZE = 88
-const EM_HEADER_SIZE = 123
-const MK_INFO = new TextEncoder().encode("SimpleXMK")
-const CK_INFO = new TextEncoder().encode("SimpleXCK")
-const KDF_SALT = new Uint8Array(32)
+const EM_HEADER_SIZE = 124 // v3: 2+16+16+2+88
+
+// HKDF info strings (from C code)
+const X3DH_INFO = new TextEncoder().encode("SimpleXX3DH")
+const ROOT_RATCHET_INFO = new TextEncoder().encode("SimpleXRootRatchet")
+const CHAIN_RATCHET_INFO = new TextEncoder().encode("SimpleXChainRatchet")
+
+// Salts
+const X3DH_SALT = new Uint8Array(64) // 64 zero bytes for X3DH
+
+// X448 SPKI prefix for MsgHeader v3
+const X448_SPKI_PREFIX = new Uint8Array([
+  0x30, 0x42, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6f, 0x03, 0x39, 0x00,
+])
 
 // -- Padding
 
 function padPlaintext(plaintext: Uint8Array, targetSize: number): Uint8Array {
   if (2 + plaintext.length > targetSize) {
-    throw new Error("padPlaintext: data too large: " + (2 + plaintext.length) + " > " + targetSize)
+    throw new Error("padPlaintext: too large: " + (2 + plaintext.length) + " > " + targetSize)
   }
   const padded = new Uint8Array(targetSize)
   padded[0] = (plaintext.length >>> 8) & 0xFF
   padded[1] = plaintext.length & 0xFF
   padded.set(plaintext, 2)
-  for (let i = 2 + plaintext.length; i < targetSize; i++) {
-    padded[i] = 0x23
-  }
+  for (let i = 2 + plaintext.length; i < targetSize; i++) padded[i] = 0x23
   return padded
 }
 
-// -- connInfo JSON
-
-export function buildInvitationConnInfo(displayName: string): Uint8Array {
-  const json = JSON.stringify({
-    v: "1-16",
-    event: "x.info",
-    params: {
-      profile: {
-        displayName: displayName,
-        fullName: "",
-        preferences: {
-          calls: {allow: "no"},
-          files: {allow: "no"},
-          voice: {allow: "no"},
-          reactions: {allow: "yes"},
-          fullDelete: {allow: "no"},
-          timedMessages: {allow: "yes"},
-        },
-      },
-    },
-  })
-  return new TextEncoder().encode(json)
-}
-
-// -- SMPQueueInfo builder
-
-function buildSMPQueueInfo(
-  serverHost: string,
-  serverPort: number,
-  serverKeyHash: Uint8Array,
-  recipientId: Uint8Array,
-  e2eDhPublicSPKI: Uint8Array
-): Uint8Array {
-  const hostBytes = new TextEncoder().encode(serverHost)
-  const portStr = String(serverPort)
-  const portBytes = new TextEncoder().encode(portStr)
-  const parts: number[] = []
-  parts.push(0x01) // clientVersion
-  parts.push(0x00, 0x04) // smpVersionRange (Word16 BE)
-  parts.push(0x00, 0x01) // queueCount (Word16 BE)
-  parts.push(0x01) // hostCount
-  parts.push(hostBytes.length)
-  for (const b of hostBytes) parts.push(b)
-  if (serverPort !== 5223) {
-    parts.push(portBytes.length)
-    for (const b of portBytes) parts.push(b)
-  } else {
-    parts.push(0)
-  }
-  parts.push(serverKeyHash.length)
-  for (const b of serverKeyHash) parts.push(b)
-  parts.push(recipientId.length)
-  for (const b of recipientId) parts.push(b)
-  parts.push(e2eDhPublicSPKI.length)
-  for (const b of e2eDhPublicSPKI) parts.push(b)
-  return new Uint8Array(parts)
-}
-
-// -- AgentConnInfoReply builder
-
-function buildAgentConnInfoReply(
-  smpQueueInfo: Uint8Array,
-  connInfo: Uint8Array
-): Uint8Array {
-  const result = new Uint8Array(1 + smpQueueInfo.length + connInfo.length)
-  result[0] = 0x44 // 'D' = Duplex
-  result.set(smpQueueInfo, 1)
-  result.set(connInfo, 1 + smpQueueInfo.length)
-  return result
-}
-
-// -- AES-256-GCM (Web Crypto, supports 16-byte IV)
+// -- AES-256-GCM (Web Crypto, 16-byte IV)
 
 async function aesGcmEncrypt(
-  key: Uint8Array,
-  iv: Uint8Array,
-  aad: Uint8Array,
-  plaintext: Uint8Array
+  key: Uint8Array, iv: Uint8Array, aad: Uint8Array, plaintext: Uint8Array
 ): Promise<{ciphertext: Uint8Array; authTag: Uint8Array}> {
-  const cryptoKey = await crypto.subtle.importKey(
-    "raw", key, {name: "AES-GCM"}, false, ["encrypt"]
-  )
+  const ck = await crypto.subtle.importKey("raw", key, {name: "AES-GCM"}, false, ["encrypt"])
   const result = await crypto.subtle.encrypt(
-    {name: "AES-GCM", iv, additionalData: aad, tagLength: 128},
-    cryptoKey, plaintext
+    {name: "AES-GCM", iv, additionalData: aad, tagLength: 128}, ck, plaintext
   )
-  const resultBytes = new Uint8Array(result)
-  const ciphertext = resultBytes.slice(0, resultBytes.length - 16)
-  const authTag = resultBytes.slice(resultBytes.length - 16)
-  return {ciphertext, authTag}
+  const rb = new Uint8Array(result)
+  return {ciphertext: rb.slice(0, rb.length - 16), authTag: rb.slice(rb.length - 16)}
 }
 
-// -- Chain KDF
+// -- X3DH: Three DH operations (from smp_ratchet.c line 228)
 
-function deriveMessageKey(chainKey: Uint8Array): {
-  messageKey: Uint8Array
-  messageIV: Uint8Array
-  nextChainKey: Uint8Array
-} {
-  // messageKey: HKDF-SHA256(chainKey, salt=zeros, info="SimpleXMK", len=48)
-  // First 32 bytes = key, next 16 bytes = IV
-  const mkOutput = hkdf(sha256, chainKey, KDF_SALT, MK_INFO, 48)
-  const messageKey = new Uint8Array(mkOutput.slice(0, 32))
-  const messageIV = new Uint8Array(mkOutput.slice(32, 48))
-  const nextChainKey = new Uint8Array(hkdf(sha256, chainKey, KDF_SALT, CK_INFO, 32))
-  return {messageKey, messageIV, nextChainKey}
-}
+function performX3DH(
+  spk1: KeyPair, spk2: KeyPair,  // our keys (responder)
+  rk1: Uint8Array, rk2: Uint8Array // peer keys (initiator), raw 56B X448
+): {headerKeySend: Uint8Array; nextHeaderKeyRecv: Uint8Array; rootKey: Uint8Array} {
+  const dh1 = x448DH(spk2.privateKey, rk1) // rk1 x spk2
+  const dh2 = x448DH(spk1.privateKey, rk2) // rk2 x spk1
+  const dh3 = x448DH(spk2.privateKey, rk2) // rk2 x spk2
 
-// -- MsgHeader builder (67 bytes content, padded to 88)
+  const ikm = new Uint8Array(168)
+  ikm.set(dh1, 0)
+  ikm.set(dh2, 56)
+  ikm.set(dh3, 112)
 
-function buildMsgHeader(ratchetPublicKeyRaw: Uint8Array): Uint8Array {
-  const header = new Uint8Array(HEADER_PAD_SIZE)
-  header[0] = 0x01 // X448 key tag (has ratchet key)
-  header.set(ratchetPublicKeyRaw, 1) // 56 bytes raw X448 key
-  // Bytes 57-60: prevChainLen = 0 (uint32 BE)
-  // Bytes 61-64: msgNumber = 0 (uint32 BE)
-  // Bytes 65-66: msgPQLen = 0 (uint16 BE)
-  // Bytes 67-87: '#' padding
-  for (let i = 67; i < HEADER_PAD_SIZE; i++) {
-    header[i] = 0x23
+  const output = hkdf(sha512, ikm, X3DH_SALT, X3DH_INFO, 96)
+  return {
+    headerKeySend: new Uint8Array(output.slice(0, 32)),
+    nextHeaderKeyRecv: new Uint8Array(output.slice(32, 64)),
+    rootKey: new Uint8Array(output.slice(64, 96)),
   }
-  return header
 }
 
-// -- emHeader builder (123 bytes)
+// -- KDF_ROOT: Additional DH + HKDF after X3DH (line 285-324)
+
+function kdfRoot(rootKey: Uint8Array, dhOut: Uint8Array): {
+  newRootKey: Uint8Array; chainKeySend: Uint8Array; nextHeaderKeySend: Uint8Array
+} {
+  // Salt = rootKey, IKM = dhOut, Info = "SimpleXRootRatchet"
+  const output = hkdf(sha512, dhOut, rootKey, ROOT_RATCHET_INFO, 96)
+  return {
+    newRootKey: new Uint8Array(output.slice(0, 32)),
+    chainKeySend: new Uint8Array(output.slice(32, 64)),
+    nextHeaderKeySend: new Uint8Array(output.slice(64, 96)),
+  }
+}
+
+// -- Chain KDF (line 213-224)
+
+function kdfChain(chainKey: Uint8Array): {
+  nextChainKey: Uint8Array; messageKey: Uint8Array; msgIV: Uint8Array; headerIV: Uint8Array
+} {
+  // Salt = empty (null, length 0), IKM = chainKey, Info = "SimpleXChainRatchet"
+  // @noble/hashes hkdf with undefined salt uses empty salt
+  const output = hkdf(sha512, chainKey, undefined, CHAIN_RATCHET_INFO, 96)
+  return {
+    nextChainKey: new Uint8Array(output.slice(0, 32)),
+    messageKey: new Uint8Array(output.slice(32, 64)),
+    msgIV: new Uint8Array(output.slice(64, 80)),
+    headerIV: new Uint8Array(output.slice(80, 96)),
+  }
+}
+
+// -- MsgHeader v3 (88 bytes)
+
+function buildMsgHeader(ratchetPublicKeyRaw: Uint8Array, pn: number, ns: number): Uint8Array {
+  const h = new Uint8Array(HEADER_PAD_SIZE)
+  let o = 0
+  // content_len = 80 (0x0050) - everything after this 2-byte field
+  h[o++] = 0x00; h[o++] = 0x50
+  // msgMaxVersion = 3 (0x0003)
+  h[o++] = 0x00; h[o++] = 0x03
+  // SPKI key length = 68 (0x44)
+  h[o++] = 0x44
+  // X448 SPKI: 12B prefix + 56B raw key
+  h.set(X448_SPKI_PREFIX, o); o += 12
+  h.set(ratchetPublicKeyRaw, o); o += 56
+  // KEM Nothing tag = '0' (0x30)
+  h[o++] = 0x30
+  // prevChainLen (uint32 BE)
+  h[o++] = (pn >>> 24) & 0xFF; h[o++] = (pn >>> 16) & 0xFF
+  h[o++] = (pn >>> 8) & 0xFF; h[o++] = pn & 0xFF
+  // msgNumber (uint32 BE)
+  h[o++] = (ns >>> 24) & 0xFF; h[o++] = (ns >>> 16) & 0xFF
+  h[o++] = (ns >>> 8) & 0xFF; h[o++] = ns & 0xFF
+  // Padding with '#' to 88
+  for (let i = o; i < HEADER_PAD_SIZE; i++) h[i] = 0x23
+  return h
+}
+
+// -- emHeader v3 (124 bytes)
 
 async function buildEmHeader(
-  headerKey: Uint8Array,
-  rcAD: Uint8Array,
-  msgHeader: Uint8Array
-): Promise<{emHeader: Uint8Array; ehIV: Uint8Array}> {
-  // Random 16-byte IV for header encryption
-  const ehIV = new Uint8Array(16)
-  crypto.getRandomValues(ehIV)
-
-  // AES-256-GCM encrypt header
+  headerKey: Uint8Array, headerIV: Uint8Array, rcAD: Uint8Array, msgHeader: Uint8Array
+): Promise<Uint8Array> {
   const {ciphertext: ehBody, authTag: ehAuthTag} = await aesGcmEncrypt(
-    headerKey, ehIV, rcAD, msgHeader
+    headerKey, headerIV, rcAD, msgHeader
   )
-
-  // Assemble emHeader: [2B version][16B IV][16B authTag][88B body][1B padding]
-  const emHeader = new Uint8Array(EM_HEADER_SIZE)
-  let offset = 0
-  emHeader[offset++] = 0x00
-  emHeader[offset++] = 0x02 // ehVersion = 2
-  emHeader.set(ehIV, offset); offset += 16
-  emHeader.set(ehAuthTag, offset); offset += 16
-  emHeader.set(ehBody, offset); offset += 88
-  emHeader[offset] = 0x23 // padding to 123
-
-  return {emHeader, ehIV}
+  const em = new Uint8Array(EM_HEADER_SIZE)
+  let o = 0
+  em[o++] = 0x00; em[o++] = 0x03 // ehVersion = 3
+  em.set(headerIV, o); o += 16
+  em.set(ehAuthTag, o); o += 16
+  em[o++] = 0x00; em[o++] = 0x58 // ehBody length = 88 (0x0058)
+  em.set(ehBody, o)
+  return em
 }
 
-// -- EncRatchetMessage builder (14972 bytes)
+// -- EncRatchetMessage (14974 bytes)
 
 async function buildEncRatchetMessage(
-  headerKey: Uint8Array,
-  messageKey: Uint8Array,
-  messageIV: Uint8Array,
-  rcAD: Uint8Array,
-  ratchetPublicKeyRaw: Uint8Array,
+  headerKey: Uint8Array, messageKey: Uint8Array,
+  msgIV: Uint8Array, headerIV: Uint8Array,
+  rcAD: Uint8Array, ratchetPublicKeyRaw: Uint8Array,
   paddedPayload: Uint8Array
 ): Promise<Uint8Array> {
-  // 1. Build and encrypt header
-  const msgHeader = buildMsgHeader(ratchetPublicKeyRaw)
-  const {emHeader} = await buildEmHeader(headerKey, rcAD, msgHeader)
+  const msgHeader = buildMsgHeader(ratchetPublicKeyRaw, 0, 0)
+  const emHeader = await buildEmHeader(headerKey, headerIV, rcAD, msgHeader)
 
-  // 2. Encrypt body with AAD = rcAD + emHeader
   const bodyAAD = new Uint8Array(rcAD.length + emHeader.length)
   bodyAAD.set(rcAD, 0)
   bodyAAD.set(emHeader, rcAD.length)
 
   const {ciphertext: emBody, authTag: emAuthTag} = await aesGcmEncrypt(
-    messageKey, messageIV, bodyAAD, paddedPayload
+    messageKey, msgIV, bodyAAD, paddedPayload
   )
 
-  // 3. Assemble: [1B hdrLen=123][123B emHeader][16B authTag][14832B emBody]
-  const total = 1 + EM_HEADER_SIZE + 16 + emBody.length
+  // [2B headerLen=124][124B emHeader][16B bodyTag][14832B body]
+  const total = 2 + EM_HEADER_SIZE + 16 + emBody.length
   const result = new Uint8Array(total)
-  let offset = 0
-  result[offset++] = EM_HEADER_SIZE // 0x7B = 123
-  result.set(emHeader, offset); offset += EM_HEADER_SIZE
-  result.set(emAuthTag, offset); offset += 16
-  result.set(emBody, offset)
-
+  let o = 0
+  result[o++] = 0x00; result[o++] = 0x7C // 124 as uint16 BE
+  result.set(emHeader, o); o += EM_HEADER_SIZE
+  result.set(emAuthTag, o); o += 16
+  result.set(emBody, o)
   return result
 }
 
-// -- ClientMessage builder
+// -- connInfo JSON
 
-function buildClientMessage(
-  senderAuthKeySPKI: Uint8Array,
-  agentEnvelope: Uint8Array
+export function buildInvitationConnInfo(displayName: string): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify({
+    v: "1-16", event: "x.info",
+    params: {profile: {displayName, fullName: "",
+      preferences: {calls: {allow: "no"}, files: {allow: "no"}, voice: {allow: "no"},
+        reactions: {allow: "yes"}, fullDelete: {allow: "no"}, timedMessages: {allow: "yes"}}}}
+  }))
+}
+
+// -- SMPQueueInfo
+
+function buildSMPQueueInfo(
+  host: string, port: number, keyHash: Uint8Array,
+  recipientId: Uint8Array, dhPublicSPKI: Uint8Array
 ): Uint8Array {
-  const result = new Uint8Array(1 + 44 + agentEnvelope.length)
-  result[0] = 0x4B // 'K' = PHConfirmation
-  result.set(senderAuthKeySPKI, 1)
-  result.set(agentEnvelope, 45)
-  return result
+  const hb = new TextEncoder().encode(host)
+  const pb = new TextEncoder().encode(String(port))
+  const p: number[] = []
+  p.push(0x01) // clientVersion
+  p.push(0x00, 0x04) // smpVersionRange
+  p.push(0x00, 0x01) // queueCount
+  p.push(0x01) // hostCount
+  p.push(hb.length); for (const b of hb) p.push(b)
+  if (port !== 5223) { p.push(pb.length); for (const b of pb) p.push(b) } else p.push(0)
+  p.push(keyHash.length); for (const b of keyHash) p.push(b)
+  p.push(recipientId.length); for (const b of recipientId) p.push(b)
+  p.push(dhPublicSPKI.length); for (const b of dhPublicSPKI) p.push(b)
+  return new Uint8Array(p)
 }
 
-// -- NaCl encryption (Layer 2)
+// -- AgentConnInfoReply
 
-function naclEncrypt(
-  plaintext: Uint8Array,
-  sharedSecret: Uint8Array
-): {encrypted: Uint8Array; nonce: Uint8Array} {
-  const nonce = new Uint8Array(24)
-  crypto.getRandomValues(nonce)
-  const cipher = xsalsa20poly1305(sharedSecret, nonce)
-  const encrypted = cipher.encrypt(plaintext)
-  return {encrypted, nonce}
+function buildAgentConnInfoReply(smpQueueInfo: Uint8Array, connInfo: Uint8Array): Uint8Array {
+  const r = new Uint8Array(1 + smpQueueInfo.length + connInfo.length)
+  r[0] = 0x44 // 'D' = Duplex
+  r.set(smpQueueInfo, 1)
+  r.set(connInfo, 1 + smpQueueInfo.length)
+  return r
 }
 
-// -- ClientMsgEnvelope builder (Layer 2 outer wrapper)
+// -- ClientMessage
+
+function buildClientMessage(senderAuthKeySPKI: Uint8Array, agentEnvelope: Uint8Array): Uint8Array {
+  const r = new Uint8Array(1 + 44 + agentEnvelope.length)
+  r[0] = 0x4B // 'K'
+  r.set(senderAuthKeySPKI, 1)
+  r.set(agentEnvelope, 45)
+  return r
+}
+
+// -- ClientMsgEnvelope (Layer 2)
 
 function buildClientMsgEnvelope(
-  pubHeaderDhPublicSPKI: Uint8Array,
-  cmNonce: Uint8Array,
-  cmEncBody: Uint8Array
+  dhPublicSPKI: Uint8Array, nonce: Uint8Array, cmEncBody: Uint8Array
 ): Uint8Array {
-  const total = 2 + 1 + 1 + 44 + 24 + cmEncBody.length
-  const result = new Uint8Array(total)
-  let offset = 0
-  result[offset++] = 0x00
-  result[offset++] = 0x04 // phVersion = 4
-  result[offset++] = 0x31 // '1' = Just DH key
-  result[offset++] = 44
-  result.set(pubHeaderDhPublicSPKI, offset); offset += 44
-  result.set(cmNonce, offset); offset += 24
-  result.set(cmEncBody, offset)
-  return result
+  const r = new Uint8Array(2 + 1 + 1 + 44 + 24 + cmEncBody.length)
+  let o = 0
+  r[o++] = 0x00; r[o++] = 0x04 // phVersion = 4
+  r[o++] = 0x31 // '1' = Just
+  r[o++] = 44
+  r.set(dhPublicSPKI, o); o += 44
+  r.set(nonce, o); o += 24
+  r.set(cmEncBody, o)
+  return r
 }
 
 // -- Full invitation builder
@@ -304,124 +282,102 @@ export interface InvitationResult {
 }
 
 export async function buildInvitation(
-  conn: ManagedConnection,
-  displayName: string,
-  smpVersion: number
+  conn: ManagedConnection, displayName: string, smpVersion: number
 ): Promise<InvitationResult> {
-  if (!conn.contactQueue) {
-    throw new Error("Cannot build invitation: contactQueue is null")
-  }
-  if (!conn.receiveQueue) {
-    throw new Error("Cannot build invitation: receiveQueue is null (IDS not received)")
-  }
+  if (!conn.contactQueue) throw new Error("Cannot build invitation: contactQueue is null")
+  if (!conn.receiveQueue) throw new Error("Cannot build invitation: receiveQueue is null (IDS not received)")
 
-  // === Peer DH key (X25519, from contact address URI) ===
-  const aliceDhPublicRaw = base64urlDecode(conn.contactQueue.dhPublicKey)
-  const aliceDhRaw = aliceDhPublicRaw.length === 44 ? aliceDhPublicRaw.subarray(12) : aliceDhPublicRaw
+  const aliceDhRaw = (() => {
+    const raw = b64decode(conn.contactQueue.dhPublicKey)
+    return raw.length === 44 ? raw.subarray(12) : raw
+  })()
 
-  // === Two X25519 keypairs ===
-  const e2eKeyPair = conn.keys.e2eDh // Layer 1 + SMPQueueInfo DH key
-  const pubHeaderKeyPair = generateX25519KeyPair() // Layer 2 encryption
+  // Our X448 keypairs: spk1 = identity, spk2 = ephemeral
+  const spk1 = generateX448KeyPair()
+  const spk2 = generateX448KeyPair()
 
-  // === X448 key pairs for X3DH ===
-  const ratchetKeyPair = generateX448KeyPair()
-  const ephemeralKeyPair = generateX448KeyPair()
+  // Peer's X448 keys (from contact address).
+  // For initial contact we don't have peer's X448 keys.
+  // Use our own as stand-in - Alice re-derives on acceptance.
+  const rk1 = spk1.publicKey
+  const rk2 = spk2.publicKey
 
-  // === Peer's X448 key (from contact address dh= parameter) ===
-  // For the initial invitation, we don't have Alice's X448 keys.
-  // The contact address dh= is an X25519 key, not X448.
-  // For X3DH, we need Alice's X448 keys. Since we don't have them
-  // for the initial contact, we use our own keys for both sides.
-  // Alice will re-derive when she processes the invitation.
-  // This is a simplified X3DH for the initial handshake.
-  const aliceX448Key1 = ratchetKeyPair.publicKey // Use our key as stand-in
-  const aliceX448Key2 = ephemeralKeyPair.publicKey
+  // Step 2: X3DH (3 DH ops)
+  const x3dh = performX3DH(spk1, spk2, rk1, rk2)
+  console.log("[SMP] DIAG X3DH: HKs=" + hex(x3dh.headerKeySend, 8) + "..., RK=" + hex(x3dh.rootKey, 8) + "...")
 
-  // === X3DH Key Agreement ===
-  const x3dhKeys: X3DHKeys = {key1: ratchetKeyPair, key2: ephemeralKeyPair}
-  const x3dhResult = performX3DH(x3dhKeys, aliceX448Key1, aliceX448Key2)
+  // Step 3: Init sender ratchet (additional DH + Root KDF)
+  const dhOut = x448DH(spk2.privateKey, rk2)
+  const root = kdfRoot(x3dh.rootKey, dhOut)
+  console.log("[SMP] DIAG KDF_ROOT: CKs=" + hex(root.chainKeySend, 8) + "...")
 
-  // === rcAD: associated data (112 bytes) ===
-  // joiner (us) X448 pub1 raw || creator (Alice) X448 pub1 raw
+  // Step 4: Chain KDF
+  const chain = kdfChain(root.chainKeySend)
+  console.log("[SMP] DIAG kdf_chain: mk=" + hex(chain.messageKey, 8) + "..., msg_iv=" + hex(chain.msgIV, 8) + "..., hdr_iv=" + hex(chain.headerIV, 8) + "...")
+
+  // rcAD: our spk1 pub (56B) || peer rk1 (56B)
   const rcAD = new Uint8Array(112)
-  rcAD.set(ratchetKeyPair.publicKey, 0) // our X448 key1 raw (56B)
-  rcAD.set(aliceX448Key1, 56) // Alice's X448 key1 raw (56B)
+  rcAD.set(spk1.publicKey, 0)
+  rcAD.set(rk1, 56)
 
-  // === Chain KDF ===
-  const chainKey = new Uint8Array(hkdf(sha256, x3dhResult.rootKey, KDF_SALT, CK_INFO, 32))
-  const {messageKey, messageIV} = deriveMessageKey(chainKey)
-
-  // === LAYER 1: Build AgentConnInfoReply and encrypt with Ratchet ===
+  // Layer 1: Build AgentConnInfoReply
   const connInfo = buildInvitationConnInfo(displayName)
-  const serverKeyHash = base64urlDecode(conn.contactQueue.server.serverIdentity)
-  const e2eDhPublicSPKI = encodeX25519PublicKey(e2eKeyPair.publicKey)
-  const smpQueueInfo = buildSMPQueueInfo(
-    conn.contactQueue.server.hosts[0],
-    5223,
-    serverKeyHash,
-    conn.receiveQueue.recipientId,
-    e2eDhPublicSPKI
+  const keyHash = b64decode(conn.contactQueue.server.serverIdentity)
+  const e2eDhSPKI = encodeX25519PublicKey(conn.keys.e2eDh.publicKey)
+  const queueInfo = buildSMPQueueInfo(
+    conn.contactQueue.server.hosts[0], 5223, keyHash,
+    conn.receiveQueue.recipientId, e2eDhSPKI
   )
-  const agentConnInfoReply = buildAgentConnInfoReply(smpQueueInfo, connInfo)
-  const paddedL1 = padPlaintext(agentConnInfoReply, E2E_ENC_CONN_INFO_LENGTH)
+  const acir = buildAgentConnInfoReply(queueInfo, connInfo)
+  const paddedL1 = padPlaintext(acir, E2E_ENC_CONN_INFO_LENGTH)
 
-  console.log("[SMP] DIAG L1 agentConnInfoReply:", agentConnInfoReply.length + "B, tag=0x" + agentConnInfoReply[0].toString(16))
-
-  // Build EncRatchetMessage (14972 bytes)
+  // Build EncRatchetMessage (14974 bytes)
   const encConnInfo = await buildEncRatchetMessage(
-    x3dhResult.headerKey,
-    messageKey,
-    messageIV,
-    rcAD,
-    ratchetKeyPair.publicKey,
-    paddedL1
+    x3dh.headerKeySend, chain.messageKey,
+    chain.msgIV, chain.headerIV,
+    rcAD, spk2.publicKey, paddedL1
   )
-  console.log("[SMP] DIAG L1 encConnInfo:", encConnInfo.length + "B (expected: 14972), first 4:", hex(encConnInfo, 4))
+  console.log("[SMP] DIAG encConnInfo:", encConnInfo.length + "B (expected 14974), first 4:", hex(encConnInfo, 4))
 
-  // === LAYER 2: Build AgentConfirmation ===
-  const ratchetSPKI = encodeX448PublicKey(ratchetKeyPair.publicKey)
-  const ephemeralSPKI = encodeX448PublicKey(ephemeralKeyPair.publicKey)
-  const agentEnvelope = buildAgentConfirmation({
-    ratchetPublicKeySPKI: ratchetSPKI,
-    ephemeralPublicKeySPKI: ephemeralSPKI,
+  // Layer 2: AgentConfirmation
+  const agentEnv = buildAgentConfirmation({
+    ratchetPublicKeySPKI: encodeX448PublicKey(spk1.publicKey),
+    ephemeralPublicKeySPKI: encodeX448PublicKey(spk2.publicKey),
     encryptedConnInfo: encConnInfo,
   })
-  console.log("[SMP] DIAG L2 agentConfirmation:", agentEnvelope.length + "B")
 
-  // === LAYER 3: ClientMessage ===
+  // Layer 3: ClientMessage
   const senderAuth = generateEd25519KeyPair()
   const senderAuthKeySPKI = encodeEd25519PublicKey(senderAuth.publicKey)
-  const clientMessage = buildClientMessage(senderAuthKeySPKI, agentEnvelope)
-  console.log("[SMP] DIAG L3 clientMessage:", clientMessage.length + "B")
+  const clientMsg = buildClientMessage(senderAuthKeySPKI, agentEnv)
 
-  // === LAYER 4: NaCl encrypt ClientMessage (Layer 2) ===
-  const pubHeaderSharedSecret = x25519DH(pubHeaderKeyPair.privateKey, aliceDhRaw)
-  const paddedL2 = padPlaintext(clientMessage, E2E_ENC_CONFIRMATION_LENGTH)
-  const {encrypted: cmEncBody, nonce: cmNonce} = naclEncrypt(paddedL2, pubHeaderSharedSecret)
-  console.log("[SMP] DIAG L4 cmEncBody:", cmEncBody.length + "B (expected: 15920)")
+  // Layer 4: NaCl encrypt (Layer 2)
+  const phKeyPair = generateX25519KeyPair()
+  const phSecret = x25519DH(phKeyPair.privateKey, aliceDhRaw)
+  const paddedL2 = padPlaintext(clientMsg, E2E_ENC_CONFIRMATION_LENGTH)
+  const nonce = new Uint8Array(24); crypto.getRandomValues(nonce)
+  const cmEncBody = xsalsa20poly1305(phSecret, nonce).encrypt(paddedL2)
+  console.log("[SMP] DIAG cmEncBody:", cmEncBody.length + "B (expected 15920)")
 
-  // === LAYER 5: ClientMsgEnvelope ===
-  const pubHeaderDhPublicSPKI = encodeX25519PublicKey(pubHeaderKeyPair.publicKey)
-  const smpEncConfirmation = buildClientMsgEnvelope(pubHeaderDhPublicSPKI, cmNonce, cmEncBody)
-  console.log("[SMP] DIAG L5 envelope:", smpEncConfirmation.length + "B (expected: 15992)")
+  // Layer 5: ClientMsgEnvelope
+  const smpEnc = buildClientMsgEnvelope(encodeX25519PublicKey(phKeyPair.publicKey), nonce, cmEncBody)
+  console.log("[SMP] DIAG envelope:", smpEnc.length + "B (expected 15992)")
 
-  return {smpEncConfirmation, senderAuthKeySPKI, ratchetKeyPair, ephemeralKeyPair}
+  return {smpEncConfirmation: smpEnc, senderAuthKeySPKI, ratchetKeyPair: spk1, ephemeralKeyPair: spk2}
 }
 
 // -- Helpers
 
-function hex(bytes: Uint8Array, maxBytes: number = 32): string {
-  return Array.from(bytes.slice(0, maxBytes))
-    .map(b => b.toString(16).padStart(2, "0"))
-    .join(" ")
+function hex(bytes: Uint8Array, n: number = 32): string {
+  return Array.from(bytes.slice(0, n)).map(b => b.toString(16).padStart(2, "0")).join(" ")
 }
 
-function base64urlDecode(s: string): Uint8Array {
+function b64decode(s: string): Uint8Array {
   if (!s || s.length === 0) return new Uint8Array(0)
-  let b64 = s.replace(/-/g, "+").replace(/_/g, "/")
-  while (b64.length % 4 !== 0) b64 += "="
-  const bin = atob(b64)
-  const bytes = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-  return bytes
+  let b = s.replace(/-/g, "+").replace(/_/g, "/")
+  while (b.length % 4 !== 0) b += "="
+  const bin = atob(b)
+  const r = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) r[i] = bin.charCodeAt(i)
+  return r
 }
