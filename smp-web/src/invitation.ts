@@ -171,48 +171,85 @@ export function buildInvitation(
     throw new Error("Cannot build invitation: contactQueue is null")
   }
 
-  // 1. Build connInfo (plain JSON, no ratchet encryption for initial invitation)
+  // === LAYER 1: ConnInfo JSON (innermost) ===
   const connInfo = buildInvitationConnInfo(displayName)
+  const connInfoJson = new TextDecoder().decode(connInfo)
+  console.log("[SMP] DIAG L1 connInfo JSON:", connInfoJson)
+  console.log("[SMP] DIAG L1 connInfo bytes:", connInfo.length + "B, hex:", hex(connInfo, 64))
 
-  // 2. Generate X448 key pairs for future X3DH
+  // === LAYER 2: X448 key pairs for future X3DH ===
   const ratchetKeyPair = generateX448KeyPair()
   const ephemeralKeyPair = generateX448KeyPair()
+  const ratchetSPKI = encodeX448PublicKey(ratchetKeyPair.publicKey)
+  const ephemeralSPKI = encodeX448PublicKey(ephemeralKeyPair.publicKey)
+  console.log("[SMP] DIAG L2 ratchetKey SPKI:", ratchetSPKI.length + "B, first 12:", hex(ratchetSPKI, 12))
+  console.log("[SMP] DIAG L2 ephemeralKey SPKI:", ephemeralSPKI.length + "B, first 12:", hex(ephemeralSPKI, 12))
 
-  // 3. Build agent envelope with our X448 public keys
-  // The connInfo goes unencrypted inside the envelope for the initial invitation.
-  // Alice will use our X448 keys to set up X3DH when she accepts.
+  // === LAYER 3: AgentConfirmation ===
+  // Layout: [00 07=agentV7][43='C'][31='1'=Just][00 02=e2eV2][44=key1Len][68B key1][44=key2Len][68B key2][connInfo...]
   const agentEnvelope = buildAgentConfirmation({
-    ratchetPublicKeySPKI: encodeX448PublicKey(ratchetKeyPair.publicKey),
-    ephemeralPublicKeySPKI: encodeX448PublicKey(ephemeralKeyPair.publicKey),
+    ratchetPublicKeySPKI: ratchetSPKI,
+    ephemeralPublicKeySPKI: ephemeralSPKI,
     encryptedConnInfo: connInfo, // NOT ratchet-encrypted for initial invitation
   })
+  console.log("[SMP] DIAG L3 agentConfirmation:", agentEnvelope.length + "B, first 64:", hex(agentEnvelope, 64))
+  console.log("[SMP] DIAG L3 agentVersion:", hex(agentEnvelope.subarray(0, 2), 2), "(expected: 00 07)")
+  console.log("[SMP] DIAG L3 tag:", "0x" + agentEnvelope[2].toString(16), "(expected: 0x43='C')")
+  console.log("[SMP] DIAG L3 justTag:", "0x" + agentEnvelope[3].toString(16), "(expected: 0x31='1')")
+  console.log("[SMP] DIAG L3 e2eVersion:", hex(agentEnvelope.subarray(4, 6), 2), "(expected: 00 02)")
+  console.log("[SMP] DIAG L3 key1Len:", agentEnvelope[6], "(expected: 68)")
+  console.log("[SMP] DIAG L3 key2Len:", agentEnvelope[75], "(expected: 68)")
 
-  // 4. Build ClientMessage with sender auth key (NO length prefix before SPKI!)
+  // === LAYER 4: ClientMessage (plaintext before NaCl encryption) ===
+  // Layout: [4B='K'][44B Ed25519 SPKI authKey][REST=AgentConfirmation]
   const senderAuth = generateEd25519KeyPair()
   const senderAuthKeySPKI = encodeEd25519PublicKey(senderAuth.publicKey)
   const clientMessage = buildClientMessage(senderAuthKeySPKI, agentEnvelope)
+  console.log("[SMP] DIAG L4 clientMessage:", clientMessage.length + "B, first 64:", hex(clientMessage, 64))
+  console.log("[SMP] DIAG L4 privHeader tag:", "0x" + clientMessage[0].toString(16), "(expected: 0x4b='K')")
+  console.log("[SMP] DIAG L4 authKey SPKI first 12:", hex(clientMessage.subarray(1, 13), 12), "(expected: 30 2a 30 05 06 03 2b 65 70 03 21 00)")
+  console.log("[SMP] DIAG L4 agentEnvelope starts at byte 45, first 8:", hex(clientMessage.subarray(45, 53), 8), "(expected: 00 07 43 31 00 02 44 ...)")
 
-  // 5. NaCl Layer 1 encryption
-  // Compute shared secret: X25519 DH(bob_e2eDh, alice_dh_from_contact_uri)
+  // === DH keys for NaCl Layer 1 encryption ===
   const aliceDhPublicRaw = base64urlDecode(conn.contactQueue.dhPublicKey)
-  // The DH key from the contact URI is SPKI encoded (44 bytes) - extract raw 32 bytes
   const aliceDhRaw = aliceDhPublicRaw.length === 44 ? aliceDhPublicRaw.subarray(12) : aliceDhPublicRaw
+  console.log("[SMP] DIAG DH alice dhPublicKey (from URI):", aliceDhPublicRaw.length + "B, raw 32B:", hex(aliceDhRaw, 32))
+  console.log("[SMP] DIAG DH bob e2eDh.publicKey (raw 32B):", hex(conn.keys.e2eDh.publicKey, 32))
+  console.log("[SMP] DIAG DH bob e2eDh.privateKey (raw 32B):", hex(conn.keys.e2eDh.privateKey, 32))
+
   const sharedSecret = x25519DH(conn.keys.e2eDh.privateKey, aliceDhRaw)
+  console.log("[SMP] DIAG DH sharedSecret (32B):", hex(sharedSecret, 32))
 
-  // Build Bob's X25519 DH public key in SPKI format for the header
   const bobDhPublicSPKI = encodeX25519PublicKey(conn.keys.e2eDh.publicKey)
+  console.log("[SMP] DIAG DH bob SPKI (44B) first 12:", hex(bobDhPublicSPKI, 12), "(expected: 30 2a 30 05 06 03 2b 65 6e 03 21 00)")
 
-  // ClientMsgEnvelope: phVersion = 4 (SMP Client v4, NOT v6!)
+  // === LAYER 5: ClientMsgEnvelope (final SEND body) ===
   const smpEncConfirmation = buildSmpEncConfirmation(
     4, // phVersion = 4, fixed per SimpleGo protocol team
     bobDhPublicSPKI,
     clientMessage,
     sharedSecret
   )
+  console.log("[SMP] DIAG L5 envelope:", smpEncConfirmation.length + "B, first 64:", hex(smpEncConfirmation, 64))
+  console.log("[SMP] DIAG L5 phVersion:", hex(smpEncConfirmation.subarray(0, 2), 2), "(expected: 00 04)")
+  console.log("[SMP] DIAG L5 maybeDhKey tag:", "0x" + smpEncConfirmation[2].toString(16), "(expected: 0x31='1')")
+  console.log("[SMP] DIAG L5 dhKeyLen:", smpEncConfirmation[3], "(expected: 44)")
+  console.log("[SMP] DIAG L5 dhKey SPKI first 12:", hex(smpEncConfirmation.subarray(4, 16), 12), "(expected: 30 2a 30 05 06 03 2b 65 6e 03 21 00)")
+  console.log("[SMP] DIAG L5 nonce (24B):", hex(smpEncConfirmation.subarray(48, 72), 24))
+  console.log("[SMP] DIAG L5 cmEncBody start (16B):", hex(smpEncConfirmation.subarray(72, 88), 16))
+  console.log("[SMP] DIAG L5 cmEncBody length:", smpEncConfirmation.length - 72, "B (expected: 15936 = 15920 padded + 16 poly1305)")
 
-  console.log("[SMP] buildInvitation: connInfo=" + connInfo.length + "B, agentEnvelope=" + agentEnvelope.length + "B, clientMessage=" + clientMessage.length + "B, smpEncConfirmation=" + smpEncConfirmation.length + "B")
+  console.log("[SMP] buildInvitation: SUMMARY connInfo=" + connInfo.length + "B, agentEnvelope=" + agentEnvelope.length + "B, clientMessage=" + clientMessage.length + "B, smpEncConfirmation=" + smpEncConfirmation.length + "B")
 
   return {smpEncConfirmation, senderAuthKeySPKI, ratchetKeyPair, ephemeralKeyPair}
+}
+
+// -- Diagnostic hex helper
+
+function hex(bytes: Uint8Array, maxBytes: number = 32): string {
+  return Array.from(bytes.slice(0, maxBytes))
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join(" ")
 }
 
 // -- Helpers
