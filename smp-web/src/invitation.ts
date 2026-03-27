@@ -76,13 +76,16 @@ function buildConnReqURI(
   host: string,
   port: number,
   senderId: Uint8Array,
+  queueDhSPKI: Uint8Array,
   e2ePubKey1SPKI: Uint8Array,
   e2ePubKey2SPKI: Uint8Array,
 ): string {
-  // smp queue URI: smp://FINGERPRINT@HOST:PORT/QUEUE_ID#/?v=1-4&q=m
+  // smp queue URI: smp://FINGERPRINT@HOST:PORT/QUEUE_ID#/?v=1-4&dh=X25519_SPKI&q=m
+  // dh= is the X25519 DH public key for per-queue E2E encryption
   // q=m = QMMessaging (messaging queue, not contact queue)
   const senderIdB64 = b64urlEncode(senderId)
-  const smpUri = "smp://" + serverIdentity + "@" + host + ":" + port + "/" + senderIdB64 + "#/?v=1-4&q=m"
+  const dhB64 = b64urlEncode(queueDhSPKI)
+  const smpUri = "smp://" + serverIdentity + "@" + host + ":" + port + "/" + senderIdB64 + "#/?v=1-4&dh=" + dhB64 + "&q=m"
 
   // e2e params: v=2-3&x3dh=KEY1_BASE64,KEY2_BASE64
   // Two X448 SPKI keys (68B each) for X3DH ratchet initialization
@@ -185,6 +188,11 @@ export async function buildInvitation(
   const connInfo = buildInvitationConnInfo(displayName)
 
   // === connReq: our invitation URI with X448 keys ===
+  // Generate queue DH key (X25519) - same key goes into envelope PubHeader
+  // and into the smp:// URI dh= parameter so peer can encrypt to our queue
+  const queueDhKeyPair = generateX25519KeyPair()
+  const queueDhSPKI = encodeX25519PublicKey(queueDhKeyPair.publicKey) // 44B
+
   const ratchetSPKI = encodeX448PublicKey(ratchetKeyPair.publicKey)    // 68B
   const ephemeralSPKI = encodeX448PublicKey(ephemeralKeyPair.publicKey) // 68B
 
@@ -193,6 +201,7 @@ export async function buildInvitation(
     conn.contactQueue.server.hosts[0],
     5223,
     conn.receiveQueue.senderId,
+    queueDhSPKI,
     ratchetSPKI,
     ephemeralSPKI,
   )
