@@ -1,29 +1,31 @@
 // Invitation builder for initial contact request (Step 2).
 //
-// The FIRST message to a contact queue does NOT use Double Ratchet.
-// The contact address contains only X25519 dh= key. There are NO X448 keys
-// from the peer. Without peer X448 keys, X3DH is impossible.
+// The joining party sends an AgentInvitation (tag 'I'), NOT AgentConfirmation.
+// From Haskell Agent/Client.hs:1654-1664:
+//   let agentEnvelope = AgentInvitation {agentVersion, connReq, connInfo}
 //
-// encConnInfo is PLAINTEXT (raw AgentConnInfoReply bytes).
-// The only encryption is the outer NaCl crypto_box (Layer B, X25519).
+// Wire format (ClientMessage after PHEmpty '_'):
+//   [2B]  agentVersion = 0x00 0x07
+//   [1B]  'I' (0x49) = AgentInvitation tag
+//   [2B]  connReq length (uint16 BE, Large encoding)
+//   [NB]  connReq URI string (UTF-8)
+//   [..]  connInfo JSON (Tail - no length prefix)
 //
-// X448 keys are generated and sent IN the AgentConfirmation so the peer
-// can perform X3DH when responding (Steps 5-7). But they are NOT used
-// for encryption in this message.
+// The connReq is OUR OWN invitation URI so the contact address owner
+// can connect back to us. Format:
+//   simplex:/invitation#/?v=1-4&smp=<queue_uri>&e2e=<e2e_params>
 //
+// The FIRST message does NOT use Double Ratchet.
+// The only encryption is the outer NaCl crypto_box (X25519 DH).
 // Ratchet starts at Message 2 (peer -> us) after peer does X3DH.
 
 import nacl from "tweetnacl"
 import {
   generateX448KeyPair,
   generateX25519KeyPair,
-  generateEd25519KeyPair,
-  encodeEd25519PublicKey,
-  encodeX448PublicKey,
   encodeX25519PublicKey,
 } from "./crypto-utils.js"
 import type {KeyPair} from "./crypto-utils.js"
-import {buildAgentConfirmation} from "./agent-envelope.js"
 import type {ManagedConnection} from "./connection.js"
 
 // -- Constants
@@ -32,6 +34,14 @@ const E2E_ENC_CONFIRMATION_LENGTH = 15904
 
 function hex(bytes: Uint8Array, n: number = 32): string {
   return Array.from(bytes.slice(0, n)).map(b => b.toString(16).padStart(2, "0")).join(" ")
+}
+
+// -- Base64url encode (no padding)
+
+function b64urlEncode(bytes: Uint8Array): string {
+  let binary = ""
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
 }
 
 // -- Padding (2B length prefix + data + '#' fill)
@@ -58,45 +68,68 @@ export function buildInvitationConnInfo(displayName: string): Uint8Array {
   }))
 }
 
-// -- SMPQueueInfo (our reply queue info so peer knows where to reach us)
+// -- connReq URI builder
 
-function buildSMPQueueInfo(
-  host: string, port: number, keyHash: Uint8Array,
-  senderId: Uint8Array, dhPublicSPKI: Uint8Array
+function buildConnReqURI(
+  serverIdentity: string,
+  host: string,
+  port: number,
+  senderId: Uint8Array,
+  e2eDhSPKI: Uint8Array,
+): string {
+  // smp queue URI: smp://FINGERPRINT@HOST:PORT/QUEUE_ID
+  const senderIdB64 = b64urlEncode(senderId)
+  const smpUri = "smp://" + serverIdentity + "@" + host + ":" + port + "/" + senderIdB64
+
+  // e2e params: v=1-4&dh=BASE64URL_SPKI
+  const dhB64 = b64urlEncode(e2eDhSPKI)
+  const e2eParams = "v=1-4&dh=" + dhB64
+
+  // Full URI with URL-encoded components in fragment
+  return "simplex:/invitation#/?v=1-4&smp=" + encodeURIComponent(smpUri) + "&e2e=" + encodeURIComponent(e2eParams)
+}
+
+// -- AgentInvitation encoding
+
+function buildAgentInvitation(
+  connReqURI: string,
+  connInfo: Uint8Array,
 ): Uint8Array {
-  const hb = new TextEncoder().encode(host)
-  const pb = new TextEncoder().encode(String(port))
-  const p: number[] = []
-  p.push(0x00, 0x04) // clientVersion (uint16 BE, value 4)
-  p.push(0x01) // hostCount = 1
-  p.push(hb.length); for (const b of hb) p.push(b)
-  p.push(pb.length); for (const b of pb) p.push(b) // Always include port explicitly
-  p.push(keyHash.length); for (const b of keyHash) p.push(b)
-  p.push(senderId.length); for (const b of senderId) p.push(b)
-  p.push(dhPublicSPKI.length); for (const b of dhPublicSPKI) p.push(b)
-  return new Uint8Array(p)
-}
+  const connReqBytes = new TextEncoder().encode(connReqURI)
 
-// -- AgentConnInfoReply (plaintext encConnInfo)
-
-function buildAgentConnInfoReply(smpQueueInfo: Uint8Array, connInfo: Uint8Array): Uint8Array {
-  // [1B 'D'][2B queueCount=0x0001][smpQueueInfo][connInfo as Tail]
-  const r = new Uint8Array(1 + 2 + smpQueueInfo.length + connInfo.length)
+  // agentVersion(2) + 'I'(1) + Large connReq(2 + N) + Tail connInfo
+  const total = 2 + 1 + 2 + connReqBytes.length + connInfo.length
+  const buf = new Uint8Array(total)
   let o = 0
-  r[o++] = 0x44 // 'D' = Duplex
-  r[o++] = 0x00; r[o++] = 0x01 // queue count (uint16 BE)
-  r.set(smpQueueInfo, o); o += smpQueueInfo.length
-  r.set(connInfo, o)
-  return r
+
+  // agentVersion = 7 (uint16 BE)
+  buf[o++] = 0x00
+  buf[o++] = 0x07
+
+  // 'I' = AgentInvitation tag
+  buf[o++] = 0x49
+
+  // Large encoding: 2-byte length prefix (uint16 BE)
+  buf[o++] = (connReqBytes.length >>> 8) & 0xFF
+  buf[o++] = connReqBytes.length & 0xFF
+
+  // connReq URI bytes
+  buf.set(connReqBytes, o)
+  o += connReqBytes.length
+
+  // connInfo as Tail (no length prefix)
+  buf.set(connInfo, o)
+
+  return buf
 }
 
-// -- ClientMessage ('K' + Ed25519 SPKI + AgentConfirmation)
+// -- ClientMessage with PHEmpty ('_')
 
-function buildClientMessage(senderAuthKeySPKI: Uint8Array, agentEnvelope: Uint8Array): Uint8Array {
-  const r = new Uint8Array(1 + 44 + agentEnvelope.length)
-  r[0] = 0x4B // 'K' = PHConfirmation
-  r.set(senderAuthKeySPKI, 1) // NO length prefix before SPKI!
-  r.set(agentEnvelope, 45)
+function buildClientMessage(agentInvitation: Uint8Array): Uint8Array {
+  // PHEmpty = '_' (0x5F), 1 byte only (no auth key)
+  const r = new Uint8Array(1 + agentInvitation.length)
+  r[0] = 0x5F // '_' = PHEmpty
+  r.set(agentInvitation, 1)
   return r
 }
 
@@ -120,7 +153,6 @@ function buildClientMsgEnvelope(
 
 export interface InvitationResult {
   smpEncConfirmation: Uint8Array
-  senderAuthKeySPKI: Uint8Array
   ratchetKeyPair: KeyPair
   ephemeralKeyPair: KeyPair
 }
@@ -136,70 +168,47 @@ export async function buildInvitation(
   const aliceDhDecoded = b64decode(aliceDhBase64)
   const aliceDhRaw = aliceDhDecoded.length === 44 ? aliceDhDecoded.subarray(12) : aliceDhDecoded
   console.log("[SMP] DIAG NaCl dh= base64url:", aliceDhBase64)
-  console.log("[SMP] DIAG NaCl peer_dh decoded (" + aliceDhDecoded.length + "B):", hex(aliceDhDecoded, 44))
   console.log("[SMP] DIAG NaCl peer_dh RAW (" + aliceDhRaw.length + "B):", hex(aliceDhRaw, 32))
 
-  // Generate X448 keypairs for E2ERatchetParams.
-  // These are NOT used for encryption in this message!
-  // They go into AgentConfirmation so the peer can do X3DH when responding.
-  const ratchetKeyPair = generateX448KeyPair() // e2ePubKey1 (identity)
-  const ephemeralKeyPair = generateX448KeyPair() // e2ePubKey2 (ephemeral)
+  // Generate X448 keypairs for future ratchet use.
+  // NOT used for encryption in this message - kept for later X3DH.
+  const ratchetKeyPair = generateX448KeyPair()
+  const ephemeralKeyPair = generateX448KeyPair()
 
-  // === encConnInfo: PLAINTEXT AgentConnInfoReply ===
+  // === connInfo: profile JSON ===
   const connInfo = buildInvitationConnInfo(displayName)
-  const keyHash = b64decode(conn.contactQueue.server.serverIdentity)
-  const e2eDhKeyPair = generateX25519KeyPair() // For SMPQueueInfo DH key
+
+  // === connReq: our invitation URI ===
+  const e2eDhKeyPair = generateX25519KeyPair()
   const e2eDhSPKI = encodeX25519PublicKey(e2eDhKeyPair.publicKey)
 
-  const queueInfo = buildSMPQueueInfo(
-    conn.contactQueue.server.hosts[0], 5223, keyHash,
-    conn.receiveQueue.senderId, // senderId from IDS = how peer reaches our queue
-    e2eDhSPKI
+  const connReqURI = buildConnReqURI(
+    conn.contactQueue.server.serverIdentity,
+    conn.contactQueue.server.hosts[0],
+    5223,
+    conn.receiveQueue.senderId,
+    e2eDhSPKI,
   )
-  const encConnInfo = buildAgentConnInfoReply(queueInfo, connInfo)
+  console.log("[SMP] DIAG connReq URI:", connReqURI)
+  console.log("[SMP] DIAG connReq URI length:", connReqURI.length)
 
-  const connInfoJson = new TextDecoder().decode(connInfo)
-  console.log("[SMP] DIAG connInfo JSON (" + connInfoJson.length + " chars):", connInfoJson)
-  console.log("[SMP] DIAG connInfo bytes:", connInfo.length + "B")
-  console.log("[SMP] DIAG smpQueueInfo:", queueInfo.length + "B, hex:", hex(queueInfo, 64))
-  console.log("[SMP] DIAG smpQueueInfo last 4 bytes:", hex(queueInfo.subarray(queueInfo.length - 4), 4))
-  console.log("[SMP] DIAG encConnInfo (PLAINTEXT):", encConnInfo.length + "B, tag=0x" + encConnInfo[0].toString(16))
-  console.log("[SMP] DIAG encConnInfo first 64:", hex(encConnInfo, 64))
-  const connInfoStart = 1 + 2 + queueInfo.length // 'D' + queueCount + smpQueueInfo
-  console.log("[SMP] DIAG encConnInfo[" + connInfoStart + "] (should be 0x7b={):", "0x" + (encConnInfo[connInfoStart] || 0).toString(16))
-  console.log("[SMP] DIAG encConnInfo[" + connInfoStart + "+] connInfo area:", (encConnInfo.length - connInfoStart) + "B, first 64:", hex(encConnInfo.subarray(connInfoStart), 64))
-  console.log("[SMP] DIAG encConnInfo FULL HEX (" + encConnInfo.length + "B):")
-  for (let i = 0; i < encConnInfo.length; i += 64) {
-    console.log("[SMP]   [" + String(i).padStart(3, "0") + "]", hex(encConnInfo.subarray(i, Math.min(i + 64, encConnInfo.length)), 64))
-  }
+  // === AgentInvitation ===
+  const agentInv = buildAgentInvitation(connReqURI, connInfo)
+  console.log("[SMP] DIAG agentInvitation:", agentInv.length + "B")
+  console.log("[SMP] DIAG agentInvitation[0-2]:", hex(agentInv.subarray(0, 3), 3), "(expected: 00 07 49)")
 
-  // === AgentConfirmation ===
-  const agentEnv = buildAgentConfirmation({
-    ratchetPublicKeySPKI: encodeX448PublicKey(ratchetKeyPair.publicKey),
-    ephemeralPublicKeySPKI: encodeX448PublicKey(ephemeralKeyPair.publicKey),
-    encryptedConnInfo: encConnInfo, // PLAINTEXT for first message
-  })
-  console.log("[SMP] DIAG agentConfirmation:", agentEnv.length + "B")
-
-  // === ClientMessage ===
-  const senderAuth = generateEd25519KeyPair()
-  const senderAuthKeySPKI = encodeEd25519PublicKey(senderAuth.publicKey)
-  const clientMsg = buildClientMessage(senderAuthKeySPKI, agentEnv)
+  // === ClientMessage with PHEmpty ===
+  const clientMsg = buildClientMessage(agentInv)
   console.log("[SMP] DIAG clientMessage:", clientMsg.length + "B")
-  console.log("[SMP] DIAG clientMessage[45-55] (AgentConf start):", hex(clientMsg.subarray(45, 55), 10))
-  console.log("[SMP] DIAG clientMessage[185-195] (encConnInfo area):", hex(clientMsg.subarray(185, 195), 10))
-  const encConnInfoStart = 45 + 144 // 'K'(1) + SPKI(44) + AgentConf header(144)
-  console.log("[SMP] DIAG clientMessage[" + encConnInfoStart + "] (expected 0x44='D'):", "0x" + (clientMsg[encConnInfoStart] || 0).toString(16))
+  console.log("[SMP] DIAG clientMessage[0]:", "0x" + clientMsg[0].toString(16), "(expected: 0x5f = '_' PHEmpty)")
+  console.log("[SMP] DIAG clientMessage[1-3]:", hex(clientMsg.subarray(1, 4), 3), "(expected: 00 07 49)")
 
   // === Layer B: NaCl crypto_box (the ONLY encryption) ===
-  // MUST use nacl.box() which does DH + HSalsa20 + XSalsa20-Poly1305 internally.
-  // Raw xsalsa20poly1305 skips the HSalsa20 key derivation step!
   const phKeyPair = nacl.box.keyPair()
   console.log("[SMP] DIAG NaCl our_dh_pub  RAW (" + phKeyPair.publicKey.length + "B):", hex(phKeyPair.publicKey, 32))
-  console.log("[SMP] DIAG NaCl our_dh_priv RAW (" + phKeyPair.secretKey.length + "B):", hex(phKeyPair.secretKey, 32))
 
   const paddedClientMsg = padPlaintext(clientMsg, E2E_ENC_CONFIRMATION_LENGTH)
-  console.log("[SMP] DIAG NaCl plaintext padded:", paddedClientMsg.length + "B, first 32:", hex(paddedClientMsg, 32))
+  console.log("[SMP] DIAG NaCl plaintext padded:", paddedClientMsg.length + "B")
   console.log("[SMP] DIAG NaCl plaintext[0-1] (length BE):", hex(paddedClientMsg.subarray(0, 2), 2), "= " + ((paddedClientMsg[0] << 8) | paddedClientMsg[1]) + " bytes")
 
   const nonce = nacl.randomBytes(24)
@@ -207,19 +216,21 @@ export async function buildInvitation(
 
   console.log("[SMP] DIAG NaCl function: nacl.box (tweetnacl - DH + HSalsa20 + XSalsa20-Poly1305)")
   const cmEncBody = nacl.box(paddedClientMsg, nonce, aliceDhRaw, phKeyPair.secretKey)
-  console.log("[SMP] DIAG NaCl cmEncBody:", cmEncBody.length + "B (expected 15920), first 32:", hex(cmEncBody, 32))
+  console.log("[SMP] DIAG NaCl cmEncBody:", cmEncBody.length + "B (expected 15920)")
 
   // === ClientMsgEnvelope ===
   const phDhPublicSPKI = encodeX25519PublicKey(phKeyPair.publicKey)
-  console.log("[SMP] DIAG NaCl our_dh SPKI in envelope (" + phDhPublicSPKI.length + "B):", hex(phDhPublicSPKI, 12), "...")
-
   const smpEnc = buildClientMsgEnvelope(phDhPublicSPKI, nonce, cmEncBody)
   console.log("[SMP] DIAG envelope:", smpEnc.length + "B (expected 15992)")
-  console.log("[SMP] DIAG envelope first 8:", hex(smpEnc, 8), "(expected: 00 04 31 2c 30 2a 30 05)")
+
+  // === Full hex dump for SimpleGo team ===
+  console.log("[SMP] DIAG clientMessage FULL HEX (" + clientMsg.length + "B):")
+  for (let i = 0; i < clientMsg.length; i += 64) {
+    console.log("[SMP]   [" + String(i).padStart(3, "0") + "]", hex(clientMsg.subarray(i, Math.min(i + 64, clientMsg.length)), 64))
+  }
 
   return {
     smpEncConfirmation: smpEnc,
-    senderAuthKeySPKI,
     ratchetKeyPair,
     ephemeralKeyPair,
   }
