@@ -51,11 +51,10 @@ function padPlaintext(plaintext: Uint8Array, targetSize: number): Uint8Array {
 // -- connInfo JSON
 
 export function buildInvitationConnInfo(displayName: string): Uint8Array {
+  // Minimal JSON matching SimpleGo reference format (no preferences block)
   return new TextEncoder().encode(JSON.stringify({
     v: "1-16", event: "x.info",
-    params: {profile: {displayName, fullName: "",
-      preferences: {calls: {allow: "no"}, files: {allow: "no"}, voice: {allow: "no"},
-        reactions: {allow: "yes"}, fullDelete: {allow: "no"}, timedMessages: {allow: "yes"}}}}
+    params: {profile: {displayName, fullName: ""}}
   }))
 }
 
@@ -169,6 +168,10 @@ export async function buildInvitation(
   const connInfoStart = 1 + 2 + queueInfo.length // 'D' + queueCount + smpQueueInfo
   console.log("[SMP] DIAG encConnInfo[" + connInfoStart + "] (should be 0x7b={):", "0x" + (encConnInfo[connInfoStart] || 0).toString(16))
   console.log("[SMP] DIAG encConnInfo[" + connInfoStart + "+] connInfo area:", (encConnInfo.length - connInfoStart) + "B, first 64:", hex(encConnInfo.subarray(connInfoStart), 64))
+  console.log("[SMP] DIAG encConnInfo FULL HEX (" + encConnInfo.length + "B):")
+  for (let i = 0; i < encConnInfo.length; i += 64) {
+    console.log("[SMP]   [" + String(i).padStart(3, "0") + "]", hex(encConnInfo.subarray(i, Math.min(i + 64, encConnInfo.length)), 64))
+  }
 
   // === AgentConfirmation ===
   const agentEnv = buildAgentConfirmation({
