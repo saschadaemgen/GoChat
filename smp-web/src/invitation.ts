@@ -159,9 +159,16 @@ export async function buildInvitation(
   )
   const encConnInfo = buildAgentConnInfoReply(queueInfo, connInfo)
 
+  const connInfoJson = new TextDecoder().decode(connInfo)
+  console.log("[SMP] DIAG connInfo JSON (" + connInfoJson.length + " chars):", connInfoJson)
+  console.log("[SMP] DIAG connInfo bytes:", connInfo.length + "B")
+  console.log("[SMP] DIAG smpQueueInfo:", queueInfo.length + "B, hex:", hex(queueInfo, 64))
+  console.log("[SMP] DIAG smpQueueInfo last 4 bytes:", hex(queueInfo.subarray(queueInfo.length - 4), 4))
   console.log("[SMP] DIAG encConnInfo (PLAINTEXT):", encConnInfo.length + "B, tag=0x" + encConnInfo[0].toString(16))
   console.log("[SMP] DIAG encConnInfo first 64:", hex(encConnInfo, 64))
-  console.log("[SMP] DIAG smpQueueInfo:", queueInfo.length + "B, hex:", hex(queueInfo, 64))
+  const connInfoStart = 1 + 2 + queueInfo.length // 'D' + queueCount + smpQueueInfo
+  console.log("[SMP] DIAG encConnInfo[" + connInfoStart + "] (should be 0x7b={):", "0x" + (encConnInfo[connInfoStart] || 0).toString(16))
+  console.log("[SMP] DIAG encConnInfo[" + connInfoStart + "+] connInfo area:", (encConnInfo.length - connInfoStart) + "B, first 64:", hex(encConnInfo.subarray(connInfoStart), 64))
 
   // === AgentConfirmation ===
   const agentEnv = buildAgentConfirmation({
