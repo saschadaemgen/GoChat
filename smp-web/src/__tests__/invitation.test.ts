@@ -46,114 +46,98 @@ function createMockConnection(): ManagedConnection {
   }
 }
 
-// -- buildInvitationConnInfo tests
+// -- connInfo
 
 describe("buildInvitationConnInfo", () => {
-  it("produces valid JSON bytes", () => {
-    const bytes = buildInvitationConnInfo("Test User")
-    const json = new TextDecoder().decode(bytes)
-    expect(() => JSON.parse(json)).not.toThrow()
+  it("produces valid JSON", () => {
+    const bytes = buildInvitationConnInfo("Test")
+    expect(() => JSON.parse(new TextDecoder().decode(bytes))).not.toThrow()
   })
 
-  it("contains x.info event", () => {
-    const bytes = buildInvitationConnInfo("Test User")
-    const parsed = JSON.parse(new TextDecoder().decode(bytes))
+  it("has x.info event and display name", () => {
+    const parsed = JSON.parse(new TextDecoder().decode(buildInvitationConnInfo("Alice")))
     expect(parsed.event).toBe("x.info")
-  })
-
-  it("contains display name", () => {
-    const bytes = buildInvitationConnInfo("Alice")
-    const parsed = JSON.parse(new TextDecoder().decode(bytes))
     expect(parsed.params.profile.displayName).toBe("Alice")
   })
 })
 
-// -- buildInvitation tests (now async)
+// -- buildInvitation
 
 describe("buildInvitation", () => {
-  it("produces non-empty smpEncConfirmation", async () => {
-    const conn = createMockConnection()
-    const result = await buildInvitation(conn, "Visitor", 4)
-    expect(result.smpEncConfirmation.length).toBeGreaterThan(0)
+  it("produces 15992-byte SEND body", async () => {
+    const result = await buildInvitation(createMockConnection(), "Visitor", 4)
+    expect(result.smpEncConfirmation.length).toBe(15992)
   })
 
-  it("smpEncConfirmation starts with phVersion 4 (0x00 0x04)", async () => {
-    const conn = createMockConnection()
-    const result = await buildInvitation(conn, "Visitor", 4)
+  it("starts with phVersion 4 (0x00 0x04)", async () => {
+    const result = await buildInvitation(createMockConnection(), "Visitor", 4)
     expect(result.smpEncConfirmation[0]).toBe(0x00)
     expect(result.smpEncConfirmation[1]).toBe(0x04)
   })
 
-  it("smpEncConfirmation has Just DH key tag 0x31 at byte 2", async () => {
-    const conn = createMockConnection()
-    const result = await buildInvitation(conn, "Visitor", 4)
+  it("has Just DH key tag 0x31 at byte 2", async () => {
+    const result = await buildInvitation(createMockConnection(), "Visitor", 4)
     expect(result.smpEncConfirmation[2]).toBe(0x31)
   })
 
-  it("total SEND body is 15992 bytes", async () => {
-    const conn = createMockConnection()
-    const result = await buildInvitation(conn, "Visitor", 4)
-    // phVersion(2) + '1'(1) + keyLen(1) + SPKI(44) + nonce(24) + cmEncBody(15920) = 15992
-    expect(result.smpEncConfirmation.length).toBe(15992)
+  it("has DH key SPKI length 44 at byte 3", async () => {
+    const result = await buildInvitation(createMockConnection(), "Visitor", 4)
+    expect(result.smpEncConfirmation[3]).toBe(44)
   })
 
-  it("cmEncBody is 15920 bytes (15904 padded + 16 MAC)", async () => {
-    const conn = createMockConnection()
-    const result = await buildInvitation(conn, "Visitor", 4)
-    // Header: 2+1+1+44+24 = 72, cmEncBody = total - 72
+  it("cmEncBody is 15920 bytes (15904 + 16 MAC)", async () => {
+    const result = await buildInvitation(createMockConnection(), "Visitor", 4)
     expect(result.smpEncConfirmation.length - 72).toBe(15920)
   })
 
-  it("produces 44-byte sender auth key SPKI", async () => {
-    const conn = createMockConnection()
-    const result = await buildInvitation(conn, "Visitor", 4)
+  it("produces 44-byte Ed25519 SPKI sender auth key", async () => {
+    const result = await buildInvitation(createMockConnection(), "Visitor", 4)
     expect(result.senderAuthKeySPKI.length).toBe(44)
-    expect(result.senderAuthKeySPKI[0]).toBe(0x30)
+    expect(result.senderAuthKeySPKI[0]).toBe(0x30) // SPKI prefix
   })
 
   it("produces 56-byte X448 ratchet key pair", async () => {
-    const conn = createMockConnection()
-    const result = await buildInvitation(conn, "Visitor", 4)
+    const result = await buildInvitation(createMockConnection(), "Visitor", 4)
     expect(result.ratchetKeyPair.publicKey.length).toBe(56)
     expect(result.ratchetKeyPair.privateKey.length).toBe(56)
+  })
+
+  it("produces 56-byte X448 ephemeral key pair", async () => {
+    const result = await buildInvitation(createMockConnection(), "Visitor", 4)
+    expect(result.ephemeralKeyPair.publicKey.length).toBe(56)
   })
 
   it("throws when contactQueue is null", async () => {
     const conn = createMockConnection()
     conn.contactQueue = null
-    await expect(buildInvitation(conn, "Visitor", 4)).rejects.toThrow("contactQueue is null")
+    await expect(buildInvitation(conn, "V", 4)).rejects.toThrow("contactQueue is null")
   })
 
   it("throws when receiveQueue is null", async () => {
     const conn = createMockConnection()
     conn.receiveQueue = null
-    await expect(buildInvitation(conn, "Visitor", 4)).rejects.toThrow("receiveQueue is null")
+    await expect(buildInvitation(conn, "V", 4)).rejects.toThrow("receiveQueue is null")
   })
 
-  it("generates unique keys on each call", async () => {
+  it("generates unique keys per call", async () => {
     const conn = createMockConnection()
-    const r1 = await buildInvitation(conn, "Visitor", 4)
-    const r2 = await buildInvitation(conn, "Visitor", 4)
+    const r1 = await buildInvitation(conn, "V", 4)
+    const r2 = await buildInvitation(conn, "V", 4)
     expect(r1.senderAuthKeySPKI).not.toEqual(r2.senderAuthKeySPKI)
     expect(r1.ratchetKeyPair.publicKey).not.toEqual(r2.ratchetKeyPair.publicKey)
   })
 })
 
-// -- SEND command format verification
+// -- SEND format
 
-describe("SEND command format (unsigned)", () => {
-  it("encodeSEND with notification=false uses ASCII F (0x46)", () => {
-    const result = encodeSEND({notification: false, encMessage: new Uint8Array([0x01])})
-    expect(result[5]).toBe(0x46)
+describe("SEND command format", () => {
+  it("flag F = 0x46", () => {
+    expect(encodeSEND({notification: false, encMessage: new Uint8Array([1])})[5]).toBe(0x46)
   })
-
-  it("encodeSEND with notification=true uses ASCII T (0x54)", () => {
-    const result = encodeSEND({notification: true, encMessage: new Uint8Array([0x01])})
-    expect(result[5]).toBe(0x54)
+  it("flag T = 0x54", () => {
+    expect(encodeSEND({notification: true, encMessage: new Uint8Array([1])})[5]).toBe(0x54)
   })
-
-  it("SEND flag is followed by space (0x20)", () => {
-    const result = encodeSEND({notification: false, encMessage: new Uint8Array([0x01])})
-    expect(result[6]).toBe(0x20)
+  it("space after flag", () => {
+    expect(encodeSEND({notification: false, encMessage: new Uint8Array([1])})[6]).toBe(0x20)
   })
 })
