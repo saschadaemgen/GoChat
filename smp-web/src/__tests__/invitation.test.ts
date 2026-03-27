@@ -2,6 +2,7 @@ import {describe, it, expect} from "vitest"
 import {buildInvitation, buildInvitationConnInfo} from "../invitation.js"
 import {ConnectionStateMachine} from "../state.js"
 import {generateEd25519KeyPair, generateX25519KeyPair} from "../crypto-utils.js"
+import {encodeSEND} from "../commands.js"
 import type {ManagedConnection} from "../connection.js"
 
 // -- Helpers
@@ -77,18 +78,16 @@ describe("buildInvitation", () => {
     expect(result.smpEncConfirmation.length).toBeGreaterThan(0)
   })
 
-  it("smpEncConfirmation starts with version bytes", () => {
+  it("smpEncConfirmation starts with phVersion 4 (0x00 0x04)", () => {
     const conn = createMockConnection()
     const result = buildInvitation(conn, "Visitor", 4)
-    // phVersion = 4 (0x00 0x04) per SimpleGo protocol team
     expect(result.smpEncConfirmation[0]).toBe(0x00)
     expect(result.smpEncConfirmation[1]).toBe(0x04)
   })
 
-  it("smpEncConfirmation has DH key indicator at byte 2", () => {
+  it("smpEncConfirmation has Just DH key tag 0x31 at byte 2", () => {
     const conn = createMockConnection()
     const result = buildInvitation(conn, "Visitor", 4)
-    // "1" = 0x31 -> DH key follows
     expect(result.smpEncConfirmation[2]).toBe(0x31)
   })
 
@@ -98,20 +97,28 @@ describe("buildInvitation", () => {
     expect(result.smpEncConfirmation[3]).toBe(44)
   })
 
-  it("total size is header(48) + nonce(24) + encrypted(15936)", () => {
+  it("total SEND body is 15992 bytes", () => {
     const conn = createMockConnection()
     const result = buildInvitation(conn, "Visitor", 4)
-    // header: 2(version) + 1("1") + 1(keyLen) + 44(key) = 48
+    // header: 2(version) + 1("1") + 1(keyLen) + 44(SPKI) = 48
     // nonce: 24
-    // encrypted: 15920(padded) + 16(poly1305 tag) = 15936
-    expect(result.smpEncConfirmation.length).toBe(48 + 24 + 15936)
+    // cmEncBody: 15904(padded) + 16(MAC) = 15920
+    // total: 48 + 24 + 15920 = 15992
+    expect(result.smpEncConfirmation.length).toBe(15992)
+  })
+
+  it("cmEncBody is 15920 bytes (15904 padded + 16 MAC)", () => {
+    const conn = createMockConnection()
+    const result = buildInvitation(conn, "Visitor", 4)
+    // cmEncBody starts at offset 48 (header) + 24 (nonce) = 72
+    const cmEncBodyLen = result.smpEncConfirmation.length - 72
+    expect(cmEncBodyLen).toBe(15920)
   })
 
   it("produces 44-byte sender auth key SPKI", () => {
     const conn = createMockConnection()
     const result = buildInvitation(conn, "Visitor", 4)
     expect(result.senderAuthKeySPKI.length).toBe(44)
-    // Ed25519 SPKI prefix
     expect(result.senderAuthKeySPKI[0]).toBe(0x30)
     expect(result.senderAuthKeySPKI[1]).toBe(0x2a)
   })
@@ -136,6 +143,12 @@ describe("buildInvitation", () => {
     expect(() => buildInvitation(conn, "Visitor", 4)).toThrow("contactQueue is null")
   })
 
+  it("throws when receiveQueue is null", () => {
+    const conn = createMockConnection()
+    conn.receiveQueue = null
+    expect(() => buildInvitation(conn, "Visitor", 4)).toThrow("receiveQueue is null")
+  })
+
   it("generates unique keys on each call", () => {
     const conn = createMockConnection()
     const r1 = buildInvitation(conn, "Visitor", 4)
@@ -147,12 +160,9 @@ describe("buildInvitation", () => {
 
 // -- SEND command format verification
 
-import {encodeSEND} from "../commands.js"
-
 describe("SEND command format (unsigned)", () => {
   it("encodeSEND with notification=false uses ASCII F (0x46)", () => {
     const result = encodeSEND({notification: false, encMessage: new Uint8Array([0x01])})
-    // "SEND " = 53 45 4e 44 20, then flag F = 46, then space = 20
     expect(result[5]).toBe(0x46) // ASCII 'F'
   })
 
