@@ -71,7 +71,7 @@ function buildSMPQueueInfo(
   p.push(0x00, 0x04) // clientVersion (uint16 BE, value 4)
   p.push(0x01) // hostCount = 1
   p.push(hb.length); for (const b of hb) p.push(b)
-  if (port !== 5223) { p.push(pb.length); for (const b of pb) p.push(b) } else p.push(0)
+  p.push(pb.length); for (const b of pb) p.push(b) // Always include port explicitly
   p.push(keyHash.length); for (const b of keyHash) p.push(b)
   p.push(senderId.length); for (const b of senderId) p.push(b)
   p.push(dhPublicSPKI.length); for (const b of dhPublicSPKI) p.push(b)
