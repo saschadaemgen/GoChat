@@ -350,7 +350,7 @@ export class ConnectionManager {
       console.log("[SMP] sendInvitation: building invitation for '" + displayName + "'")
 
       // 1. Build the invitation (NaCl-encrypted agent envelope with our keys)
-      const {smpEncConfirmation} = buildInvitation(conn, displayName, 6)
+      const {smpEncConfirmation} = await buildInvitation(conn, displayName, 6)
 
       // 2. Get SMP client for the contact queue server.
       // The contact queue may be on a DIFFERENT server than our queue.
