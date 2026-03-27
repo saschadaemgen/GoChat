@@ -13,7 +13,7 @@
 //
 // Ratchet starts at Message 2 (peer -> us) after peer does X3DH.
 
-import {xsalsa20poly1305} from "@noble/ciphers/salsa"
+import nacl from "tweetnacl"
 import {
   generateX448KeyPair,
   generateX25519KeyPair,
@@ -21,7 +21,6 @@ import {
   encodeEd25519PublicKey,
   encodeX448PublicKey,
   encodeX25519PublicKey,
-  x25519DH,
 } from "./crypto-utils.js"
 import type {KeyPair} from "./crypto-utils.js"
 import {buildAgentConfirmation} from "./agent-envelope.js"
@@ -177,23 +176,21 @@ export async function buildInvitation(
   console.log("[SMP] DIAG clientMessage:", clientMsg.length + "B")
 
   // === Layer B: NaCl crypto_box (the ONLY encryption) ===
-  const phKeyPair = generateX25519KeyPair() // Separate keypair for NaCl layer
+  // MUST use nacl.box() which does DH + HSalsa20 + XSalsa20-Poly1305 internally.
+  // Raw xsalsa20poly1305 skips the HSalsa20 key derivation step!
+  const phKeyPair = nacl.box.keyPair()
   console.log("[SMP] DIAG NaCl our_dh_pub  RAW (" + phKeyPair.publicKey.length + "B):", hex(phKeyPair.publicKey, 32))
-  console.log("[SMP] DIAG NaCl our_dh_priv RAW (" + phKeyPair.privateKey.length + "B):", hex(phKeyPair.privateKey, 32))
-
-  const sharedSecret = x25519DH(phKeyPair.privateKey, aliceDhRaw)
-  console.log("[SMP] DIAG NaCl sharedSecret (" + sharedSecret.length + "B):", hex(sharedSecret, 32))
+  console.log("[SMP] DIAG NaCl our_dh_priv RAW (" + phKeyPair.secretKey.length + "B):", hex(phKeyPair.secretKey, 32))
 
   const paddedClientMsg = padPlaintext(clientMsg, E2E_ENC_CONFIRMATION_LENGTH)
   console.log("[SMP] DIAG NaCl plaintext padded:", paddedClientMsg.length + "B, first 32:", hex(paddedClientMsg, 32))
   console.log("[SMP] DIAG NaCl plaintext[0-1] (length BE):", hex(paddedClientMsg.subarray(0, 2), 2), "= " + ((paddedClientMsg[0] << 8) | paddedClientMsg[1]) + " bytes")
 
-  const nonce = new Uint8Array(24)
-  crypto.getRandomValues(nonce)
+  const nonce = nacl.randomBytes(24)
   console.log("[SMP] DIAG NaCl cmNonce (" + nonce.length + "B):", hex(nonce, 24))
 
-  console.log("[SMP] DIAG NaCl function: xsalsa20poly1305 (from @noble/ciphers/salsa)")
-  const cmEncBody = xsalsa20poly1305(sharedSecret, nonce).encrypt(paddedClientMsg)
+  console.log("[SMP] DIAG NaCl function: nacl.box (tweetnacl - DH + HSalsa20 + XSalsa20-Poly1305)")
+  const cmEncBody = nacl.box(paddedClientMsg, nonce, aliceDhRaw, phKeyPair.secretKey)
   console.log("[SMP] DIAG NaCl cmEncBody:", cmEncBody.length + "B (expected 15920), first 32:", hex(cmEncBody, 32))
 
   // === ClientMsgEnvelope ===

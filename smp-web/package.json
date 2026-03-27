@@ -24,6 +24,7 @@
     "@noble/curves": "^2.0.1",
     "@noble/hashes": "^1.5.0",
     "@simplex-chat/xftp-web": "file:../xftp-web",
+    "tweetnacl": "^1.0.3",
     "zstd-codec": "^0.1.5"
   },
   "devDependencies": {
