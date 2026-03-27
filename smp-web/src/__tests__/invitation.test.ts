@@ -93,14 +93,15 @@ describe("buildInvitation", () => {
   it("total SEND body is 15992 bytes", async () => {
     const conn = createMockConnection()
     const result = await buildInvitation(conn, "Visitor", 4)
+    // phVersion(2) + '1'(1) + keyLen(1) + SPKI(44) + nonce(24) + cmEncBody(15920) = 15992
     expect(result.smpEncConfirmation.length).toBe(15992)
   })
 
   it("cmEncBody is 15920 bytes (15904 padded + 16 MAC)", async () => {
     const conn = createMockConnection()
     const result = await buildInvitation(conn, "Visitor", 4)
-    const cmEncBodyLen = result.smpEncConfirmation.length - 72
-    expect(cmEncBodyLen).toBe(15920)
+    // Header: 2+1+1+44+24 = 72, cmEncBody = total - 72
+    expect(result.smpEncConfirmation.length - 72).toBe(15920)
   })
 
   it("produces 44-byte sender auth key SPKI", async () => {
