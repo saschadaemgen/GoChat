@@ -160,6 +160,8 @@ export async function buildInvitation(
   const encConnInfo = buildAgentConnInfoReply(queueInfo, connInfo)
 
   console.log("[SMP] DIAG encConnInfo (PLAINTEXT):", encConnInfo.length + "B, tag=0x" + encConnInfo[0].toString(16))
+  console.log("[SMP] DIAG encConnInfo first 64:", hex(encConnInfo, 64))
+  console.log("[SMP] DIAG smpQueueInfo:", queueInfo.length + "B, hex:", hex(queueInfo, 64))
 
   // === AgentConfirmation ===
   const agentEnv = buildAgentConfirmation({
@@ -174,6 +176,10 @@ export async function buildInvitation(
   const senderAuthKeySPKI = encodeEd25519PublicKey(senderAuth.publicKey)
   const clientMsg = buildClientMessage(senderAuthKeySPKI, agentEnv)
   console.log("[SMP] DIAG clientMessage:", clientMsg.length + "B")
+  console.log("[SMP] DIAG clientMessage[45-55] (AgentConf start):", hex(clientMsg.subarray(45, 55), 10))
+  console.log("[SMP] DIAG clientMessage[185-195] (encConnInfo area):", hex(clientMsg.subarray(185, 195), 10))
+  const encConnInfoStart = 45 + 144 // 'K'(1) + SPKI(44) + AgentConf header(144)
+  console.log("[SMP] DIAG clientMessage[" + encConnInfoStart + "] (expected 0x44='D'):", "0x" + (clientMsg[encConnInfoStart] || 0).toString(16))
 
   // === Layer B: NaCl crypto_box (the ONLY encryption) ===
   // MUST use nacl.box() which does DH + HSalsa20 + XSalsa20-Poly1305 internally.
