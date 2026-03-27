@@ -163,6 +163,15 @@ class BrowserClientImpl implements BrowserClient {
       throw new Error("Cannot send: connection not fully established")
     }
 
+    // Do NOT send regular messages until the bidirectional connection is
+    // fully established. After the invitation (Step 2), we are in PENDING
+    // state waiting for the support team to accept. Regular messages would
+    // go to the contact queue and confuse the SimpleX app.
+    if (this.conn.state.state !== "CONNECTED") {
+      console.log("[SMP] BrowserClient.send: blocked - connection state is " + this.conn.state.state + ", not CONNECTED. Waiting for confirmation.")
+      return // Silently drop - the chat will work once connection is confirmed
+    }
+
     try {
       // Get the SMP client for the contact queue server.
       // If serverUrl is configured, use its host:port for the WebSocket

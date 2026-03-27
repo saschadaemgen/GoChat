@@ -78,11 +78,14 @@ export function encodeSKEY(senderAuthKey: Uint8Array): Uint8Array {
 // msgFlags = notificationFlag (T/F)
 export function encodeSEND(params: SendParams): Uint8Array {
   const flag = params.notification ? 0x54 : 0x46 // T or F
-  return concatBytes(
+  console.log("[SMP] encodeSEND: flag=" + String.fromCharCode(flag) + ", encMessage=" + params.encMessage.length + "B")
+  const result = concatBytes(
     ascii("SEND "),
     new Uint8Array([flag, 0x20]), // flag + space
     params.encMessage
   )
+  console.log("[SMP] encodeSEND: total command=" + result.length + "B (expected: " + (7 + params.encMessage.length) + "B)")
+  return result
 }
 
 // ACK <SP> encodeBytes(msgId)
