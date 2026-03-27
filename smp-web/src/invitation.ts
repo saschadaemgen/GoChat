@@ -31,6 +31,10 @@ import type {ManagedConnection} from "./connection.js"
 
 const E2E_ENC_CONFIRMATION_LENGTH = 15904
 
+function hex(bytes: Uint8Array, n: number = 32): string {
+  return Array.from(bytes.slice(0, n)).map(b => b.toString(16).padStart(2, "0")).join(" ")
+}
+
 // -- Padding (2B length prefix + data + '#' fill)
 
 function padPlaintext(plaintext: Uint8Array, targetSize: number): Uint8Array {
@@ -130,10 +134,12 @@ export async function buildInvitation(
   if (!conn.receiveQueue) throw new Error("Cannot build invitation: receiveQueue is null (IDS not received)")
 
   // Peer's X25519 DH key (from contact address URI dh= parameter)
-  const aliceDhRaw = (() => {
-    const raw = b64decode(conn.contactQueue.dhPublicKey)
-    return raw.length === 44 ? raw.subarray(12) : raw // Strip SPKI prefix if present
-  })()
+  const aliceDhBase64 = conn.contactQueue.dhPublicKey
+  const aliceDhDecoded = b64decode(aliceDhBase64)
+  const aliceDhRaw = aliceDhDecoded.length === 44 ? aliceDhDecoded.subarray(12) : aliceDhDecoded
+  console.log("[SMP] DIAG NaCl dh= base64url:", aliceDhBase64)
+  console.log("[SMP] DIAG NaCl peer_dh decoded (" + aliceDhDecoded.length + "B):", hex(aliceDhDecoded, 44))
+  console.log("[SMP] DIAG NaCl peer_dh RAW (" + aliceDhRaw.length + "B):", hex(aliceDhRaw, 32))
 
   // Generate X448 keypairs for E2ERatchetParams.
   // These are NOT used for encryption in this message!
@@ -172,18 +178,31 @@ export async function buildInvitation(
 
   // === Layer B: NaCl crypto_box (the ONLY encryption) ===
   const phKeyPair = generateX25519KeyPair() // Separate keypair for NaCl layer
+  console.log("[SMP] DIAG NaCl our_dh_pub  RAW (" + phKeyPair.publicKey.length + "B):", hex(phKeyPair.publicKey, 32))
+  console.log("[SMP] DIAG NaCl our_dh_priv RAW (" + phKeyPair.privateKey.length + "B):", hex(phKeyPair.privateKey, 32))
+
   const sharedSecret = x25519DH(phKeyPair.privateKey, aliceDhRaw)
+  console.log("[SMP] DIAG NaCl sharedSecret (" + sharedSecret.length + "B):", hex(sharedSecret, 32))
+
   const paddedClientMsg = padPlaintext(clientMsg, E2E_ENC_CONFIRMATION_LENGTH)
+  console.log("[SMP] DIAG NaCl plaintext padded:", paddedClientMsg.length + "B, first 32:", hex(paddedClientMsg, 32))
+  console.log("[SMP] DIAG NaCl plaintext[0-1] (length BE):", hex(paddedClientMsg.subarray(0, 2), 2), "= " + ((paddedClientMsg[0] << 8) | paddedClientMsg[1]) + " bytes")
+
   const nonce = new Uint8Array(24)
   crypto.getRandomValues(nonce)
+  console.log("[SMP] DIAG NaCl cmNonce (" + nonce.length + "B):", hex(nonce, 24))
+
+  console.log("[SMP] DIAG NaCl function: xsalsa20poly1305 (from @noble/ciphers/salsa)")
   const cmEncBody = xsalsa20poly1305(sharedSecret, nonce).encrypt(paddedClientMsg)
-  console.log("[SMP] DIAG cmEncBody:", cmEncBody.length + "B (expected 15920)")
+  console.log("[SMP] DIAG NaCl cmEncBody:", cmEncBody.length + "B (expected 15920), first 32:", hex(cmEncBody, 32))
 
   // === ClientMsgEnvelope ===
-  const smpEnc = buildClientMsgEnvelope(
-    encodeX25519PublicKey(phKeyPair.publicKey), nonce, cmEncBody
-  )
+  const phDhPublicSPKI = encodeX25519PublicKey(phKeyPair.publicKey)
+  console.log("[SMP] DIAG NaCl our_dh SPKI in envelope (" + phDhPublicSPKI.length + "B):", hex(phDhPublicSPKI, 12), "...")
+
+  const smpEnc = buildClientMsgEnvelope(phDhPublicSPKI, nonce, cmEncBody)
   console.log("[SMP] DIAG envelope:", smpEnc.length + "B (expected 15992)")
+  console.log("[SMP] DIAG envelope first 8:", hex(smpEnc, 8), "(expected: 00 04 31 2c 30 2a 30 05)")
 
   return {
     smpEncConfirmation: smpEnc,
