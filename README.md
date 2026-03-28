@@ -258,7 +258,7 @@ Each website visitor connects via a permanent contact address and receives their
 | LGET/LNK commands | smp-web spike | Link retrieval for connection setup |
 | Transmission framing | xftp-web | Block encoding/decoding with session auth |
 
-### Done (our work - Seasons 2-6)
+### Done (our work - Seasons 2-7)
 
 | Component | Season | Description |
 |:----------|:-------|:------------|
@@ -270,16 +270,17 @@ Each website visitor connects via a permanent contact address and receives their
 | Server infrastructure | S5 | Docker SMP server, Nginx WSS proxy, contact address |
 | Real server connectivity | S5 | 15 protocol fixes for SMP v6 compatibility, 485 tests total |
 | Connection request to SimpleX App | S6 | AgentInvitation with connReq URI, NaCl crypto_box, 12 protocol fixes, 493 tests |
+| Server upgrade + ALPN fix | S7 | PR #1738 server build, v6-18 over WebSocket, Nginx eliminated, 4096-bit RSA cert |
 
 ### To do (remaining work)
 
 | Component | Season | Description |
 |:----------|:-------|:------------|
-| Bidirectional messaging | S7 | Complete 7-step connection flow (Steps 4-7), Double Ratchet E2E, HELLO exchange |
-| Production polish | S8 | Animations, SharedWorker, IndexedDB persistence, accessibility |
-| Security hardening | S9 | CSP, SRI, Web Worker isolation, security review |
-| simplex-js library | S10 | Standalone npm package for SMP browser client |
-| GRP transport | S11+ | Noise protocol, ML-KEM-768, two-hop routing (future) |
+| v7+ auth + sndSecure + bidirectional messaging | S8 | v7+ command authorization (X25519 DH), sndSecure, Steps 4-7, Double Ratchet E2E |
+| Production polish | S9 | Animations, SharedWorker, IndexedDB persistence, accessibility |
+| Security hardening | S10 | CSP, SRI, Web Worker isolation, security review |
+| simplex-js library | S11 | Standalone npm package for SMP browser client |
+| GRP transport | S12+ | Noise protocol, ML-KEM-768, two-hop routing (future) |
 
 Full task breakdown: [docs/PROTOCOL.md](docs/PROTOCOL.md)
 
@@ -297,14 +298,15 @@ We develop in seasons - each with a clear goal, defined scope, and a protocol do
 | **S4** | Connection flow + X3DH + Double Ratchet (413 tests) | Complete |
 | **S5** | Chat UI + browser client + real server (485 tests) | Complete |
 | **S6** | Connection request to SimpleX App (493 tests) | Complete |
-| **S7** | Bidirectional messaging (Steps 4-7, Double Ratchet) | Next |
-| **S8** | Production polish (animations, persistence, accessibility) | Planned |
-| **S9** | Production hardening + security review | Planned |
-| **S10** | simplex-js npm library | Planned |
-| **S11+** | GRP profile, Noise transport, post-quantum, Triple Shield | Future |
+| **S7** | Server upgrade, ALPN fix, v6-18 over WebSocket | Complete |
+| **S8** | v7+ command auth, sndSecure, bidirectional messaging | Next |
+| **S9** | Production polish (animations, persistence, accessibility) | Planned |
+| **S10** | Production hardening + security review | Planned |
+| **S11** | simplex-js npm library | Planned |
+| **S12+** | GRP profile, Noise transport, post-quantum, Triple Shield | Future |
 
-**Critical path:** S1 DONE - S2 DONE - S3 DONE - S4 DONE - S5 DONE - S6 DONE - S7 - S8 - S9  
-**Parallel track:** S8 (polish) can run alongside S7  
+**Critical path:** S1 DONE - S2 DONE - S3 DONE - S4 DONE - S5 DONE - S6 DONE - S7 DONE - S8 - S9 - S10
+**Parallel track:** S9 (polish) can run alongside S8
 **GRP track:** Begins after SMP profile is production-ready
 
 Full season plan: [docs/seasons/SEASON-PLAN.md](docs/seasons/SEASON-PLAN.md)
@@ -357,6 +359,7 @@ GoChat/
 |       +-- SEASON-04-connection-flow.md # Season 4 learnings
 |       +-- SEASON-05-real-server.md # Season 5 learnings
 |       +-- SEASON-06-connection-request.md # Season 6 learnings
+|       +-- SEASON-07-server-upgrade.md  # Season 7 learnings
 +-- LICENSE                         # AGPL-3.0
 +-- README.md
 ```
@@ -461,7 +464,7 @@ We intend to contribute our WebSocket transport client and SMP command implement
 
 ## Status
 
-Seasons 1 through 6 are complete. Season 7 (bidirectional messaging) is next.
+Seasons 1 through 7 are complete. Season 8 (v7+ command authorization and bidirectional messaging) is next.
 
 | Component | Status |
 |:----------|:-------|
@@ -477,15 +480,19 @@ Seasons 1 through 6 are complete. Season 7 (bidirectional messaging) is next.
 | Chat panel UI (left-docked, responsive) | Done |
 | Browser client API + esbuild bundle | Done |
 | SMP server deployment (Docker + WebSocket) | Done |
-| Nginx WSS reverse proxy | Done |
+| Nginx WSS reverse proxy | Done (later eliminated in S7) |
 | Real server connectivity (15 protocol fixes) | Done (485 tests) |
 | Connection request to SimpleX App (12 fixes) | Done (493 tests) |
 | Security hardening roadmap | Done |
-| Bidirectional messaging (Steps 4-7) | Season 7 |
-| Production polish (animations, persistence) | Season 8 |
-| Security hardening + review | Season 9 |
-| simplex-js npm library | Season 10 |
-| GRP profile + post-quantum + Noise | Season 11+ |
+| Server upgrade + ALPN fix (PR #1738 build) | Done |
+| v6-18 over WebSocket (browser gets full protocol range) | Done |
+| Nginx eliminated (Docker direct TLS+WS on port 8444) | Done |
+| 4096-bit RSA Let's Encrypt certificate | Done |
+| v7+ command auth + sndSecure + bidirectional messaging | Season 8 |
+| Production polish (animations, persistence) | Season 9 |
+| Security hardening + review | Season 10 |
+| simplex-js npm library | Season 11 |
+| GRP profile + post-quantum + Noise | Season 12+ |
 
 ---
 
@@ -498,6 +505,7 @@ Seasons 1 through 6 are complete. Season 7 (bidirectional messaging) is next.
 | Security hardening roadmap | [docs/SECURITY-HARDENING-ROADMAP.md](docs/SECURITY-HARDENING-ROADMAP.md) |
 | Season plan | [docs/seasons/SEASON-PLAN.md](docs/seasons/SEASON-PLAN.md) |
 | Season 6 closing protocol | [docs/seasons/SEASON-06-connection-request.md](docs/seasons/SEASON-06-connection-request.md) |
+| Season 7 closing protocol | [docs/seasons/SEASON-07-server-upgrade.md](docs/seasons/SEASON-07-server-upgrade.md) |
 | SimpleGo main project | [github.com/saschadaemgen/SimpleGo](https://github.com/saschadaemgen/SimpleGo) |
 | SimpleGo documentation | [wiki.simplego.dev](https://wiki.simplego.dev) |
 | GoRelay documentation | [wiki.gorelay.dev](https://wiki.gorelay.dev) |
@@ -539,7 +547,7 @@ This project is a derivative work of SimpleXMQ by SimpleX Chat Ltd, licensed und
 
 ## Acknowledgments
 
-[SimpleX Chat](https://simplex.chat/) (SimpleX Messaging Protocol and simplexmq reference implementation) - [Evgeny Poberezkin](https://github.com/epoberezkin) (smp-web spike and WebSocket server support) - [@noble/hashes](https://github.com/paulmillr/noble-hashes) (SHA-256, SHA-512, HKDF) - [@noble/curves](https://github.com/paulmillr/noble-curves) (Ed25519, X25519, X448) - [@noble/ciphers](https://github.com/paulmillr/noble-ciphers) (XSalsa20-Poly1305, AES-256-GCM) - [tweetnacl](https://github.com/nicedayzhu/tweetnacl-js) (NaCl crypto_box for Season 6 connection request) - [zstd-codec](https://github.com/nicedayzhu/zstd-codec) (Zstd compression) - [SimpleGo Protocol Analysis Team](https://github.com/saschadaemgen/SimpleGo) (49 sessions of SMP reverse-engineering, critical wire format knowledge for Seasons 5 and 6)
+[SimpleX Chat](https://simplex.chat/) (SimpleX Messaging Protocol and simplexmq reference implementation) - [Evgeny Poberezkin](https://github.com/epoberezkin) (smp-web spike and WebSocket server support) - [PR #1738](https://github.com/simplex-chat/simplexmq/pull/1738) (WebSocket on SMP server port - ALPN fix enabling v6-18 for browser clients) - [@noble/hashes](https://github.com/paulmillr/noble-hashes) (SHA-256, SHA-512, HKDF) - [@noble/curves](https://github.com/paulmillr/noble-curves) (Ed25519, X25519, X448) - [@noble/ciphers](https://github.com/paulmillr/noble-ciphers) (XSalsa20-Poly1305, AES-256-GCM) - [tweetnacl](https://github.com/nicedayzhu/tweetnacl-js) (NaCl crypto_box for Season 6 connection request) - [zstd-codec](https://github.com/nicedayzhu/zstd-codec) (Zstd compression) - [SimpleGo Protocol Analysis Team](https://github.com/saschadaemgen/SimpleGo) (49 sessions of SMP reverse-engineering, critical wire format knowledge for Seasons 5, 6, and 7)
 
 ---
 

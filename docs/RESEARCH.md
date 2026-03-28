@@ -7,7 +7,7 @@
 <p align="center">
   <strong>Deep research on browser-native encrypted messaging, design patterns, and security.</strong><br>
   Dual-profile architecture: SMP for everyday use, GRP for high-security environments.<br>
-  Conducted during Season 1 planning phase, updated with Season 5 real-server findings.
+  Conducted during Season 1 planning phase, updated with Season 5, 6, and 7 findings.
 </p>
 
 ---
@@ -89,7 +89,7 @@ Every major encrypted messenger has converged on Rust crypto compiled to WASM:
 - **Signal Desktop**: Uses libsignal (Rust->WASM)
 - **Wire**: Uses core-crypto (Rust->WASM), encrypts IndexedDB with AES-256-GCM
 
-For GoChat's SMP profile: Pure TypeScript with noble libraries is simpler to ship. For the GRP profile: a WASM-compiled ML-KEM-768 implementation may be necessary because post-quantum algorithms are computationally heavier and more sensitive to side-channel attacks than classical algorithms. This decision will be revisited when the GRP profile enters active development (Season 10+).
+For GoChat's SMP profile: Pure TypeScript with noble libraries is simpler to ship. For the GRP profile: a WASM-compiled ML-KEM-768 implementation may be necessary because post-quantum algorithms are computationally heavier and more sensitive to side-channel attacks than classical algorithms. This decision will be revisited when the GRP profile enters active development (Season 12+).
 
 ### 2.5 Post-quantum cryptography in the browser (GRP profile)
 
@@ -111,7 +111,7 @@ During Seasons 4 and 5, the SimpleGo team (an independent C implementation of th
 |:----------|:------|:--------|
 | X448 (Curve448) | Double Ratchet key exchange, X3DH | @noble/curves/ed448 |
 | X25519 (Curve25519) | Per-queue NaCl crypto_box (Layer 1) | @noble/curves/ed25519 |
-| Ed25519 | SMP command authorization (signing) | @noble/curves/ed25519 |
+| Ed25519 | SMP command authorization (signing, v6) | @noble/curves/ed25519 |
 | AES-256-GCM | Double Ratchet body + header encryption | @noble/ciphers/aes |
 | XSalsa20-Poly1305 | NaCl crypto_box (SMP Layer 1) | @noble/ciphers |
 | NaCl crypto_box (nacl.box) | Per-queue E2E encryption (Layer 1) | tweetnacl |
@@ -147,25 +147,13 @@ Season 5 real-server testing revealed the exact Ed25519 signing requirements for
 signedData = [0x20][sessionId 32B] + [corrIdLen 1B][corrId 24B] + [entityIdLen 1B][entityId] + [command]
 ```
 
-The `[0x20]` byte (length prefix for the 32-byte sessionId) MUST be included in the signed data. This cost the SimpleGo team an entire day to discover. Their error progression:
-1. sign(corrId + entityId + cmd) - ERR AUTH
-2. sign(sessionId + corrId + entityId + cmd) - ERR AUTH
-3. sign([0x20] + sessionId + corrId + entityId + cmd) - SUCCESS
+The `[0x20]` byte (length prefix for the 32-byte sessionId) MUST be included in the signed data. This cost the SimpleGo team an entire day to discover.
 
 The @noble/curves ed25519 library accepts the 32-byte private key (seed) directly and expands it internally, which is compatible with libsodium's `crypto_sign_detached()` behavior.
 
-**SPKI format reminder:**
-- Ed25519 (OID `2b 65 70`): `30 2a 30 05 06 03 2b 65 70 03 21 00 [32B key]` = 44 bytes
-- X25519 (OID `2b 65 6e`): `30 2a 30 05 06 03 2b 65 6e 03 21 00 [32B key]` = 44 bytes
-
-The OID difference is ONE BYTE: `70` for Ed25519 (signing), `6e` for X25519 (DH). The SimpleGo team documented confusing these as a common early bug.
-
-The @noble ecosystem covers all required algorithms from a single audited source.
-
 ### 2.8 NaCl crypto_box architecture (Season 6)
 
-Season 6 real-server testing revealed a critical distinction between `nacl.box()` (tweetnacl)
-and raw `xsalsa20poly1305` (@noble/ciphers):
+Season 6 real-server testing revealed a critical distinction between `nacl.box()` (tweetnacl) and raw `xsalsa20poly1305` (@noble/ciphers):
 
 ```
 nacl.box(plaintext, nonce, peerPublicKey, ourPrivateKey):
@@ -174,20 +162,15 @@ nacl.box(plaintext, nonce, peerPublicKey, ourPrivateKey):
   3. XSalsa20-Poly1305: ciphertext = encrypt(symmetric_key, nonce, plaintext)
 ```
 
-Using `@noble/ciphers` xsalsa20poly1305 directly with the raw DH shared secret skips step 2
-(HSalsa20 key derivation), producing ciphertext that the peer cannot decrypt (A_CRYPTO error).
+Using `@noble/ciphers` xsalsa20poly1305 directly with the raw DH shared secret skips step 2 (HSalsa20 key derivation), producing ciphertext that the peer cannot decrypt (A_CRYPTO error).
 
-The HSalsa20 step exists because the raw DH output has non-uniform distribution. HSalsa20 acts
-as a key derivation function, producing a uniformly distributed symmetric key. This is part of
-Daniel Bernstein's original NaCl design.
+The HSalsa20 step exists because the raw DH output has non-uniform distribution. HSalsa20 acts as a key derivation function, producing a uniformly distributed symmetric key. This is part of Daniel Bernstein's original NaCl design.
 
-For GoChat, the fix was simple: use `nacl.box()` from tweetnacl instead of manually composing
-the cipher.
+For GoChat, the fix was simple: use `nacl.box()` from tweetnacl instead of manually composing the cipher.
 
 ### 2.9 AgentInvitation discovery (Season 6)
 
-Season 6 discovered that the SimpleX protocol uses two distinct agent message types for
-connection establishment, with completely different wire formats:
+Season 6 discovered that the SimpleX protocol uses two distinct agent message types for connection establishment, with completely different wire formats:
 
 | Property | AgentConfirmation (owner) | AgentInvitation (joiner) |
 |:---------|:--------------------------|:-------------------------|
@@ -198,17 +181,70 @@ connection establishment, with completely different wire formats:
 | connInfo | Ratchet-encrypted encConnInfo | Plaintext Tail bytes |
 | Encryption | Per-queue E2E + Ratchet | Per-queue E2E only |
 
-The contact address owner sends AgentConfirmation (as implemented by SimpleGo in Session 8).
-The joining party sends AgentInvitation (as discovered by GoChat in Season 6).
+The contact address owner sends AgentConfirmation (as implemented by SimpleGo in Session 8). The joining party sends AgentInvitation (as discovered by GoChat in Season 6).
 
-This distinction was not documented anywhere outside the Haskell source code. The definitive
-answer came from reading Agent/Client.hs:1654-1664 and Protocol.hs:800-801.
+This distinction was not documented anywhere outside the Haskell source code. The definitive answer came from reading Agent/Client.hs:1654-1664 and Protocol.hs:800-801.
 
-**Key implication for Season 7:** When the app accepts and responds, it sends an
-AgentConfirmation back. This IS Ratchet-encrypted and contains X448 keys for X3DH.
+**Key implication for Season 8:** When the app accepts and responds, it sends an AgentConfirmation back. This IS Ratchet-encrypted and contains X448 keys for X3DH.
 
-**Key implication for SimpleGo:** The SimpleGo team now has the complete joining-party
-protocol specification, enabling them to implement contact link scanning on the ESP32-S3.
+**Key implication for SimpleGo:** The SimpleGo team now has the complete joining-party protocol specification, enabling them to implement contact link scanning on the ESP32-S3.
+
+### 2.10 ALPN and protocol version negotiation (Season 7)
+
+Season 7 discovered that the SMP server uses TLS ALPN (Application-Layer Protocol Negotiation) to determine which protocol version range to advertise in the ServerHello handshake. This has critical implications for browser-based clients.
+
+**The Haskell code (Transport.hs:755):**
+
+```haskell
+smpVersionRange = maybe legacyServerSMPRelayVRange (const smpVRange) $ getSessionALPN c
+```
+
+**Translation:**
+- `getSessionALPN = Nothing` (no ALPN negotiated) -> v6-v6 only (legacy mode)
+- `getSessionALPN = Just _` (any ALPN negotiated) -> v6-v18 (full range)
+
+**The browser ALPN problem:**
+Native SimpleX clients send ALPN "smp/1" in the TLS ClientHello. The server recognizes this and offers the full protocol range. Browser WebSocket connections cannot set custom ALPN values - they always send "h2" or "http/1.1". On servers without PR #1738, the server sees no recognized ALPN and falls back to legacy v6-v6 mode.
+
+**The PR #1738 fix:**
+Evgeny's PR #1738 ("smp: allow websocket connections on the same port") extends the server's ALPN list to `["smp/1", "h2", "http/1.1"]`. When a browser connects and proposes "h2", the server matches it. Since `getSessionALPN` returns `Just "h2"` (not `Nothing`), the full v6-v18 range is advertised.
+
+| Connection type | ALPN result | Version range |
+|:----------------|:------------|:--------------|
+| Native TLS client (sends "smp/1") | `Just "smp/1"` | v6-v18 |
+| Browser WebSocket (legacy server) | `Nothing` | v6-v6 |
+| Browser WebSocket (PR #1738 server) | `Just "h2"` | v6-v18 |
+
+**Verification:** After deploying the PR #1738 server build, the browser console showed `ServerHello decoded, version=6-18` - confirming the fix works.
+
+**Why this matters:** Without the full protocol range, sndSecure (v9+) cannot be enabled in the NEW command. Without sndSecure, the CLI's SKEY command fails with AUTH. Without SKEY, the CLI never sends the AgentConfirmation. The ALPN fix is a prerequisite for the entire connection handshake to complete.
+
+### 2.11 SMP command authorization: v6 vs v7+ (Season 7)
+
+Season 7 discovered that SMP protocol versions 6 and 7+ use fundamentally different command authorization schemes. This was revealed when the browser negotiated v7 (after the ALPN fix enabled v6-18) and the server rejected NEW with AUTH.
+
+**v6 authorization (Ed25519 signatures):**
+```
+[sigLen=0x40][64B Ed25519 signature][sessIdLen=0x20][sessionId 32B][corrId][entityId][command]
+signedData = [0x20][sessionId] + [corrId] + [entityId] + [command]
+```
+
+**v7+ authorization (X25519 DH crypto_box):**
+```
+ClientHello includes: authPubKey (X25519 SPKI)
+Commands authorized via crypto_box instead of Ed25519 signatures
+```
+
+The transition is defined in PR #982 "smp: command authorization". Key changes:
+- ClientHello adds `authPubKey` (X25519), `proxyServer`, `clientService` fields
+- Commands use DH-based authorization instead of signature-based
+- The server DH key from ServerHello is used as the peer key
+
+**Impact on GoChat:** To negotiate v9+ (needed for sndSecure), GoChat must first implement v7+ command authorization. This is the primary task for Season 8. The current code caps maxSMPClientVersion to 6 as a temporary workaround.
+
+**SPKI format for v7+ auth key:**
+- X25519 (OID `2b 65 6e`): `30 2a 30 05 06 03 2b 65 6e 03 21 00 [32B key]` = 44 bytes
+- Same format as the DH key in the NEW command, but used for authorization, not queue encryption
 
 ---
 
@@ -244,21 +280,27 @@ This trust boundary affects both profiles equally. Even GRP's Noise + ML-KEM-768
 
 **The dual-profile architecture provides a natural escape from this limitation:** for communications where the browser trust boundary is unacceptable, the GRP profile with a SimpleGo hardware endpoint on the receiving side ensures that at least one party is running verified, non-server-delivered code. The browser side remains the weaker link, but the hardware side is fully controlled.
 
-### 3.3 TLS certificate challenge (resolved in Season 5)
+### 3.3 TLS certificate challenge (resolved in Seasons 5 and 7)
 
 SMP servers use self-signed certificate chains where the offline CA certificate hash is embedded in the server address (`smp://fingerprint@host`). Browsers reject WSS connections to servers with untrusted certificates.
 
-**Solution implemented in Season 5:** A standalone Nginx reverse proxy terminates TLS with a trusted Let's Encrypt certificate and forwards WebSocket connections to the SMP server's internal WebSocket port. The SMP server's own TLS (with self-signed certs) runs between Nginx and the SMP server on localhost.
+**Season 5 solution:** A standalone Nginx reverse proxy terminates TLS with a trusted Let's Encrypt certificate and forwards WebSocket connections to the SMP server's internal WebSocket port.
 
 ```
 Browser --WSS (LE cert)--> Nginx :8444 --WSS (self-signed)--> SMP :5225
 ```
 
+**Season 7 evolution:** PR #1738 enables the SMP server to handle HTTPS and WebSocket directly on port 443 via warp-tls + SNI detection. Nginx was eliminated entirely. Docker maps container port 443 to host port 8444. The server uses a 4096-bit RSA Let's Encrypt certificate for the HTTPS handler (separate from the self-signed SMP certificate on port 5223).
+
+```
+Browser --WSS (LE cert)--> Docker :8444 -> SMP :443 (warp-tls, handles TLS + WS + HTTP)
+```
+
+**Key requirement discovered in Season 7:** PR #1738's HTTPS handler requires 4096-bit RSA certificates. 2048-bit RSA is rejected with "unsupported HTTPS credentials". The Let's Encrypt certificate must be generated with `--rsa-key-size 4096`.
+
 The SMP server fingerprint from the contact address is used for application-layer identity verification (keyHash in ClientHello), not for TLS certificate validation. This means the browser trusts the Let's Encrypt certificate for transport, while the SMP protocol's own fingerprint check verifies the server identity independently of the CA chain.
 
-**Key implementation detail:** The Nginx proxy requires `proxy_ssl_conf_command Options UnsafeLegacyRenegotiation` because the SMP server's TLS implementation uses older renegotiation that modern OpenSSL rejects by default.
-
-For the GRP profile, this challenge does not apply in the same way. Noise Protocol uses the server's 32-byte Curve25519 public key as identity - no certificates, no CA chain, no expiry. The key IS the fingerprint. However, the initial WebSocket connection to the GoRelay server still needs a valid TLS certificate for the browser to accept the WSS upgrade. The Noise handshake then provides a second, independent encryption layer inside the WebSocket.
+For the GRP profile, this challenge does not apply in the same way. Noise Protocol uses the server's 32-byte Curve25519 public key as identity - no certificates, no CA chain, no expiry. The key IS the fingerprint.
 
 ### 3.4 WebSocket-specific attacks
 
@@ -314,24 +356,14 @@ For the GRP profile, reconnection must re-establish the Noise session (full hand
 
 GRP connections through GoRelay's two-hop routing add 5-15ms latency per hop for same-region servers. For messaging where delivery latency of 1-5 seconds is normal, this is imperceptible. The cover traffic generated by GoRelay (Poisson-distributed dummy messages) adds bandwidth overhead but no user-visible latency.
 
-### 4.4 WebSocket proxy architecture (Season 5 finding)
+### 4.4 WebSocket proxy architecture evolution (Seasons 5 and 7)
 
-Real-world deployment revealed that browsers cannot connect directly to SMP servers because:
+**Season 5 architecture (Nginx proxy):**
 
-1. SMP servers use self-signed certificates (browsers reject these for WSS)
-2. The SMP WebSocket port (5225) may not be directly accessible
-3. Corporate firewalls often block non-standard ports
-
-The proven architecture uses a reverse proxy:
+Real-world deployment revealed that browsers cannot connect directly to SMP servers with self-signed certificates. A reverse proxy was deployed:
 
 ```
 Browser --> WSS :8444 (Nginx, LE cert) --> HTTPS :5225 (SMP server, self-signed)
-```
-
-**Nginx as standalone process:** On servers managed by Plesk or similar panels, the system nginx is owned by the panel. A standalone nginx instance with its own config file and PID avoids conflicts:
-
-```bash
-nginx -c /etc/nginx/smp-proxy.conf   # Separate config, separate PID
 ```
 
 **Critical proxy settings for SMP binary protocol:**
@@ -343,12 +375,17 @@ nginx -c /etc/nginx/smp-proxy.conf   # Separate config, separate PID
 - `proxy_ssl_verify off` - accept SMP server's self-signed cert
 - `proxy_ssl_conf_command Options UnsafeLegacyRenegotiation` - SMP server uses older TLS
 
-**What does NOT work as a proxy:**
-- Apache mod_proxy_wstunnel: fails with "downstream server wanted client certificate" (SMP mutual TLS)
-- Nginx stream module (TCP proxy): WebSocket requires HTTP Upgrade, TCP proxy cannot handle it
-- Nginx with `proxy_pass http://`: SMP WebSocket port speaks TLS, not plain HTTP
+**Season 7 architecture (Nginx eliminated):**
 
-**Production TODO:** The standalone nginx process does not survive server reboots. Requires a systemd service for production deployment.
+PR #1738 enables the SMP server to handle HTTPS, WebSocket, and static file serving on port 443 via warp-tls with SNI-based routing. Nginx is no longer needed:
+
+```
+Browser --> WSS :8444 (Docker maps to container :443) --> SMP server (warp-tls, handles everything)
+```
+
+This architecture is simpler, eliminates the ALPN stripping problem (Nginx could not forward ALPN to the backend), and reduces the number of TLS handshakes from two (browser-to-Nginx + Nginx-to-SMP) to one (browser-to-SMP).
+
+**ALPN limitation of the Nginx approach:** Nginx HTTP module has no directive to set ALPN on backend TLS connections. `proxy_ssl_alpn` does not exist. `proxy_ssl_conf_command ALPNProtocols` is not a valid OpenSSL conf command. The stream module has ALPN support but cannot handle WebSocket upgrade (HTTP-level operation). This limitation was the primary reason Nginx was eliminated in favor of direct Docker port mapping.
 
 ---
 
@@ -363,8 +400,9 @@ Season 5's 15 protocol fixes against a real SMP v6.4.5.1 server produced a compr
 | SessionId in outgoing commands | Present (after signature) | Not present |
 | SessionId in incoming responses | Present (must skip when parsing) | Not present |
 | SessionId in signed data | Included with 0x20 length prefix | Included differently |
+| Command authorization | Ed25519 signatures | X25519 DH crypto_box |
 | NEW command | `"NEW " + authKey + dhKey + "S"` | May include basicAuth, sndSecure |
-| Field separators in commands | ShortString self-delimiting (no spaces) | May use spaces for some fields |
+| sndSecure in NEW | Not supported (CMD SYNTAX) | Supported at v9+ ("S T") |
 
 ### 5.2 Batch framing (mandatory since v4)
 
@@ -386,52 +424,96 @@ When connecting through a WSS reverse proxy, the sessionId behavior is asymmetri
 - **Incoming responses:** SessionId IS present (must skip 33 bytes: 1B length + 32B sessionId before reading corrId)
 - **Signed data:** SessionId IS included WITH its `0x20` length prefix
 
-This asymmetry exists because the SMP server computes sessionId from TLS channel binding (`tls-unique` per RFC 5929). Over WebSocket through a proxy, the TLS session between Nginx and the SMP server provides the sessionId. The server sends this value in the ServerHello, and the client must echo it back in every command.
+This asymmetry exists because the SMP server computes sessionId from TLS channel binding (`tls-unique` per RFC 5929). Over WebSocket through a proxy, the TLS session between Nginx and the SMP server provides the sessionId.
+
+**Note (Season 7):** With the PR #1738 architecture (no Nginx, browser connects directly to SMP server via warp-tls), the sessionId is 48 bytes instead of 32 bytes. The server also sends certificate chain and signed DH key in the ServerHello, which were absent in the legacy WebSocket-via-proxy mode.
 
 ### 5.4 SMP command authentication
 
 Every signed SMP command (NEW, SUB, KEY, ACK, DEL) carries its authentication in the wire format:
 
 ```
-[sigLen 1B] [signature sigLen bytes] [sessIdLen 1B] [sessionId 32B] [corrIdLen 1B] [corrId] [entityIdLen 1B] [entityId] [command]
+[sigLen 1B] [signature sigLen bytes] [sessIdLen 1B] [sessionId] [corrIdLen 1B] [corrId] [entityIdLen 1B] [entityId] [command]
 ```
 
 For unsigned commands: `sigLen = 0x00`, no signature bytes follow.
-For signed commands: `sigLen = 0x40` (64 bytes Ed25519 signature).
-
-The server verifies signatures using the public key associated with the queue. For NEW commands, the public key is extracted from the command body itself (the authKey parameter).
+For v6 signed commands: `sigLen = 0x40` (64 bytes Ed25519 signature).
+For v7+ signed commands: Different authorization scheme (X25519 DH crypto_box).
 
 ### 5.5 Length encoding conventions
 
 From the SimpleGo protocol analysis (Session 4, the #1 bug class with 8 occurrences):
 
 - **ShortString (1-byte length):** Used for keys, sessionId, corrId, entityId within transmissions
-- **Large (2-byte Word16 BE):** Used for ByteString fields in agent-level messages (emHeader, ehBody, etc.)
+- **Large (2-byte Word16 BE):** Used for ByteString fields in agent-level messages
 - **Word16 BE:** Used for version numbers, content lengths in block framing
-
-The SMP command body uses shortString (1-byte) for key fields. This is self-delimiting - the parser reads the length byte, then reads that many bytes for the value. No space separators needed between fields.
 
 ### 5.6 Error progression pattern
 
-Real-server debugging follows a predictable progression where each fix reveals the next layer:
+Real-server debugging follows a predictable progression:
 
 ```
 Network errors      -> Fix proxy/TLS/ports
-Decode errors       -> Fix wire format parsing  
+Decode errors       -> Fix wire format parsing
 ERR SESSION         -> Fix sessionId handling
 ERR CMD SYNTAX      -> Fix command body format
 ERR CMD NO_AUTH     -> Fix signature presence
-ERR AUTH            -> Fix signed data content
+ERR AUTH            -> Fix signed data content / authorization scheme
 IDS / OK            -> Command accepted!
 ```
 
-This pattern held exactly during Season 5's 15 fixes and mirrors the SimpleGo team's experience across 49 sessions.
+This pattern held exactly during Season 5's 15 fixes, Season 6's 12 fixes, and Season 7's v7 AUTH investigation.
 
 ---
 
-## 6. Design specifications
+## 6. SKEY, sndSecure, and Fast Duplex (Season 7)
 
-### 6.1 Premium design targets
+Season 7 investigated why the SimpleX CLI (v6.4.10) gets AUTH when accepting a GoChat invitation. The root cause chain spans three protocol layers.
+
+### 6.1 SKEY and Fast Duplex (v9+)
+
+Modern SimpleX clients (v6.4+) use Fast Duplex for connection establishment. When accepting a contact request, the CLI sends SKEY (sender key registration) BEFORE SEND (AgentConfirmation):
+
+```
+Step 1: CLI connects to GoChat's queue server (TLS handshake)
+Step 2: CLI sends SKEY on GoChat's queue (register sender auth key)
+Step 3: CLI sends SEND with AgentConfirmation (profile + reply queue)
+```
+
+If SKEY fails (AUTH), the CLI aborts immediately. The AgentConfirmation is never sent. This means the KEY command (v6 recipient-side alternative) cannot be used as a workaround because the CLI never gets far enough to send its sender key.
+
+SKEY is a v9+ command. It requires the queue to be created with sndSecure enabled.
+
+### 6.2 sndSecure in NEW command
+
+sndSecure is enabled by adding " T" (space + T) after the subscribeMode in the NEW command:
+
+```
+Without sndSecure (v6):    "NEW " [authKey] [dhKey] "S"        (95 bytes)
+With sndSecure (v9+):      "NEW " [authKey] [dhKey] "S T"      (97 bytes)
+```
+
+The space between "S" and "T" is critical. Without the space, the server reads "ST" as an unknown command. This was confirmed by the SimpleGo Protocol Team from the ABNF:
+
+```
+newCmd = "NEW " rcvPublicAuthKey rcvPublicDhKey [basicAuth] subscribeMode [sndSecure]
+subscribeMode = "S" / "C"
+sndSecure = " T"          <- note the leading space!
+```
+
+Additionally, the connReq URI must include `&k=s` to signal that the queue accepts SKEY.
+
+### 6.3 Why sndSecure fails on v6
+
+Even though the server binary internally supports v18, the negotiated protocol version determines which command parser is used. Negotiating v6 means the v6 parser runs, which has no sndSecure code. This was confirmed by three separate attempts (PRs #47, #49, #50), all producing CMD SYNTAX.
+
+To use sndSecure, the client must negotiate v9+. To negotiate v9+, the client must implement v7+ command authorization (X25519 DH instead of Ed25519 signatures).
+
+---
+
+## 7. Design specifications
+
+### 7.1 Premium design targets
 
 GoChat must achieve Intercom-level polish, not Chatwoot-level "it works".
 
@@ -452,7 +534,7 @@ GoChat must achieve Intercom-level polish, not Chatwoot-level "it works".
 | Send button | 40px circle, centered, accent color |
 | Transitions | 200-300ms ease-out, only transform + opacity for 60fps |
 
-### 6.2 Animation patterns
+### 7.2 Animation patterns
 
 - **Message appear:** fade + translateY(10px->0) at 200ms ease-out
 - **Panel open:** slideInLeft with 300ms ease
@@ -460,43 +542,33 @@ GoChat must achieve Intercom-level polish, not Chatwoot-level "it works".
 - **Typing indicator:** Three 8px dots with staggered animation-delay, scale(0.6)->scale(1) at 1.4s
 - **All animations must respect** `prefers-reduced-motion`
 
-### 6.3 The encryption indicator
+### 7.3 The encryption indicator
 
 GoChat's unique visual differentiator: A persistent lock icon with "End-to-end encrypted" badge, always visible. This is not just a feature - it is the brand. No competitor can match this.
 
 The encryption badge uses a shimmer animation matching the player cover art effect on the SimpleGo website, creating visual consistency across the design system.
 
-For the dual-profile architecture, the encryption indicator should also communicate which profile is active. When using the GRP profile, an additional visual element (such as a shield icon or "Post-quantum secured" label) signals the elevated security level. The user should always know whether they are on SMP (standard encryption, any server) or GRP (Noise + PQ, GoRelay only).
-
-### 6.4 Chat panel implementation (Season 5)
+### 7.4 Chat panel implementation (Season 5)
 
 The chat panel was implemented in Season 5 with the following architecture:
 
 - **CSS:** All classes prefixed with `gc-` to avoid conflicts with the existing SimpleGo design system
-- **JS:** Panel logic with mock/real mode detection. If `window.createBrowserClient` is available and a contact address is configured, real mode activates. Otherwise, demo messages show the UI.
+- **JS:** Panel logic with mock/real mode detection
 - **HTML:** Placed outside `#page-content` in the base template so the chat panel persists across SPA page navigation
-- **Integration:** "Chat" tab in the util-bar alongside "GitHub", replacing the old "Contact Us" link
+- **Integration:** "Chat" tab in the util-bar alongside "GitHub"
 
-### 6.5 Accessibility requirements
+### 7.5 Accessibility requirements
 
 - Chat container: `role="log"` with `aria-live="polite"`
 - All interactive elements: visible focus indicators + keyboard operability
 - Touch targets: minimum 44x44px
 - Color never the sole status indicator - always combine with icons or text
 
-### 6.6 UX anti-patterns to avoid
-
-Based on user complaints across all platforms:
-1. **Never auto-open** the chat widget - use subtle launcher with optional badge
-2. **Always provide** explicit "Talk to a human" button
-3. **Never lose** conversation history between sessions (IndexedDB solves this)
-4. **Never hide** the encryption status - transparency builds trust, especially when offering two security tiers
-
 ---
 
-## 7. Competitive analysis summary
+## 8. Competitive analysis summary
 
-### 7.1 Feature comparison
+### 8.1 Feature comparison
 
 | Feature | Intercom | Crisp | Chatwoot | GoChat (SMP) | GoChat (GRP) |
 |:--------|:---------|:------|:---------|:-------------|:-------------|
@@ -512,17 +584,7 @@ Based on user complaints across all platforms:
 | Mobile responsive | Yes | Yes | Yes | **Done** | **Planned** |
 | Multi-agent | Yes | Yes | Yes | **Planned** | **Planned** |
 
-### 7.2 Dual-profile positioning
-
-The dual-profile architecture gives GoChat a unique market position that no competitor can replicate without fundamental re-architecture:
-
-**SMP profile** competes with Chatwoot and open-source alternatives on features while adding E2E encryption as the key differentiator. The target audience is everyday businesses, communities, and personal use cases where "encrypted by default" is a selling point but the threat model does not include state-level adversaries.
-
-**GRP profile** has no direct competitors in the browser space. Signal, Matrix, and Wire offer strong E2E encryption but none provide post-quantum transport, mandatory multi-hop routing, or cover traffic in their web clients. The closest comparison would be using Tor Browser with a messaging app - but that requires a separate application and does not integrate into a website.
-
-The combination of both profiles in a single chat interface - selectable per connection - is unprecedented. A shop owner uses SMP for customer support. A journalist on the same website switches to GRP when contacting a source. Same UI, same codebase, fundamentally different security properties.
-
-### 7.3 Encrypted messenger comparison (beyond support chat)
+### 8.2 Encrypted messenger comparison
 
 | Feature | Signal Web | Element Web | Wire Web | GoChat (SMP) | GoChat (GRP) |
 |:--------|:-----------|:------------|:---------|:-------------|:-------------|
@@ -537,56 +599,47 @@ The combination of both profiles in a single chat interface - selectable per con
 
 ---
 
-## 8. Impact on GoChat season plan
+## 9. Key architectural decisions
 
-### New tasks identified from research
-
-- **WS-4:** SharedWorker for WebSocket connection pool management (both profiles)
-- **SEC-1:** Content Security Policy implementation (strict, no eval)
-- **SEC-2:** Subresource Integrity for all external scripts
-- **SEC-3:** Web Worker isolation for crypto operations
-- **SEC-4:** Security documentation - transparent trust boundary communication
-- **SEC-5:** TLS certificate strategy (Let's Encrypt + SMP fingerprint at app layer) - RESOLVED in Season 5
-- **UI-6:** Intercom-level animation system (panel, messages, typing, launcher)
-- **UI-7:** Encryption indicator design and placement (with profile-aware display)
-- **UI-8:** Accessibility audit (WCAG 2.1 AA compliance)
-
-### Key architectural decisions
-
-- **Dual-profile architecture:** SMP for everyday use, GRP for high-security. Both profiles share the same chat UI and the same ChatTransport interface abstraction. This is the single most important architectural decision in Season 1.
-- **Crypto library:** Use @noble/curves + @noble/ciphers + @noble/hashes for both profiles. The @noble family covers SMP needs (X25519, NaCl) and GRP needs (ChaCha20-Poly1305, BLAKE2s) from a single audited source.
-- **Post-quantum:** Defer ML-KEM-768 browser implementation to GRP development (Season 10+). No mature, audited JS implementation exists yet. Evaluate @noble/post-quantum vs WASM when the time comes.
-- **Design ambition:** Target Intercom-level polish, not "functional minimum". The encryption badge is the brand.
-- **WebSocket architecture:** SharedWorker layer for tab persistence, managing connections to both SMP and GoRelay servers.
-- **ChatTransport interface from day one:** All transport code goes through the abstract interface. This ensures GRP can be added later without touching application-level code.
-- **GRP as extension, not replacement:** GoChat does not replace SimpleX. It fills the browser gap. The GRP profile extends the SimpleX ecosystem for high-security environments via GoRelay's dual-protocol bridge.
-- **X448 for Ratchet, X25519 for NaCl:** Verified via SimpleGo team. Two different elliptic curves for two different encryption layers. This is non-negotiable - the SimpleX app expects X448 for ratchet parameters.
-- **Agent envelope format:** Confirmed by SimpleGo team from actual packet captures: agentVersion=7, 'C' confirmation tag, e2e version v3-v3 with X448 SPKI keys (68 bytes each, OID 1.3.101.111).
-- **Zstd always required:** Even the first connection request uses zstd compression for connInfo. Verified by SimpleGo team.
-- **Nginx WSS proxy for browser TLS:** Resolved in Season 5. Standalone Nginx process with Let's Encrypt cert terminates browser TLS, forwards to SMP server's internal WebSocket port. Self-signed SMP cert accepted by Nginx with verify off.
-- **SMP v6 wire format:** Fully documented in Season 5 through 15 protocol fixes. SessionId asymmetry, batch framing, Ed25519 signing with sessionId in signed data - all verified against real server.
-- **AgentInvitation for joining party:** Confirmed from Haskell source (Season 6). The joining party sends AgentInvitation ('I' + PHEmpty '_' + connReq URI), NOT AgentConfirmation ('C' + PHConfirmation 'K'). This is non-negotiable - sending the wrong type causes A_MESSAGE.
-- **nacl.box() for NaCl encryption:** Use tweetnacl's nacl.box() instead of composing DH + xsalsa20poly1305 manually. The HSalsa20 key derivation step is essential and easy to miss with manual composition.
-- **connReq URI for queue info:** The joining party's queue information goes into a URI string (simplex:/invitation#/?...) inside the AgentInvitation, not into a binary SMPQueueInfo structure. The URI contains smp= (queue address with dh= and q=m) and e2e= (x3dh= with two X448 keys).
-
-### Modified decisions from initial planning
-
-- **Crypto library:** Use @noble/curves + @noble/ciphers instead of direct Web Crypto API
-- **Post-quantum (SMP):** sntrup761 deferred - no mature JS implementation. GRP uses ML-KEM-768 instead (NIST FIPS 203, Go stdlib available server-side).
+### From Season 1 (planning)
+- **Dual-profile architecture:** SMP for everyday use, GRP for high-security
+- **Crypto library:** @noble/curves + @noble/ciphers + @noble/hashes for both profiles
+- **ChatTransport interface from day one**
 - **Design ambition:** Target Intercom-level polish, not "functional minimum"
-- **WebSocket architecture:** Add SharedWorker layer for tab persistence
-- **Transport abstraction:** ChatTransport interface mandatory from the first line of transport code
-- **TLS strategy:** Nginx reverse proxy with LE cert (Season 5) instead of configuring SMP server with LE directly
-- **Season scope:** Season 5 shifted from E2E hardening to real-server connectivity (correct decision - exposed 15 bugs mocks could not catch)
+- **GoChat extends SimpleX, does not replace it**
+
+### From Season 4 (verified by SimpleGo team)
+- **X448 for Ratchet, X25519 for NaCl:** Two different curves for two different layers
+- **Agent envelope format:** agentVersion=7, 'C' tag, e2e v3-v3 with X448 SPKI keys
+- **Zstd always required:** Even the first connection request uses zstd for connInfo
+
+### From Season 5 (real server)
+- **Nginx WSS proxy for browser TLS:** Standalone Nginx with LE cert (later eliminated in S7)
+- **SMP v6 wire format:** SessionId asymmetry, batch framing, Ed25519 signing
+
+### From Season 6 (connection request)
+- **AgentInvitation for joining party:** Tag 'I' + PHEmpty '_' + connReq URI
+- **nacl.box() for NaCl encryption:** Use tweetnacl, not manual DH + xsalsa20poly1305
+- **connReq URI for queue info:** URI string, not binary SMPQueueInfo
+
+### From Season 7 (server upgrade)
+- **PR #1738 server build:** Required for browser WebSocket to get v6-18 protocol range
+- **Nginx eliminated:** Docker direct port mapping (8444->443), SMP server handles TLS+WS+HTTP
+- **4096-bit RSA required:** PR #1738's HTTPS handler rejects 2048-bit RSA
+- **maxSMPClientVersion capped at 6:** Temporary workaround until v7+ auth is implemented
+- **v7+ auth before sndSecure:** Must implement X25519 DH authorization to negotiate v9+ for sndSecure
+- **SKEY before SEND:** CLI sends SKEY first, aborts if it fails - no workaround via KEY
 
 ---
 
-## 9. References
+## 10. References
 
 | Topic | Source |
 |:------|:-------|
 | SMP Protocol Specification | simplex-chat/simplexmq protocol/simplex-messaging.md |
 | SMP Server Hosting Guide | simplex.chat/docs/server.html |
+| PR #1738 (WebSocket on same port) | github.com/simplex-chat/simplexmq/pull/1738 |
+| PR #982 (v7+ command authorization) | github.com/simplex-chat/simplexmq/pull/982 |
 | Noble Cryptography | paulmillr.com/noble/ |
 | Ed25519 in Chrome | blogs.igalia.com (February 2025, August 2025) |
 | Matrix Nebuchadnezzar Vulns | nebuchadnezzar-megolm.github.io |
@@ -594,21 +647,11 @@ The combination of both profiles in a single chat interface - selectable per con
 | Wire core-crypto | github.com/wireapp/core-crypto |
 | Browser E2E Encryption Overview | thomasbandt.com/browser-based-end-to-end-encryption-overview |
 | OWASP WebSocket Security | cheatsheetseries.owasp.org |
-| WebSocket Reconnection Guide | websocket.org/guides/reconnection/ |
 | Chatwoot | github.com/chatwoot/chatwoot |
-| Chat UI Design Patterns 2025 | bricxlabs.com/blogs/message-screen-ui-design |
-| CSS Chat Box Templates | wpdean.com/css-chat-box/ |
-| W3C ARIA role=log | w3.org/WAI/WCAG21/Techniques/aria/ARIA23 |
 | Noise Protocol Framework | noiseprotocol.org |
 | NIST FIPS 203 (ML-KEM) | csrc.nist.gov/pubs/fips/203/final |
-| WireGuard Noise Implementation | wireguard.com/protocol/ |
 | GoRelay Architecture | docs/ARCHITECTURE_AND_SECURITY.md (internal) |
-| GoRelay Noise vs TLS Research | docs/research/03-noise-vs-tls.md (internal) |
-| GoRelay PQ Landscape Research | docs/research/04-post-quantum-landscape.md (internal) |
-| GoRelay Cover Traffic Research | docs/research/05-cover-traffic.md (internal) |
-| GoRelay Two-Hop Routing Research | docs/research/06-dual-relay-routing.md (internal) |
-| GoRelay Triple Shield Research | docs/research/12-triple-shield.md (internal) |
-| SimpleGo Protocol Analysis | github.com/saschadaemgen/SimpleGo docs/protocol-analysis/ (49 sessions) |
+| SimpleGo Protocol Analysis | github.com/saschadaemgen/SimpleGo (49 sessions) |
 
 ---
 
@@ -617,7 +660,8 @@ The combination of both profiles in a single chat interface - selectable per con
 | Date | Change |
 |------|--------|
 | 2026-03-25 | Initial research document. Comprehensive analysis of browser crypto, security, design, and competitive landscape. |
-| 2026-03-25 | Dual-profile update. Added GRP security context throughout, expanded competitive analysis with dual-profile positioning, added post-quantum browser crypto section, referenced GoRelay research documents, updated architectural decisions with ChatTransport interface and dual-profile as key Season 1 decision. |
-| 2026-03-25 | Season 4 crypto verification. Added Section 2.6 documenting all crypto algorithms confirmed by SimpleGo team. X448 mandatory for ratchet, X25519 for NaCl Layer 1 only. Added X3DH variant details and agent confirmation format. Updated architectural decisions with three new verified findings. |
-| 2026-03-26 | Season 5 real-server findings. Added Section 2.7 (Ed25519 signing for SMP v6). Added Section 4.4 (WebSocket proxy architecture). Added Section 5 (SMP v6 protocol findings - batch framing, sessionId asymmetry, command authentication, length encoding, error progression). Updated Section 3.3 with implemented TLS solution (Nginx WSS proxy). Updated Section 6.1 design specs with implemented panel design (left-docked). Added Section 6.4 (chat panel implementation). Updated competitive analysis (mobile responsive: Done). Updated architectural decisions with Nginx proxy and v6 wire format findings. Added SimpleGo Protocol Analysis to references. |
-| 2026-03-28 | Season 6 findings. Added Section 2.8 (NaCl crypto_box architecture - HSalsa20 key derivation). Added Section 2.9 (AgentInvitation vs AgentConfirmation discovery). Added tweetnacl to algorithm table. Added three new architectural decisions. |
+| 2026-03-25 | Dual-profile update. Added GRP security context throughout, expanded competitive analysis. |
+| 2026-03-25 | Season 4 crypto verification. Added Section 2.6 documenting all crypto algorithms. |
+| 2026-03-26 | Season 5 real-server findings. Added Section 2.7, 4.4, 5. Updated Section 3.3 with Nginx TLS solution. |
+| 2026-03-28 | Season 6 findings. Added Section 2.8 (NaCl crypto_box) and 2.9 (AgentInvitation). |
+| 2026-03-28 | Season 7 findings. Added Section 2.10 (ALPN and protocol version negotiation), Section 2.11 (v6 vs v7+ command authorization), Section 6 (SKEY, sndSecure, Fast Duplex). Updated Section 3.3 (TLS cert challenge resolved with PR #1738, Nginx eliminated). Updated Section 4.4 (WebSocket proxy architecture evolution). Updated Section 5.1 (v7+ auth differences). Added Season 7 architectural decisions. Added PR #1738 and PR #982 to references. |

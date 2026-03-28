@@ -11,12 +11,12 @@
 
 ---
 
-**Project:** GoChat - Browser-Native Encrypted Messenger  
-**Parent project:** [SimpleGo](https://github.com/saschadaemgen/SimpleGo)  
-**Ecosystem:** SimpleGo (hardware) / GoRelay (relay server) / GoChat (browser client)  
-**Date:** 2026-03-25  
-**Branch analyzed:** `ep/smp-web-spike` on `simplex-chat/simplexmq`  
-**Status:** Season 6 complete, Season 7 (bidirectional messaging) next
+**Project:** GoChat - Browser-Native Encrypted Messenger
+**Parent project:** [SimpleGo](https://github.com/saschadaemgen/SimpleGo)
+**Ecosystem:** SimpleGo (hardware) / GoRelay (relay server) / GoChat (browser client)
+**Date:** 2026-03-28
+**Branch analyzed:** `ep/smp-web-spike` on `simplex-chat/simplexmq`
+**Status:** Season 7 complete, Season 8 (v7+ command auth + bidirectional messaging) next
 
 ---
 
@@ -134,7 +134,7 @@ Website visitor (browser)          GoRelay Server           Receiving end
         |    Two-hop routing           |    Cover traffic       |  SimpleGo hardware
         |    Cover traffic             |                        |  (ESP32-S3)
         |<-- WSS + GRP ----------------|<-- GRP relay ----------|
-        |                               |                        |
+        |                              |                        |
 ```
 
 ### 3.3 What makes GRP different from SMP
@@ -164,8 +164,8 @@ interface ChatTransport {
   close(): void
 }
 
-// Season 2-8: SMPWebSocketTransport implements ChatTransport
-// Season 9+:  GRPWebSocketTransport implements ChatTransport
+// Season 2-9: SMPWebSocketTransport implements ChatTransport
+// Season 12+: GRPWebSocketTransport implements ChatTransport
 ```
 
 The ChatTransport abstraction ensures:
@@ -215,7 +215,8 @@ When all active, defeating a GoChat-to-SimpleGo communication requires simultane
 | Component | Status | Location | Notes |
 |-----------|--------|----------|-------|
 | SMP server with all commands | DONE | `src/Simplex/Messaging/` | NEW, SUB, SEND, MSG, ACK, KEY, DEL, LGET, LNK |
-| WebSocket on port 443 | DONE | PR #1738, merged 2026-03-20 | Browser WS and native TLS on same port via SNI routing |
+| WebSocket on port 443 | DONE | PR #1738, 2026-03-20 | Browser WS and native TLS on same port via SNI routing |
+| ALPN fix for browser WebSocket | DONE | PR #1738 | Server ALPN list includes "h2"/"http/1.1", browser gets v6-18 |
 | Contact address / short links | DONE | Protocol level | Permanent contact address for support team |
 | XFTP file transfer | DONE | Separate protocol | Could be used for file attachments later |
 | TLS + identity verification | DONE | Server handshake | Ed25519 certificate chain verification |
@@ -268,212 +269,86 @@ These modules are already battle-tested in the live file transfer tool at `simpl
 
 ### 5.1 Layer 1: WebSocket SMP transport client (CRITICAL PATH)
 
-**Priority:** Highest - everything else depends on this.
+**Priority:** Completed in Seasons 2-3.
 
-The xftp-web client uses HTTP/2 POST requests for transport. SMP messaging requires a persistent bidirectional connection (for receiving messages in real-time). PR #1738 added WebSocket support to the SMP server. We need a browser-side WebSocket client that mirrors the existing HTTP/2 transport interface.
-
-All transport code must implement the `ChatTransport` interface defined in section 3.4.
+All transport code implements the `ChatTransport` interface defined in section 3.4.
 
 **Tasks:**
 
 - [x] **WS-1:** Create `smp-web/src/transport.ts` - WebSocket transport class
-  - Implement `ChatTransport` interface
-  - Connect to `wss://server:443` with SNI header for WS routing
-  - Implement the SMP block-based framing over WebSocket binary messages
-  - Handle connection lifecycle: open, close, error, reconnect
-  - Implement heartbeat/keepalive (SMP PING/PONG)
-  - Support concurrent send + async receive (SUB delivers MSG at any time)
-
 - [x] **WS-2:** Create `smp-web/src/client.ts` - SMP client with handshake
-  - Adapt the XFTP handshake flow for SMP protocol
-  - SMP uses TLS-level handshake (different from XFTP HTTP-level handshake)
-  - Version negotiation with `compatibleVRange`
-  - Session ID extraction for transmission encoding
-
 - [x] **WS-3:** Connection pooling and reconnect
-  - Reuse the `XFTPClientAgent` pattern from xftp-web
-  - Auto-reconnect with exponential backoff (500ms base, 2x multiplier, 30s cap, 50-100% jitter)
-  - Re-subscribe to queues after reconnect
-  - Use `navigator.onLine` and `visibilitychange` for network-aware behavior
-  - After 12 attempts (~2 minutes): show "Connection lost" with manual reconnect
-
 - [ ] **WS-4:** SharedWorker for tab persistence
-  - Create `smp-web/src/shared-worker.ts` - SharedWorker managing WebSocket connection pool
-  - Maintain chat state across tab switches and SPA navigation
-  - Architecture: Browser Tab(s) <-> SharedWorker (WS Pool + Reconnection + Queue) <-> SMP Servers
-  - IndexedDB integration for persistent message queue and encrypted key store
-  - Disable `permessage-deflate` compression (encrypted payloads are incompressible)
-  - Use binary WebSocket frames (not text) to avoid 33% Base64 overhead
-  - Multiplex multiple SMP queues over a single WebSocket per server
 
 ### 5.1b Browser client and real-server connectivity (Season 5)
 
 **Priority:** Completed in Season 5.
 
-Season 5 shifted scope from E2E encryption hardening to real-server connectivity. The original E2E tasks (E2E-1 through E2E-6) remain for a future season. Season 5 built the complete pipeline from browser to real SMP server, including chat UI, browser client API, server infrastructure, and 15 protocol fixes for SMP v6 compatibility.
-
 **Tasks:**
 
 - [x] **BC-1:** Browser client API (`browser-client.ts`)
-  - `createBrowserClient(config)` factory with connect/send/disconnect
-  - Wraps ConnectionManager with callbacks (onMessage, onStatusChange, onError)
-  - Detects real vs mock mode based on available dependencies
-  - 16 unit tests, 24 integration tests
-
 - [x] **BC-2:** Browser bundle (esbuild)
-  - IIFE format with `window.createBrowserClient` export
-  - Single-file `gochat-client.js` (~211KB)
-  - `npm run build:browser` script
-  - CRITICAL: esbuild.config.mjs gets overwritten by rebases - must be IIFE, not ESM
-
 - [x] **BC-3:** Browser client integration tests
-  - 24 tests across 7 scenarios (lifecycle, reconnect, errors, rapid sends, idempotency)
-  - Uses MockSMPServer from Season 3/4
-  - Tests _agent injection for testability
-
 - [x] **CHAT-1:** Chat panel UI
-  - chat.css: 380px panel, left-docked flush, responsive, gc- prefix, animations, prefers-reduced-motion
-  - chat.js: panel logic, mock/real mode detection, window.GoChat public API
-  - base.njk: chat HTML in base template (outside #page-content for SPA persistence)
-  - Design: incoming bubbles with cyan border, outgoing with accent color + 2px tail corner
-  - Encryption badge with shimmer animation
-  - Mobile: full-screen below 768px
-
 - [x] **INFRA-1:** SMP server deployment
-  - Docker: `simplexchat/smp-server:latest` v6.4.5.1
-  - Host: smp.simplego.dev (194.164.197.247)
-  - Port 5223: native TLS, Port 5225: WebSocket
-  - Fingerprint: `7qw4hvuS-PvTHbotgtg_xiwrhFUk_s1q2upUQrGIWow=`
-
 - [x] **INFRA-2:** Nginx WSS reverse proxy
-  - Standalone nginx on port 8444, TLS termination with Let's Encrypt cert
-  - proxy_ssl with UnsafeLegacyRenegotiation for SMP backend
-  - Config: `/etc/nginx/smp-proxy.conf`
-
 - [x] **INFRA-3:** Contact address setup
-  - SimpleX Desktop app test profile with own SMP server
-  - Contact address embedded in base.njk via data attributes
-
 - [x] **PROTO-1 through PROTO-15:** Real server protocol fixes
-  - 15 PRs (#19 through #33) fixing SMP v6 wire format compatibility
-  - Fixes: IIFE bundle, URL decode, ServerHello certs, WebSocket URL, frame reassembly, v6 sessionId (in/out), txCount batching, keyHash, response dispatch, session wire format, NEW command syntax, Ed25519 signing, sessionId in signed data
-  - Result: NEW command accepted, IDS response received (queue created on real server)
-  - Critical assistance from SimpleGo protocol analysis team (49 sessions of SMP reverse-engineering)
-
-### 5.2 Layer 2: SMP command implementation
-
-**Priority:** High - needed for any message exchange.
-
-The SMP protocol has well-defined commands. We need TypeScript encoders/decoders matching the Haskell implementation in `Simplex.Messaging.Protocol`.
-
-**Reference:** `src/Simplex/Messaging/Protocol.hs` in simplexmq (lines ~1629-2203 for encoding/decoding).
-
-**Tasks:**
-
-- [x] **CMD-1:** Queue creation commands
-  - `NEW` - Create a new message queue (recipient side)
-  - Response: `IDS` containing recipientId, senderId, server DH public key
-
-- [x] **CMD-2:** Sender commands
-  - `SEND` - Send a message to a queue
-  - `SKEY` - Provide sender's public key for authenticated sending
-  - Response: `OK` or `ERR`
-
-- [x] **CMD-3:** Recipient commands
-  - `SUB` - Subscribe to a queue (start receiving messages)
-  - `ACK` - Acknowledge message receipt
-  - `KEY` - Rotate recipient key
-  - `DEL` - Delete a queue
-  - Event: `MSG` - Incoming message delivery (async, pushed by server)
-
-- [x] **CMD-4:** Connection link commands (partially done)
-  - `LGET` - Get link data (DONE in spike)
-  - `LNK` - Link response parsing (DONE in spike)
-  - `LSND` - Send data via link (for connection request)
-
-- [x] **CMD-5:** Utility commands
-  - `PING` / `PONG` - Keepalive
-  - Response error types: `AUTH`, `QUOTA`, `NO_MSG`, `CMD`, `INTERNAL`
-
-### 5.3 Layer 3: Connection management (SMP Agent logic)
-
-**Priority:** High - orchestrates the queue pair setup.
-
-This implements the "duplex connection over simplex queues" pattern. In Haskell this is the SMP Agent (`Simplex.Messaging.Agent`). We need a minimal browser-side version.
-
-**Tasks:**
-
-- [x] **CONN-1:** Contact address parsing
-  - Parse SimpleX contact address URI (both simplex:/ and https:// formats, short links v6.4+ and legacy)
-  - Extract server address, public key, and connection parameters
-  - Decode base64url-encoded key material
-  - Discriminated union output: short link vs full link
-
-- [x] **CONN-2:** Connection state machine
-  - States: NEW -> QUEUE_CREATED -> PENDING -> CONFIRMED -> CONNECTED -> CLOSED (+ ERROR)
-  - Validated transitions via lookup table
-  - Event emitter for state change listeners
-  - Transition history tracking
-
-- [x] **CONN-3:** Queue pair creation
-  - Generate Ed25519 + X25519 + X448 key pairs
-  - Create recipient queue on SMP server (NEW command)
-  - ConnectionManager orchestrating parse -> keygen -> createQueue -> state transition
-
-- [x] **CONN-4:** Connection request with full crypto stack
-  - X3DH modified 4-DH key agreement (4x X448 DH + HKDF-SHA512 "SimpleXX3DH")
-  - Double Ratchet initialization + first encrypt (AES-256-GCM, HKDF-SHA256)
-  - Agent confirmation envelope (agentVersion=7, X448 SPKI keys, e2e v3)
-  - SMP confirmation with NaCl Layer 1 (XSalsa20-Poly1305)
-  - connInfo as zstd-compressed JSON (ChatMessage v1-16, x.info event)
-  - SKEY + SEND to contact queue, state -> PENDING
 
 ### 5.1c Connection request to SimpleX App (Season 6)
 
 **Priority:** Completed in Season 6.
 
-Season 6 achieved the first successful connection request from browser to SimpleX App. The
-key discovery was that the joining party must send an AgentInvitation (tag 'I', PHEmpty '_'),
-not an AgentConfirmation (tag 'C', PHConfirmation 'K'). 12 protocol fixes were applied,
-resolving both A_CRYPTO and A_MESSAGE errors. The SimpleX App now displays "Website Visitor -
-New contact request" when GoChat connects.
-
 **Tasks:**
 
 - [x] **INV-1:** AgentInvitation builder (`invitation.ts`)
-  - PHEmpty '_' private header (1 byte, no Ed25519 auth key)
-  - AgentInvitation encoding: agentVersion(7) + 'I' + Large(connReq URI) + Tail(connInfo JSON)
-  - connReq URI: `simplex:/invitation#/?v=2-7&smp=...&e2e=...`
-  - NaCl crypto_box encryption via tweetnacl nacl.box()
-  - Padding to 15904 bytes, encrypted body 15920 bytes, SEND body 15992 bytes
-
 - [x] **INV-2:** connReq URI builder
-  - SMP queue URI: `smp://FINGERPRINT@HOST:5223/QUEUE_ID#/?v=1-4&dh=X25519_SPKI&q=m`
-  - E2E params: `v=2-3&x3dh=X448_KEY1,X448_KEY2` (two X448 SPKI keys, base64url, comma separated)
-  - Agent version range: v=2-7
-  - All values URL-encoded within the fragment
-
 - [x] **INV-3:** NaCl encryption fix
-  - Replaced raw xsalsa20poly1305 with nacl.box() (tweetnacl)
-  - nacl.box() includes HSalsa20 key derivation step that raw cipher lacks
-  - First contact uses plaintext encConnInfo (no Ratchet - peer X448 keys unavailable)
-
 - [x] **INV-4:** 12 protocol fixes
-  - 2x A_CRYPTO resolved (HSalsa20, plaintext encConnInfo)
-  - 8+ A_MESSAGE resolved (message type, URI format, version ranges, key params)
-  - Result: SimpleX App shows "Website Visitor - New contact request"
+
+### 5.1d Server upgrade and ALPN fix (Season 7)
+
+**Priority:** Completed in Season 7.
+
+Season 7 discovered and resolved the root cause chain preventing the SimpleX CLI from accepting GoChat invitations. The CLI sends SKEY (sender key registration, v9+ Fast Duplex) before SEND. SKEY failed with AUTH because the queue had no sndSecure, which requires v9+ negotiation. The server only offered v6 over WebSocket because browser connections lack ALPN "smp/1", causing the server to fall back to legacy v6-only mode.
+
+The fix required building the SMP server from Evgeny's unmerged PR #1738, which extends the server's ALPN list to include "h2" and "http/1.1". This allows browser WebSocket connections to get the full v6-18 protocol range. The infrastructure was overhauled: Nginx was eliminated, Docker maps port 443 directly to host port 8444, and a 4096-bit RSA Let's Encrypt certificate was generated for the HTTPS handler.
+
+**Tasks:**
+
+- [x] **S7-1:** Identify SKEY as AUTH root cause (CLI debug logging)
+- [x] **S7-2:** Identify ALPN as version-range root cause (SimpleGo team + Haskell source)
+- [x] **S7-3:** Test sndSecure on v6 (3 attempts, all CMD SYNTAX - v6 parser limitation)
+- [x] **S7-4:** Upgrade server to v6.5.0-beta.6 (still v6-v6 over WebSocket)
+- [x] **S7-5:** Find and analyze PR #1738 source code
+- [x] **S7-6:** Build SMP server from PR #1738 branch (Haskell Docker build)
+- [x] **S7-7:** Deploy with 4096-bit RSA Let's Encrypt cert
+- [x] **S7-8:** Eliminate Nginx, Docker direct port mapping (8444->443)
+- [x] **S7-9:** Verify v6-18 over WebSocket (confirmed in browser console)
+- [x] **S7-10:** Cap maxSMPClientVersion to 6 (v7 auth not yet implemented)
+
+### 5.2 Layer 2: SMP command implementation
+
+**Priority:** Completed in Season 3.
+
+- [x] **CMD-1:** Queue creation commands (NEW/IDS)
+- [x] **CMD-2:** Sender commands (SEND/SKEY)
+- [x] **CMD-3:** Recipient commands (SUB/ACK/KEY/DEL/MSG)
+- [x] **CMD-4:** Connection link commands (LGET/LNK/LSND)
+- [x] **CMD-5:** Utility commands (PING/PONG/ERR)
+
+### 5.3 Layer 3: Connection management (SMP Agent logic)
+
+**Priority:** Completed in Season 4.
+
+- [x] **CONN-1:** Contact address parsing
+- [x] **CONN-2:** Connection state machine
+- [x] **CONN-3:** Queue pair creation
+- [x] **CONN-4:** Connection request with full crypto stack
 
 ### 5.4 Layer 4: End-to-end encryption
 
-> **Note:** These tasks were originally planned for Season 5 but were deferred when the season scope shifted to real-server connectivity. They remain the next priority for completing the bidirectional messaging flow.
-
-**Priority:** High - messages must be encrypted.
-
-SimpleX uses Double Ratchet (Signal protocol) for E2E encryption with X3DH key agreement. For a support chat MVP, we start with NaCl box encryption per-message and upgrade to Double Ratchet later.
-
-All crypto operations run in a dedicated Web Worker, isolated from the main thread (see SEC-3).
-
-**Tasks:**
+**Priority:** High - Season 8.
 
 - [ ] **E2E-1:** Ratchet receive side (decrypt incoming messages)
 - [ ] **E2E-2:** Symmetric ratchet step (advance chain on each message)
@@ -485,255 +360,90 @@ All crypto operations run in a dedicated Web Worker, isolated from the main thre
 
 ### 5.5 Layer 5: Chat UI (GoChat frontend)
 
-**Priority:** Medium - can be built in parallel with protocol work.
+**Priority:** Medium - partially done in Season 5, remaining tasks in Season 9.
 
-GoChat must achieve Intercom-level polish, not Chatwoot-level "it works". The encryption indicator is the brand differentiator - always visible, always prominent.
-
-**Tasks:**
-
+- [x] **CHAT-1:** Chat panel UI (Season 5)
 - [ ] **UI-1:** Nose-bar integration
-  - Add chat icon to nose-bar (similar to player idle state)
-  - Show unread message count badge
-  - Toggle chat panel open/close (reuse player panel pattern)
-
-- [ ] **UI-2:** Chat panel
-  - Panel width: 380px (350-400px range), height: 520-550px (100vh on mobile)
-  - Message bubbles: outgoing (right, accent color) / incoming (left, card bg)
-  - Bubble border-radius: 18px (4px on tail corner), max-width: 70-75% of container
-  - Text input with send button
-  - Auto-scroll to latest message
-  - Typing indicator (optional)
-  - Connection status indicator (connecting / connected / offline)
-
-- [ ] **UI-3:** Chat state management
-  - Store message history in IndexedDB
-  - Restore chat on page reload (reconnect to existing queues)
-  - "New conversation" button to start fresh
-  - Clear chat history option
-
-- [ ] **UI-4:** Mobile responsive
-  - Full-screen chat panel on mobile (< 768px)
-  - Touch-friendly message input (minimum 44x44px touch targets)
-  - Adapt to existing SimpleGo mobile breakpoints
-
-- [ ] **UI-5:** SPA router integration
-  - Chat state persists across page navigation (SPA router)
-  - WebSocket connection survives route changes (via SharedWorker)
-  - Panel state (open/closed) persists
-
-- [ ] **UI-6:** Intercom-level animation system
-  - Message appear: fade + translateY(10px->0) at 200ms ease-out
-  - Panel open: scale(0.9->1) + opacity(0->1) + translateY(20->0) with transform-origin: bottom right
-  - Typing indicator: three 8px dots with staggered animation-delay, scale(0.6)->scale(1) at 1.4s
-  - Launcher morph: chat bubble to X/close icon with 300ms rotation
-  - Launcher button: 56px circular FAB, bottom-right, 20px margin
-  - Transitions: 200-300ms ease-out, only transform + opacity for 60fps
-  - All animations must respect `prefers-reduced-motion`
-
-- [ ] **UI-7:** Encryption badge design
-  - Persistent lock icon with "End-to-end encrypted" badge, always visible in the chat panel header
-  - This is GoChat's unique visual differentiator - the brand, not just a feature
-  - Profile indicator showing whether current connection uses SMP or GRP
-  - No competitor can match this claim
-
-- [ ] **UI-8:** Accessibility (WCAG 2.1 AA compliance)
-  - Chat container: `role="log"` with `aria-live="polite"`
-  - All interactive elements: visible focus indicators + keyboard operability
-  - Touch targets: minimum 44x44px
-  - Color never the sole status indicator - always combine with icons or text
-  - Dark mode: background #121212 (never pure black - causes halation), text #E0E0E0 (never pure white)
-  - Message font: 14px, system font stack, 1.5 line-height
-  - Message spacing: 16px between senders, 2-4px within same sender
+- [ ] **UI-2 through UI-8:** Remaining UI tasks
 
 ### 5.6 Layer 6: Browser security hardening
 
-**Priority:** High - browser E2E encryption is only as strong as its weakest security surface.
-
-XSS is the existential threat to browser-based encryption. A single XSS vulnerability defeats ALL encryption by intercepting plaintext before encryption or after decryption. The 2022 Matrix "Nebuchadnezzar" vulnerabilities demonstrated this in practice. The September 2025 npm supply chain attack (chalk, debug, ansi-styles - 1 billion+ weekly downloads) is a stark reminder that dependency minimization is security-critical.
-
-**Tasks:**
+**Priority:** High - Season 10.
 
 - [ ] **SEC-1:** Content Security Policy implementation
-  - Strict CSP: `script-src 'self'` - no eval, no inline scripts
-  - No dynamic code execution of any kind
-  - CSP headers enforced server-side, not just meta tags
-  - Report-URI for CSP violation monitoring
-
 - [ ] **SEC-2:** Subresource Integrity for all external scripts
-  - SRI hashes on every `<script>` and `<link>` tag loading external resources
-  - Fail closed: if SRI check fails, the resource does not load
-  - Automated SRI hash generation as part of the build pipeline
-
 - [ ] **SEC-3:** Web Worker isolation for crypto operations
-  - Dedicated Web Worker for all cryptographic operations
-  - Main thread never touches plaintext key material
-  - Worker communicates with main thread via structured clone (postMessage)
-  - Isolates crypto from XSS on the main thread - even if the main thread is compromised, the Worker's memory is separate
-
-- [ ] **SEC-4:** Security documentation - transparent trust boundary communication
-  - Document the server-delivered code trust boundary honestly
-  - Unlike native apps distributed through signed app stores, web applications reload from the server on every visit
-  - A compromised or malicious server can serve different code to different users
-  - Mitigations: reproducible builds, SRI hashes, potentially browser extension-based code verification
-  - This limitation must be visible in the UI and documentation, not hidden
-
-- [ ] **SEC-5:** TLS certificate strategy
-  - SMP servers use self-signed certificate chains where the offline CA certificate hash is embedded in the server address (`smp://fingerprint@host`)
-  - Browsers reject WSS connections to servers with untrusted certificates
-  - Solution: GoChat's SMP servers must use standard CA-signed certificates (Let's Encrypt) for the TLS layer
-  - SMP's own DH key exchange provides a second encryption envelope independent of the TLS CA chain
-  - The SMP server fingerprint verification happens at the application layer, not the TLS layer
-  - Token-based WebSocket authentication (not cookies) to eliminate CSWSH attacks entirely
+- [ ] **SEC-4:** Security documentation
+- [ ] **SEC-5:** TLS certificate strategy (partially resolved in S5/S7)
 
 ### 5.7 Layer 7: Deployment and operations
 
-**Tasks:**
-
-- [ ] **OPS-1:** SMP server deployment
-  - Deploy `smp-server` on VPS (Docker or systemd)
-  - Configure WebSocket support (enabled by default after PR #1738)
-  - Set up TLS certificate (Let's Encrypt)
-  - Configure `static_path` for web files
-
-- [ ] **OPS-2:** Contact address setup
-  - Create support team profile in SimpleX app
-  - Generate permanent contact address
-  - Configure auto-accept for incoming connections
-  - Embed contact address in GoChat website config
-
+- [x] **OPS-1:** SMP server deployment (S5, upgraded S7)
+- [x] **OPS-2:** Contact address setup (S5)
 - [ ] **OPS-3:** Monitoring
-  - SMP server health checks
-  - Queue count monitoring
-  - Connection error tracking in browser (optional analytics)
 
-### 5.8 Layer 8: GRP transport (future - Season 9+)
-
-**Priority:** After SMP profile is production-ready.
-
-These tasks define the GRP profile implementation. They are documented here for architectural completeness but will not be worked on until the SMP profile ships.
-
-**Tasks:**
+### 5.8 Layer 8: GRP transport (future - Season 12+)
 
 - [ ] **GRP-1:** Noise Protocol transport
-  - Implement `GRPWebSocketTransport` conforming to `ChatTransport` interface
-  - Primary pattern: `Noise_IK_25519_ChaChaPoly_BLAKE2s` (server key pre-known via URI)
-  - Fallback pattern: `Noise_XX` for first-contact scenarios
-  - Protocol identifier: "GRP/1" as the Prologue
-  - No cipher negotiation - fixed suite per protocol version
-  - Rekeying every 2-5 minutes or every 1000 messages
-  - Browser implementation via noble/ciphers (ChaCha20-Poly1305) and noble/curves (X25519)
-
 - [ ] **GRP-2:** Mandatory post-quantum key exchange
-  - Hybrid X25519 + ML-KEM-768 (FIPS 203) key exchange
-  - ML-KEM-768 targets NIST Security Level 3 (AES-192 equivalent)
-  - Not optional, cannot be disabled - if ML-KEM component fails, handshake aborts
-  - Combination via HKDF: ML-KEM secret first (FIPS ordering), then X25519 secret
-  - Browser implementation: evaluate @noble/post-quantum or WASM-compiled ML-KEM
-  - Total handshake overhead: ~2,336 bytes (vs 64 bytes for X25519 alone) - negligible for messaging
-
 - [ ] **GRP-3:** Two-hop relay routing
-  - Every GRP message passes through two relay servers
-  - Relay A sees sender IP but not destination queue
-  - Relay B sees destination queue but not sender IP
-  - Neither server alone can link sender to recipient
-  - SMP commands: PFWD (client to Relay A), RFWD (A to B), RRES (B to A), PRES (A to client)
-  - Per-message ephemeral key for s2d encryption prevents cross-queue correlation
-  - Requires minimum two GoRelay servers in different jurisdictions
-
-- [ ] **GRP-4:** Triple Shield integration (Phase 6 of GoRelay)
-  - 6a: Zero-Knowledge Queue Authentication (Schnorr DLOG via Fiat-Shamir, ~100 bytes proof)
-  - 6b: Shamir's Secret Sharing 2-of-3 across servers (information-theoretic security)
-  - 6c: Steganographic Transport (Pluggable Transports: HTTPS, WebSocket, meek, obfs4)
-  - Each component independently deployable and independently useful
-  - Full Triple Shield: all eight defense layers must be broken simultaneously
+- [ ] **GRP-4:** Triple Shield integration
 
 ---
 
 ## 6. Implementation roadmap
 
-### Phase 1: Foundation (Season 2-3)
+### Phase 1: Foundation (Season 2-3) - COMPLETE
 
-**Goal:** Browser can connect to SMP server and exchange raw messages.
+### Phase 2: Connection flow (Season 4) - COMPLETE
 
-1. Implement WebSocket transport client with ChatTransport interface (WS-1, WS-2)
-2. Connection pooling and reconnect (WS-3)
-3. Implement core SMP commands: NEW, SUB, SEND, ACK (CMD-1 to CMD-3)
-4. Basic NaCl encryption for messages (E2E-2 MVP)
-5. Test: send a message from browser, receive in SimpleX CLI
+### Phase 3: Chat UI and real-server connectivity (Season 5) - COMPLETE
 
-### Phase 2: Connection flow (Season 4)
+### Phase 3b: Connection request (Season 6) - COMPLETE
 
-**Goal:** Website visitor can connect to support team via contact address.
+### Phase 3c: Server upgrade and ALPN fix (Season 7)
 
-1. Contact address parsing (CONN-1)
-2. Connection initiation flow (CONN-2, CONN-3)
-3. Connection state persistence in browser (CONN-4)
-4. Deploy SMP server on VPS (OPS-1, OPS-2)
-5. Test: full connection flow from browser to SimpleX mobile app
+**Goal:** Resolve the AUTH error when the CLI accepts GoChat's invitation by enabling the full SMP protocol range (v6-18) over WebSocket.
 
-### Phase 3: Chat UI and real-server connectivity (Season 5)
+**Status: COMPLETE (Season 7)**
 
-**Goal:** Chat UI integrated, browser client connects to real SMP server.
+1. Identified SKEY as the immediate cause of AUTH (CLI debug logging)
+2. Identified ALPN as the root cause of v6-only over WebSocket
+3. Tested sndSecure on v6 (3 PRs, all CMD SYNTAX - v6 parser limitation)
+4. Found PR #1738 "smp: allow websocket connections on the same port"
+5. Built SMP server from PR #1738 Haskell source
+6. Deployed with 4096-bit RSA Let's Encrypt certificate
+7. Eliminated Nginx, Docker direct port mapping (8444->443)
+8. Verified: browser now gets ServerHello v6-18, negotiates v6
+9. Capped maxSMPClientVersion to 6 (v7 auth not yet implemented)
+10. Result: NEW/IDS/SEND/OK all working on new server infrastructure
 
-**Status: COMPLETE (Season 5)**
+### Phase 3d: v7+ command auth and bidirectional messaging (Season 8)
 
-1. Chat panel UI with left-docked design, responsive, animations (CHAT-1)
-2. Browser client API wrapping ConnectionManager (BC-1, BC-2, BC-3)
-3. SMP server deployed with WebSocket support (INFRA-1)
-4. Nginx WSS reverse proxy for browser TLS (INFRA-2)
-5. Contact address from own server (INFRA-3)
-6. 15 protocol fixes for SMP v6 real-server compatibility (PROTO-1:15)
-7. Result: Browser creates queue on real SMP server (NEW -> IDS)
-8. Test count: 485 tests across 19 files
+**Goal:** Implement v7+ command authorization (X25519 DH), negotiate v9+, enable sndSecure, complete Steps 4-7 of the connection flow.
 
-### Phase 3b: Connection request (Season 6)
+1. Implement v7+ command authorization (X25519 DH instead of Ed25519 signatures)
+2. Increase maxSMPClientVersion to 9+ (unlocks sndSecure in NEW parser)
+3. Enable sndSecure "S T" in NEW command + `&k=s` in connReq URI
+4. CLI SKEY succeeds, AgentConfirmation arrives
+5. SUB on own queue to receive AgentConfirmation
+6. Decrypt AgentConfirmation (X3DH + Double Ratchet)
+7. Exchange HELLO messages (both directions)
+8. Achieve CON state - bidirectional encrypted messaging
 
-**Goal:** Send a connection request from the browser that the SimpleX App recognizes and displays.
-
-**Status: COMPLETE (Season 6)**
-
-1. Send AgentInvitation to contact queue (NaCl crypto_box, connReq URI)
-2. SimpleX App receives and displays "New contact request"
-3. 12 protocol fixes (A_CRYPTO, A_MESSAGE errors)
-4. Key discovery: joining party sends AgentInvitation ('I'), not AgentConfirmation ('C')
-5. Security hardening roadmap created
-6. Result: Steps 1-3 of 7-step flow complete
-7. Test count: 493 tests across 19 files
-
-### Phase 3c: Bidirectional messaging (Season 7)
-
-**Goal:** Complete the 7-step SimpleX connection flow (Steps 4-7) so browser and SimpleX app can exchange messages.
-
-1. Fix AUTH error when app accepts connection request
-2. Receive and process connection confirmation (AgentConfirmation with X3DH)
-3. Initialize Double Ratchet with peer's X448 keys
-4. Exchange HELLO messages (both directions)
-5. Achieve CON ("CONNECTED") state
-6. Bidirectional encrypted messaging via Double Ratchet
-7. Remove debug console.log statements
-8. Nginx proxy persistence (systemd service)
-
-### Phase 4: Hardening (Season 7-8)
+### Phase 4: Hardening (Season 9-10)
 
 **Goal:** Production-ready encrypted support chat.
 
 1. Browser security hardening: CSP, SRI, Web Worker isolation (SEC-1 to SEC-5)
-2. Upgrade to X3DH key agreement (E2E-1)
-3. Implement Double Ratchet for forward secrecy (E2E-2 full)
-4. Reconnection handling and offline message queue
-5. Error handling and user-facing error states
-6. Performance optimization and bundle size
-7. Security review and documentation (SEC-4)
+2. Production polish: animations, SharedWorker, IndexedDB persistence
+3. Error handling and user-facing error states
+4. Performance optimization and bundle size
+5. Security review and documentation (SEC-4)
 
-### Phase 5: GRP profile (Season 9+)
+### Phase 5: GRP profile (Season 12+)
 
 **Goal:** High-security communication via GoRelay.
-
-1. Noise Protocol transport (GRP-1)
-2. Post-quantum key exchange (GRP-2)
-3. Two-hop relay routing (GRP-3)
-4. Cover traffic integration
-5. Triple Shield components (GRP-4)
 
 ---
 
@@ -747,18 +457,11 @@ Each SMP transmission is a fixed-size block (16,384 bytes) with '#' padding (0x2
 [auth: ByteString] [corrId: ByteString] [entityId: ByteString] [command: raw bytes]
 ```
 
-- `auth`: Authenticator (empty for unsigned transmissions)
-- `corrId`: Correlation ID (matches response to request)
-- `entityId`: Queue ID (identifies which queue the command targets)
-- `command`: SMP command tag + parameters
-
-Encoding uses length-prefixed byte strings (1-byte length for short, 2-byte for large).
-
 ### 7.2 Existing code map
 
 ```
 GoChat/
-  smp-web/                          # SMP browser client (spike + our work)
+  smp-web/
     src/
       index.ts                      # Re-exports all public API
       types.ts                      # ChatTransport interface, SMP types
@@ -777,7 +480,8 @@ GoChat/
       agent-envelope.ts             # Agent confirmation encoding (S4)
       connection-request.ts         # Connection request builder + zstd (S4)
       browser-client.ts             # High-level browser API (S5)
-      __tests__/                    # 485 tests across 19 files
+      invitation.ts                 # AgentInvitation builder (S6)
+      __tests__/                    # 493 tests across 19 files
 
 +-- src/assets/css/chat.css         # Chat panel styles (S5, lives in SimpleGo www)
 +-- src/assets/js/chat.js           # Chat panel logic (S5, lives in SimpleGo www)
@@ -786,34 +490,24 @@ GoChat/
   xftp-web/                         # Shared infrastructure (upstream)
     src/
       client.ts                     # HTTP/2 transport, handshake, retry logic
-      agent.ts                      # File transfer agent (download orchestration)
-      download.ts                   # Chunk decryption
       protocol/
         encoding.ts                 # Binary encoding (Decoder, encode/decodeBytes, etc.)
         transmission.ts             # Block framing, session auth
         handshake.ts                # Client/server handshake, version negotiation
-        commands.ts                 # XFTP commands (FNEW, FPUT, FGET, etc.)
-        address.ts                  # Server address parsing
-        description.ts              # File description parsing
-        chunks.ts                   # Chunk management
-        client.ts                   # Protocol-level client types
       crypto/
         keys.ts                     # X25519 key generation + DH
         secretbox.ts                # NaCl XSalsa20-Poly1305
         identity.ts                 # Ed25519 server identity verification
         digest.ts                   # SHA-256 / SHA-512
-        padding.ts                  # Block padding
-        file.ts                     # File encryption (AES-256-GCM)
 
   docs/
     PROTOCOL.md                     # This file
     RESEARCH.md                     # Browser crypto, security, design research
+    SECURITY-HARDENING-ROADMAP.md   # Six-phase browser security hardening plan
     seasons/
       SEASON-PLAN.md                # Season overview and workflow
-      SEASON-01-planning.md         # Season 1 closing protocol
-      SEASON-02-transport.md        # Season 2 closing protocol
-      SEASON-03-commands.md         # Season 3 closing protocol
-      SEASON-04-connection-flow.md  # Season 4 closing protocol
+      SEASON-01 through 06          # Season closing protocols
+      SEASON-07-server-upgrade.md   # Season 7 closing protocol
 ```
 
 ### 7.3 Dependencies
@@ -828,20 +522,19 @@ GoChat/
 | `typescript` | ^5.4.0 | Build tooling |
 | `ws` | ^8.0.0 | WebSocket (dev/test only, browser uses native WebSocket) |
 
-### 7.4 SMP command reference (to implement)
+### 7.4 SMP command reference
 
 | Command | Direction | Format | Purpose |
 |---------|-----------|--------|---------|
-| `NEW` | Client -> Server | `NEW <rcvPubKey> <dhPubKey>` | Create new queue |
+| `NEW` | Client -> Server | `NEW <rcvPubKey> <dhPubKey> <subscribeMode> [sndSecure]` | Create new queue |
 | `IDS` | Server -> Client | `IDS <rcvId> <sndId> <srvDhPubKey>` | Queue IDs response |
 | `SUB` | Client -> Server | `SUB` (entityId = queueId) | Subscribe to queue |
 | `KEY` | Client -> Server | `KEY <sndKey>` | Set sender key on queue |
+| `SKEY` | Client -> Server | `SKEY <sndKey>` | Sender registers own key (v9+) |
 | `SEND` | Client -> Server | `SEND <msgFlags> <msgBody>` | Send message |
 | `MSG` | Server -> Client | `MSG <msgId> <ts> <msgFlags> <msgBody>` | Receive message (async push) |
 | `ACK` | Client -> Server | `ACK <msgId>` | Acknowledge receipt |
 | `DEL` | Client -> Server | `DEL` | Delete queue |
-| `LGET` | Client -> Server | `LGET` (entityId = linkId) | Get link data |
-| `LNK` | Server -> Client | `LNK <sndId> <encFixedData> <encUserData>` | Link data response |
 | `PING` | Client -> Server | `PING` | Keepalive |
 | `PONG` | Server -> Client | `PONG` | Keepalive response |
 | `OK` | Server -> Client | `OK` | Success |
@@ -854,19 +547,24 @@ Documented during 15 protocol fixes against real SMP v6.4.5.1 server, with criti
 **ServerHello (WebSocket mode - no certs):**
 ```
 [2B contentLen][versionMin 2B][versionMax 2B][sessIdLen 1B][sessionId 32B]['#' padding]
-Example: 00 25 00 06 00 06 20 [32B sid] 23 23...
 ```
 
-**ClientHello:**
+**ServerHello (PR #1738 WebSocket mode - with certs):**
+```
+[2B contentLen][versionMin 2B][versionMax 2B][sessIdLen 1B][sessionId 48B][NonEmpty certs][signedKey]['#' padding]
+```
+Note: sessionId is 48 bytes on PR #1738 server (vs 32 bytes on legacy WebSocket port). Certificate chain and signed DH key are present because the server handles TLS directly.
+
+**ClientHello (v6):**
 ```
 [2B contentLen][version 2B][keyHashLen 1B][keyHash 32B]['#' padding]
-keyHash = SHA256 of server CA certificate SPKI (from contact address fingerprint)
 ```
 
-**Batch framing (mandatory since v4):**
+**ClientHello (v7+):**
 ```
-[2B contentLen BE][1B txCount][2B txLen BE][transmission]['#' padding to 16384]
+[2B contentLen][version 2B][keyHashLen 1B][keyHash 32B][authPubKey][proxyServer][clientService]['#' padding]
 ```
+v7+ adds authPubKey (X25519 SPKI) for DH-based command authorization. This replaces Ed25519 signature-based auth.
 
 **v6 command transmission:**
 ```
@@ -887,24 +585,15 @@ The 0x20 length prefix before sessionId MUST be included. Without it: ERR AUTH.
 ```
 "NEW " [0x2C][44B Ed25519 SPKI authKey][0x2C][44B X25519 SPKI dhKey]"S"
 ```
-No spaces between fields. No basicAuth. No sndSecure. Keys use 1-byte shortString prefix.
+No spaces between fields. No basicAuth. No sndSecure on v6. Keys use 1-byte shortString prefix.
 
-**v6 response transmission (incoming):**
+**v9+ NEW command with sndSecure:**
 ```
-[sessIdLen=0x20][32B sessionId][corrIdLen][corrId][entityIdLen][entityId][response]
+"NEW " [0x2C][44B authKey][0x2C][44B dhKey] "S T"
 ```
-SessionId present in responses for v6 (implySessId=false). Must skip before reading corrId.
+Space between subscribeMode "S" and sndSecure "T". Total 97 bytes. Requires v9+ negotiation. Creates queue with `sk=` ready for SKEY registration.
 
-**SPKI key formats:**
-- Ed25519 (OID 2b 65 70): `30 2a 30 05 06 03 2b 65 70 03 21 00 [32B key]` = 44 bytes
-- X25519 (OID 2b 65 6e): `30 2a 30 05 06 03 2b 65 6e 03 21 00 [32B key]` = 44 bytes
-
-**Asymmetric v6 sessionId behavior (WebSocket):**
-- Outgoing commands: sessionId NOT sent (server reads from TLS channel binding via proxy)
-- Incoming responses: sessionId IS present (must skip when parsing)
-- Signing: sessionId IS included in signed data with 0x20 length prefix
-
-**AgentInvitation wire format (Season 6 - joining party to contact queue):**
+**AgentInvitation wire format (Season 6):**
 
 ```
 ClientMessage:
@@ -916,23 +605,36 @@ ClientMessage:
   [N+1+]   UTF-8 bytes        connInfo JSON (Tail, no length prefix)
 ```
 
-connReq URI format:
+### 7.6 ALPN and protocol version negotiation (Season 7)
+
+**The ALPN problem and fix:**
+
+The SMP server uses TLS ALPN to decide which protocol version range to advertise:
+
+```haskell
+smpVersionRange = maybe legacyServerSMPRelayVRange (const smpVRange) $ getSessionALPN c
 ```
-simplex:/invitation#/?v=2-7
-  &smp=smp://FINGERPRINT@HOST:5223/QUEUE_ID#/?v=1-4&dh=X25519_SPKI_BASE64&q=m
-  &e2e=v=2-3&x3dh=X448_KEY1_BASE64,X448_KEY2_BASE64
-```
 
-**Critical: AgentInvitation vs AgentConfirmation:**
-- Joining party (scanning a link): AgentInvitation ('I') with PHEmpty ('_')
-- Contact address owner (responding): AgentConfirmation ('C') with PHConfirmation ('K')
-- These are completely different structures - sending the wrong one causes A_MESSAGE
+| Connection type | ALPN result | Version range |
+|:----------------|:------------|:--------------|
+| Native TLS client (sends "smp/1") | `Just "smp/1"` | v6-v18 (full) |
+| Browser WebSocket (legacy server) | `Nothing` | v6-v6 (legacy) |
+| Browser WebSocket (PR #1738 server) | `Just "h2"` | v6-v18 (full) |
 
-**NaCl crypto_box note:**
-`nacl.box()` = DH(X25519) + HSalsa20(key derivation) + XSalsa20-Poly1305(encryption).
-Using raw XSalsa20-Poly1305 without HSalsa20 produces wrong ciphertext and causes A_CRYPTO.
+PR #1738 extends the server's ALPN list to `["smp/1", "h2", "http/1.1"]`. When a browser connects and proposes "h2", the server matches it. Since `getSessionALPN` returns `Just "h2"` (not `Nothing`), the full v6-v18 range is advertised.
 
-### 7.6 GRP cipher suite reference (for documentation, not code yet)
+**v7+ command authorization (Season 8 prerequisite):**
+
+v6 uses Ed25519 signatures for command authorization. v7+ uses X25519 DH-based authorization (crypto_box). The transition is defined in PR #982 "smp: command authorization":
+
+- ClientHello includes `authPubKey` (X25519 SPKI)
+- Commands are authorized via crypto_box instead of Ed25519 signatures
+- The server DH key from ServerHello is used as the peer key
+- Per-command ephemeral keys may be used
+
+To use sndSecure, the client must negotiate v9+ which requires implementing v7+ auth first.
+
+### 7.7 GRP cipher suite reference (for documentation, not code yet)
 
 ```
 GRP/1 cipher suite (non-negotiable):
@@ -955,40 +657,34 @@ GRP/1 cipher suite (non-negotiable):
 | Risk | Impact | Likelihood | Mitigation |
 |------|--------|------------|------------|
 | SimpleX changes smp-web API before release | High | Medium | Pin to specific commit, contribute upstream |
+| v7+ command auth complexity | Medium | Medium | Reference PR #982, Evgeny's code on ep/smp-web |
 | Double Ratchet implementation complexity | Medium | High | Start with NaCl box MVP, upgrade later |
-| WebSocket blocked by corporate firewalls | Medium | Low | HTTP/2 long-polling fallback (future), GRP stego transport |
-| Browser crypto performance on mobile | Low | Low | Web Crypto API is hardware-accelerated |
-| SimpleX app UX for support team | Low | Medium | Desktop app handles multiple chats well |
+| WebSocket blocked by corporate firewalls | Medium | Low | HTTP/2 long-polling fallback (future) |
+| PR #1738 not merged upstream | Low | Medium | We build from source, can track changes |
 
 ### 8.2 Browser-specific security risks
 
 | Risk | Impact | Likelihood | Mitigation |
 |------|--------|------------|------------|
-| XSS defeating all encryption | Critical | Medium | Strict CSP, SRI, Web Worker isolation, minimal dependencies (SEC-1 to SEC-3) |
-| Server-delivered code manipulation | Critical | Low | Reproducible builds, SRI hashes, transparent documentation (SEC-4) |
-| npm supply chain attack | High | Medium | @noble-only crypto (minimal deps), lockfile pinning, SRI verification (SEC-2) |
-| Cross-Site WebSocket Hijacking | High | Low | Token-based auth (not cookies), no ambient credentials (SEC-5) |
-| SMP self-signed certs rejected by browser | High | Certain | Let's Encrypt for TLS layer, SMP fingerprint at app layer (SEC-5) |
-| IndexedDB key material extraction | Medium | Low | Non-extractable CryptoKey objects, AES-256-GCM encryption at rest (E2E-3) |
-| Tab/session state loss | Medium | Medium | SharedWorker persistence, IndexedDB message queue (WS-4) |
+| XSS defeating all encryption | Critical | Medium | Strict CSP, SRI, Web Worker isolation |
+| Server-delivered code manipulation | Critical | Low | Reproducible builds, SRI hashes |
+| npm supply chain attack | High | Medium | @noble-only crypto, lockfile pinning |
+| Cross-Site WebSocket Hijacking | High | Low | Token-based auth (not cookies) |
+| Let's Encrypt cert renewal | Medium | Low | certbot auto-renewal, manual cert copy to Docker |
 
 ---
 
 ## 9. Open questions
 
-1. **Upstream contribution:** Should we contribute our WebSocket transport client back to the `smp-web` package? This aligns with AGPL-3.0 obligations and could get review from the SimpleX team.
+1. **v7+ auth implementation:** How exactly does X25519 DH-based command authorization work? Need to study PR #982 and Evgeny's ep/smp-web code.
 
-2. **Server choice:** Self-hosted SMP server vs using SimpleX's public servers? Self-hosted gives full control but requires maintenance. Public servers are free but we trust SimpleX infrastructure.
+2. **Upstream contribution:** Should we contribute our WebSocket transport client back to the `smp-web` package?
 
-3. **Message persistence:** How long should chat history persist in the browser? Options: session-only (cleared on tab close), 24 hours, persistent until manually cleared.
+3. **Server choice:** Self-hosted SMP server vs using SimpleX's public servers?
 
-4. **Bot integration:** Should we add automated responses for common questions? Could be implemented as a separate bot process connecting via the same SimpleX CLI WebSocket API.
+4. **Message persistence:** How long should chat history persist in the browser?
 
-5. **Notification:** When the support team is offline, should the chat show an away message? SimpleX delivers messages asynchronously, so they arrive when the team comes back online.
-
-6. **ML-KEM in browser:** For GRP-2, should we use a pure JavaScript ML-KEM implementation or a WASM-compiled Rust/C library? Pure JS is simpler to audit, WASM is faster and has better side-channel resistance.
-
-7. **SharedWorker fallback:** SharedWorker is not supported in all contexts (e.g., some mobile browsers). What is the fallback strategy? Dedicated Worker per tab with reduced tab-persistence capability?
+5. **Let's Encrypt renewal:** Automate cert copy to Docker mount after certbot renewal.
 
 ---
 
@@ -998,31 +694,9 @@ GoChat is one component of the SimpleGo ecosystem for encrypted communication ac
 
 | Project | What it does | Language | Status |
 |:--------|:-------------|:---------|:-------|
-| **[SimpleGo](https://github.com/saschadaemgen/SimpleGo)** | First native C implementation of SimpleX protocol on ESP32-S3. Autonomous encrypted messaging device with 4-layer encryption, Double Ratchet, and post-quantum key exchange (sntrup761). | C (21,863 lines) | Alpha, 7 contacts verified |
-| **GoRelay** | Dual-protocol relay server. SMP on port 5223, GRP on port 7443 with Noise transport, mandatory PQC (ML-KEM-768), two-hop routing, cover traffic, zero-knowledge storage with cryptographic deletion. | Go (~5,000 lines) | Alpha, SimpleX test passing |
-| **GoChat** | Browser-native encrypted messenger. SMP profile for everyday use, GRP profile for high-security. No app install needed. (This project) | TypeScript | Season 1 |
-
-### How the ecosystem connects
-
-```
-+-----------+     +----------+     +-----------+     +----------+     +----------+
-|  GoChat   |     |  SMP     |     |  GoRelay  |     |  SMP     |     | SimpleX  |
-|  Browser  |---->|  Server  |---->|  (bridge) |---->|  Server  |---->|  App     |
-|  SMP mode |     |  (any)   |     |           |     |  (any)   |     | Phone/PC |
-+-----------+     +----------+     +-----------+     +----------+     +----------+
-
-+-----------+                      +-----------+                      +----------+
-|  GoChat   |                      |  GoRelay  |                      | SimpleGo |
-|  Browser  |--------------------->|  GRP      |--------------------->| Hardware |
-|  GRP mode |  Noise + PQ + 2-hop |  Server   |  Noise + PQ + 2-hop | ESP32-S3 |
-+-----------+                      +-----------+                      +----------+
-```
-
-**SMP path (top):** Standard SimpleX-compatible communication. Any SMP server works as relay. Receiving end: SimpleX Chat app or SimpleGo terminal.
-
-**GRP path (bottom):** High-security with post-quantum protection, Noise transport, two-hop routing. GoRelay exclusive. Receiving end: SimpleGo hardware.
-
-**GoRelay as bridge:** Dual-protocol, cross-protocol delivery. SMP in, GRP out, and vice versa.
+| **[SimpleGo](https://github.com/saschadaemgen/SimpleGo)** | First native C implementation of SimpleX protocol on ESP32-S3. | C (21,863 lines) | Alpha, 7 contacts verified |
+| **GoRelay** | Dual-protocol relay server. SMP + GRP. | Go (~5,000 lines) | Alpha, SimpleX test passing |
+| **GoChat** | Browser-native encrypted messenger. (This project) | TypeScript | Season 7 complete |
 
 ---
 
@@ -1033,7 +707,7 @@ GoChat is one component of the SimpleGo ecosystem for encrypted communication ac
 | WS-1 | Transport | WebSocket transport class (ChatTransport) | S2 DONE |
 | WS-2 | Transport | SMP client with handshake | S2 DONE |
 | WS-3 | Transport | Connection pooling and reconnect | S2 DONE |
-| WS-4 | Transport | SharedWorker for tab persistence | S6 |
+| WS-4 | Transport | SharedWorker for tab persistence | S9 |
 | CMD-1 | Commands | Queue creation (NEW/IDS) | S3 DONE |
 | CMD-2 | Commands | Sender commands (SEND/SKEY) | S3 DONE |
 | CMD-3 | Commands | Recipient commands (SUB/ACK/KEY/DEL/MSG) | S3 DONE |
@@ -1043,39 +717,18 @@ GoChat is one component of the SimpleGo ecosystem for encrypted communication ac
 | CONN-2 | Connection | Connection state machine (7 states) | S4 DONE |
 | CONN-3 | Connection | Queue pair creation + ConnectionManager | S4 DONE |
 | CONN-4 | Connection | Connection request (X3DH + Ratchet + 6 crypto layers) | S4 DONE |
-| E2E-1 | Encryption | Ratchet receive side (decrypt incoming) | S5 |
-| E2E-2 | Encryption | Symmetric ratchet step (advance chain) | S5 |
-| E2E-3 | Encryption | DH ratchet step (re-key on transitions) | S5 |
-| E2E-4 | Encryption | Out-of-order message handling | S5 |
-| E2E-5 | Encryption | Header decryption (current + next key) | S5 |
-| E2E-6 | Encryption | Key storage (IndexedDB + AES-256-GCM) | S5 |
-| UI-1 | Chat UI | Nose-bar integration | S6 |
-| UI-2 | Chat UI | Chat panel | S6 |
-| UI-3 | Chat UI | Chat state management | S6 |
-| UI-4 | Chat UI | Mobile responsive | S6 |
-| UI-5 | Chat UI | SPA router integration | S7 |
-| UI-6 | Chat UI | Intercom-level animations | S6 |
-| UI-7 | Chat UI | Encryption badge | S6 |
-| UI-8 | Chat UI | Accessibility (WCAG 2.1 AA) | S6 |
-| SEC-1 | Security | Content Security Policy | S8 |
-| SEC-2 | Security | Subresource Integrity | S8 |
-| SEC-3 | Security | Web Worker crypto isolation | S5 |
-| SEC-4 | Security | Trust boundary documentation | S8 |
-| SEC-5 | Security | TLS certificate strategy | S2 |
-| OPS-1 | Deployment | SMP server deployment | S8 |
-| OPS-2 | Deployment | Contact address setup | S8 |
-| OPS-3 | Deployment | Monitoring | S8 |
-| LIB-1 | Library | API design document | S9 |
-| LIB-2 | Library | Package scaffolding (build, bundle, tree-shake) | S9 |
-| LIB-3 | Library | Extract core modules from GoChat | S9 |
-| LIB-4 | Library | SimpleXClient facade class | S9 |
-| LIB-5 | Library | Zero-dependency audit | S9 |
+| E2E-1 | Encryption | Ratchet receive side (decrypt incoming) | S8 |
+| E2E-2 | Encryption | Symmetric ratchet step (advance chain) | S8 |
+| E2E-3 | Encryption | DH ratchet step (re-key on transitions) | S8 |
+| E2E-4 | Encryption | Out-of-order message handling | S8 |
+| E2E-5 | Encryption | Header decryption (current + next key) | S8 |
+| E2E-6 | Encryption | Key storage (IndexedDB + AES-256-GCM) | S8 |
 | BC-1 | Browser Client | Browser client API (browser-client.ts) | S5 DONE |
 | BC-2 | Browser Client | Browser bundle (esbuild IIFE) | S5 DONE |
 | BC-3 | Browser Client | Integration tests (24 tests, 7 scenarios) | S5 DONE |
 | CHAT-1 | Chat UI | Chat panel (CSS, JS, HTML, left-docked, responsive) | S5 DONE |
 | INFRA-1 | Infrastructure | SMP server Docker deployment (smp.simplego.dev) | S5 DONE |
-| INFRA-2 | Infrastructure | Nginx WSS reverse proxy (port 8444) | S5 DONE |
+| INFRA-2 | Infrastructure | Nginx WSS reverse proxy (port 8444) | S5 DONE (eliminated S7) |
 | INFRA-3 | Infrastructure | Contact address setup | S5 DONE |
 | PROTO-1:15 | Protocol | 15 real-server SMP v6 protocol fixes | S5 DONE |
 | INV-1 | Invitation | AgentInvitation builder (invitation.ts) | S6 DONE |
@@ -1083,9 +736,23 @@ GoChat is one component of the SimpleGo ecosystem for encrypted communication ac
 | INV-3 | Invitation | NaCl encryption fix (nacl.box vs raw cipher) | S6 DONE |
 | INV-4 | Invitation | 12 protocol fixes (A_CRYPTO + A_MESSAGE) | S6 DONE |
 | SEC-6 | Security | Security hardening roadmap document | S6 DONE |
-| GRP-1 | GRP Transport | Noise Protocol transport | S10 |
-| GRP-2 | GRP Transport | ML-KEM-768 post-quantum | S10 |
-| GRP-3 | GRP Transport | Two-hop relay routing | S11 |
+| S7-1:10 | Infrastructure | Server upgrade, ALPN fix, PR #1738 build, Nginx elimination | S7 DONE |
+| S8-1 | Auth | v7+ command authorization (X25519 DH) | S8 |
+| S8-2 | Auth | Negotiate v9+ (unlock sndSecure) | S8 |
+| S8-3 | Protocol | Enable sndSecure "S T" in NEW + k=s in URI | S8 |
+| S8-4 | Protocol | SUB on own queue, receive AgentConfirmation | S8 |
+| S8-5 | Crypto | X3DH with peer X448 keys from AgentConfirmation | S8 |
+| S8-6 | Crypto | Double Ratchet initialization + HELLO exchange | S8 |
+| S8-7 | Protocol | Achieve CON state, bidirectional messaging | S8 |
+| SEC-1 | Security | Content Security Policy | S10 |
+| SEC-2 | Security | Subresource Integrity | S10 |
+| SEC-3 | Security | Web Worker crypto isolation | S8 |
+| SEC-4 | Security | Trust boundary documentation | S10 |
+| SEC-5 | Security | TLS certificate strategy | S5/S7 DONE |
+| LIB-1:5 | Library | simplex-js npm library | S11 |
+| GRP-1 | GRP Transport | Noise Protocol transport | S12 |
+| GRP-2 | GRP Transport | ML-KEM-768 post-quantum | S12 |
+| GRP-3 | GRP Transport | Two-hop relay routing | S12+ |
 | GRP-4 | GRP Transport | Triple Shield (ZKP, Shamir, Stego) | S12+ |
 
 ---
@@ -1096,7 +763,8 @@ GoChat is one component of the SimpleGo ecosystem for encrypted communication ac
 |------|--------|
 | 2026-03-25 | Initial protocol document created. Analyzed `ep/smp-web-spike` branch, documented existing infrastructure, defined implementation roadmap. |
 | 2026-03-25 | Major update: added dual-profile architecture (SMP + GRP), ChatTransport interface requirement, new task categories (GRP-1 to GRP-4, SEC-1 to SEC-5, UI-6 to UI-8, WS-4), browser-specific risk assessment, ecosystem context, ground rules, task registry. |
-| 2026-03-25 | Season 2 complete. WS-1, WS-2, WS-3 implemented: SMPWebSocketTransport, SMPClient with handshake and dispatch, SMPClientAgent with exponential backoff reconnection. Updated code map and task registry. |
-| 2026-03-25 | Season 4 complete. CONN-1 to CONN-4 implemented: contact address parser, connection state machine, queue pair creation, connection request with X3DH + Double Ratchet (6 crypto layers). 226 new tests (413 total). All CMD tasks marked done (Season 3). Added E2E-4/5/6 tasks for Season 5. Added LIB-1 to LIB-5 for Season 9 (simplex-js library). Updated code map and dependencies. |
-| 2026-03-26 | Season 5 complete. Scope shifted from E2E hardening to real-server connectivity. Built chat UI with left-docked panel design (Phase 1), browser client API with esbuild IIFE bundle and 24 integration tests (Phase 2), SMP server infrastructure with Docker + Nginx WSS proxy on port 8444 (Phase 3), and 15 protocol fixes for real SMP v6 server compatibility including sessionId handling, batch framing, Ed25519 signing, and exact NEW command format (Phase 4). 485 tests total across 19 files. First successful NEW -> IDS on real server from browser via WebSocket. Critical protocol knowledge from SimpleGo team (49 sessions of SMP reverse-engineering). Original E2E tasks (E2E-1 to E2E-6) deferred to Season 6. Added SMP v6 wire format reference (Section 7.5). |
-| 2026-03-28 | Season 6 complete. Connection request to SimpleX App. 4 PRs (#39, #42, #44, #45) plus direct pushes. 12 protocol fixes resolving A_CRYPTO and A_MESSAGE errors. Key discovery: joining party sends AgentInvitation (tag 'I', PHEmpty '_', connReq URI), not AgentConfirmation (tag 'C', PHConfirmation 'K'). First browser-native SMP connection request accepted by SimpleX App. 493 tests. Security hardening roadmap created. Added Section 5.1c, Phase 3b/3c split, AgentInvitation wire format, INV and SEC-6 task IDs. |
+| 2026-03-25 | Season 2 complete. WS-1, WS-2, WS-3 implemented. |
+| 2026-03-25 | Season 4 complete. CONN-1 to CONN-4 implemented. 226 new tests (413 total). |
+| 2026-03-26 | Season 5 complete. Chat UI, browser client API, SMP server infrastructure, 15 protocol fixes. 485 tests. |
+| 2026-03-28 | Season 6 complete. Connection request to SimpleX App. 12 protocol fixes. 493 tests. |
+| 2026-03-28 | Season 7 complete. Server upgrade to PR #1738 build. ALPN fix enables v6-18 over WebSocket. Nginx eliminated, Docker direct port mapping. 4096-bit RSA cert. sndSecure confirmed as v9+ only (v6 parser limitation). v7+ command auth identified as Season 8 prerequisite. Added Section 5.1d, Phase 3c/3d, Section 7.6, S7 and S8 task IDs. Season numbers shifted: S8 = v7+ auth + bidirectional messaging, S9 = polish, S10 = security, S11 = library, S12+ = GRP. |

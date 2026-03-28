@@ -323,12 +323,12 @@ This is the pattern that Signal (libsignal), Element (vodozemac), and Wire all i
 
 | Priority | Phase | Protection Against | Effort | Season |
 |----------|-------|-------------------|--------|--------|
-| 1 | CSP + SRI + DOMPurify | XSS, script tampering | Small | 7 |
-| 2 | Crypto Web Worker | XSS key theft | Medium | 7-8 |
-| 3 | Non-extractable keys | Casual JS key access | Medium | 8-9 |
-| 4 | Dependency vendoring | Supply chain attacks | Small | 8 |
-| 5 | Cross-origin iframe | Third-party embedding | Medium | 9-10 |
-| 6 | Rust-to-WASM | All JS-level threats | Large | 10+ |
+| 1 | CSP + SRI + DOMPurify | XSS, script tampering | Small | 8-9 |
+| 2 | Crypto Web Worker | XSS key theft | Medium | 8-9 |
+| 3 | Non-extractable keys | Casual JS key access | Medium | 9-10 |
+| 4 | Dependency vendoring | Supply chain attacks | Small | 9 |
+| 5 | Cross-origin iframe | Third-party embedding | Medium | 10-11 |
+| 6 | Rust-to-WASM | All JS-level threats | Large | 11+ |
 
 ---
 
