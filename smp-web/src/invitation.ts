@@ -85,7 +85,7 @@ function buildConnReqURI(
   // q=m = QMMessaging (messaging queue, not contact queue)
   const senderIdB64 = b64urlEncode(senderId)
   const dhB64 = b64urlEncode(queueDhSPKI)
-  const smpUri = "smp://" + serverIdentity + "@" + host + ":" + port + "/" + senderIdB64 + "#/?v=1-4&dh=" + dhB64 + "&q=m&k=s"
+  const smpUri = "smp://" + serverIdentity + "@" + host + ":" + port + "/" + senderIdB64 + "#/?v=1-4&dh=" + dhB64 + "&q=m"
 
   // e2e params: v=2-3&x3dh=KEY1_BASE64,KEY2_BASE64
   // Two X448 SPKI keys (68B each) for X3DH ratchet initialization
