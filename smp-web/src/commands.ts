@@ -45,17 +45,16 @@ export interface EnableNotificationsParams {
 
 // -- Command encoders
 
-// v6 NEW format (confirmed by SimpleGo working C code, byte for byte):
-//   "NEW " [0x2C][44B authKey SPKI] [0x2C][44B dhKey SPKI] "S"
-// No spaces between fields (shortString is self-delimiting).
-// No basicAuth field. No sndSecure field.
-// Total: 4 + 45 + 45 + 1 = 95 bytes.
+// v6 NEW format with sndSecure (server must support v9+ internally):
+//   "NEW " [0x2C][44B authKey SPKI] [0x2C][44B dhKey SPKI] "S T"
+// S = subscribe on create, space + T = sndSecure enabled.
+// Total: 4 + 45 + 45 + 1 + 2 = 97 bytes.
 export function encodeNEW(params: NewQueueParams): Uint8Array {
   return concatBytes(
     ascii("NEW "),
     encodeBytes(params.recipientAuthKey),  // [0x2C][44B Ed25519 SPKI]
     encodeBytes(params.recipientDhKey),     // [0x2C][44B X25519 SPKI]
-    ascii(params.subscribeMode)             // "S" or "C", no space prefix
+    ascii(params.subscribeMode + " T")      // "S T" = subscribe + sndSecure
   )
 }
 
