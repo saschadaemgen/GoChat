@@ -15,9 +15,9 @@ GoChat is a browser-native encrypted messenger for the SimpleX ecosystem.
 ### Git
 - Conventional Commits ONLY: `feat(scope): description`, `fix(scope): description`
 - Valid types: feat, fix, docs, test, refactor, ci, chore
-- Valid scopes: smp, grp, transport, crypto, ui, agent, config, ci, wiki, seasons, security
-- Feature branches: `s7/NNN-description` pattern (season number + task number)
-- Push with `git push --set-upstream origin s7/NNN-description`
+- Valid scopes: smp, grp, transport, crypto, ui, agent, config, ci, wiki, seasons, security, handshake, commands
+- Feature branches: `s8/NNN-description` pattern (season number + task number)
+- Push with `git push --set-upstream origin s8/NNN-description`
 - NEVER push directly to `feat/simplego-support-chat` - ALWAYS create PRs
 - NEVER change version numbers without explicit permission
 - When creating PRs: ALWAYS verify base repository is `saschadaemgen/GoChat`, NOT `simplex-chat/simplexmq`
@@ -59,6 +59,11 @@ npx vitest --watch    # Watch mode
 npm run build:browser # Build IIFE bundle -> dist/gochat-client.js
 ```
 
+Deploy after build:
+```powershell
+copy dist\gochat-client.js "C:\Projects\SimpleGo www\www\src\assets\js\gochat-client.js"
+```
+
 ## Technology Stack
 
 | Component | Choice |
@@ -92,34 +97,40 @@ smp-web/src/
   crypto-utils.ts       # Key gen: Ed25519, X25519, X448 + SPKI encoding
   connection.ts         # ConnectionManager (queue creation + send invitation)
   invitation.ts         # AgentInvitation builder (connReq URI, NaCl crypto_box)
-  x3dh.ts               # Modified 4-DH X3DH key agreement (for Season 7)
-  ratchet.ts            # Double Ratchet init + encrypt (for Season 7)
-  agent-envelope.ts     # Agent confirmation encoding (for Season 7)
-  connection-request.ts # Connection request builder + zstd (for Season 7)
+  x3dh.ts               # Modified 4-DH X3DH key agreement (for Season 8)
+  ratchet.ts            # Double Ratchet init + encrypt (for Season 8)
+  agent-envelope.ts     # Agent confirmation encoding (for Season 8)
+  connection-request.ts # Connection request builder + zstd (for Season 8)
   browser-client.ts     # High-level browser API for chat integration
   __tests__/            # 493 tests across 19 files
 ```
 
 ## Current State
 
-Season 6 is COMPLETE. The browser client sends a working connection request to the SimpleX App.
+Season 7 is COMPLETE. The server has been upgraded to PR #1738 build with v6-18 over WebSocket.
 
-### What works (Seasons 1-6)
-- WebSocket transport with SMP v6 handshake
+### What works (Seasons 1-7)
+- WebSocket transport with SMP handshake (v6-18 offered, v6 negotiated)
 - 14 SMP command encoders with full response decoder
 - Contact address parser (simplex:/ and https:// formats)
 - Connection state machine (7 states)
 - Queue creation on real SMP server (NEW -> IDS)
-- AgentInvitation with connReq URI sent to contact queue
+- AgentInvitation with connReq URI sent to contact queue (SEND -> OK)
 - NaCl crypto_box encryption (tweetnacl nacl.box)
-- SimpleX App shows "Website Visitor - New contact request"
+- SimpleX App/CLI shows "Website Visitor - New contact request"
+- Server upgraded to PR #1738 build (v6-18 over WebSocket via ALPN fix)
+- Nginx eliminated (Docker direct port mapping 8444->443)
+- 4096-bit RSA Let's Encrypt certificate for HTTPS handler
 - 493 tests across 19 files
 
 ### What does NOT work yet
-- App returns AUTH when accepting the connection request (Season 7 first task)
+- CLI sends SKEY -> AUTH (queue has no sndSecure, needs v9+ negotiation)
+- v7+ command authorization not implemented (X25519 DH instead of Ed25519 signatures)
+- maxSMPClientVersion capped at 6 (temporary workaround)
 - No incoming message reception (SUB + MSG handling)
 - No Double Ratchet for bidirectional encryption
 - No HELLO exchange or CON state
+- queueDhKeyPair private key is discarded in invitation.ts (needed for Phase 2)
 
 ## Development Roadmap
 
@@ -129,26 +140,72 @@ Season 6 is COMPLETE. The browser client sends a working connection request to t
 - Season 4: Connection Flow + X3DH + Double Ratchet (413 tests) - COMPLETE
 - Season 5: Chat UI + Browser Client + Real Server (485 tests) - COMPLETE
 - Season 6: Connection Request to SimpleX App (493 tests) - COMPLETE
-- Season 7: Bidirectional Messaging (Steps 4-7, Double Ratchet) - NEXT
-- Season 8: Production Polish (animations, SharedWorker, IndexedDB)
-- Season 9: Security Hardening (CSP, SRI, Web Worker crypto)
-- Season 10: simplex-js npm Library
-- Season 11+: GRP Profile (Noise, ML-KEM-768, Two-hop Routing)
+- Season 7: Server Upgrade, ALPN Fix, v6-18 over WebSocket - COMPLETE
+- Season 8: v7+ Command Auth, sndSecure, Bidirectional Messaging - NEXT
+- Season 9: Production Polish (animations, SharedWorker, IndexedDB)
+- Season 10: Security Hardening (CSP, SRI, Web Worker crypto)
+- Season 11: simplex-js npm Library
+- Season 12+: GRP Profile (Noise, ML-KEM-768, Two-hop Routing)
 
-## Season 7 Context
+## Season 8 Context
 
 ### Starting point
-SimpleX App shows "Website Visitor - New contact request." When user accepts, app gets
-Connection error (AUTH) trying to send to our reply queue. Fix this first.
+Server offers v6-18 over WebSocket. Browser negotiates v6 (maxSMPClientVersion=6).
+NEW/IDS/SEND/OK all work. CLI receives invitation. But CLI sends SKEY which fails
+with AUTH because queue has no sndSecure. sndSecure needs v9+ negotiation.
+v9+ negotiation needs v7+ command authorization first.
 
-### Key protocol knowledge (from Season 6)
+### Season 8 plan (in order)
+1. Implement v7+ command authorization (X25519 DH crypto_box instead of Ed25519 signatures)
+2. Increase maxSMPClientVersion to 9+ (unlocks sndSecure in server parser)
+3. Enable sndSecure "S T" in NEW (97 bytes) + &k=s in connReq URI
+4. CLI SKEY succeeds, AgentConfirmation arrives
+5. SUB on own queue to receive AgentConfirmation
+6. Decrypt AgentConfirmation (NaCl Layer 1 + Ratchet)
+7. X3DH with CLI's X448 keys, initialize Double Ratchet
+8. HELLO exchange, achieve CON state
+9. Bidirectional encrypted messaging
+
+### v6 vs v7+ command authorization
+v6 (current - Ed25519 signatures):
+```
+[sigLen=0x40][64B Ed25519 signature][sessIdLen][sessionId][corrId][entityId][command]
+signedData = [0x20][sessionId] + [corrId] + [entityId] + [command]
+```
+
+v7+ (target - X25519 DH crypto_box):
+```
+ClientHello adds: shortString(authPubKey) + Maybe(proxyServer) + Maybe(clientService)
+Commands authorized via crypto_box instead of Ed25519 signatures
+```
+
+Reference code for v7+ auth: `C:\Projects\simplexmq-latest` (branch `pr-1738`)
+- src/Simplex/Messaging/Transport.hs - handshake with authPubKey
+- src/Simplex/Messaging/Protocol.hs - command authorization
+- PR #982 on GitHub - "smp: command authorization" design document
+
+### sndSecure wire format (for v9+ NEW command)
+```
+Without sndSecure (v6, current):  "NEW " [authKey] [dhKey] "S"      (95 bytes)
+With sndSecure (v9+, target):     "NEW " [authKey] [dhKey] "S T"    (97 bytes)
+                                                            ^ ^ ^
+                                                            S SP T
+```
+Space between "S" and "T" is critical. "ST" without space gives CMD SYNTAX.
+connReq URI must include &k=s when sndSecure is enabled.
+
+### Key protocol knowledge (from Seasons 5-7)
 - Joining party sends AgentInvitation ('I' + PHEmpty '_' + connReq URI)
 - Contact owner responds with AgentConfirmation ('C' + PHConfirmation 'K' + Ratchet-encrypted body)
 - First contact has NO Ratchet (only per-queue NaCl crypto_box)
 - Ratchet begins after receiving owner's AgentConfirmation with X448 keys
 - nacl.box() = DH + HSalsa20 + XSalsa20-Poly1305 (never use raw xsalsa20poly1305)
+- SKEY comes BEFORE SEND in the CLI flow - if SKEY fails, CLI aborts immediately
+- Browser ALPN is "h2" - PR #1738 server matches this and offers v6-18
+- sessionId is 48 bytes on PR #1738 server (was 32 on legacy WebSocket port)
+- ServerHello includes certs=2 and signedKey on PR #1738 server
 
-### Corrected Ratchet parameters (for Season 7 implementation)
+### Corrected Ratchet parameters (for Season 8 implementation)
 - All HKDF: SHA-512 (not SHA-256)
 - X3DH: salt=64 zeros, info="SimpleXX3DH", 3 DH ops (not 4)
 - Chain KDF: salt=empty, info="SimpleXChainRatchet"
@@ -157,10 +214,29 @@ Connection error (AUTH) trying to send to our reply queue. Fix this first.
 - Ratchet v3: 124B emHeader, 2B Word16 BE prefix
 - MsgHeader v3: content_len + version + 68B SPKI + KEM Nothing + PN + NS
 
-### Server infrastructure
-- SMP server: smp.simplego.dev, port 5223 (native), port 8444 (WSS via Nginx)
-- Contact address queue ID: QEuTquKK63Txg0UAuWvhd4Q37Hsf6eGW
-- Nginx WSS proxy needs systemd service (does not survive reboot)
+### Server infrastructure (Season 7 - current)
+- Docker image: local/smp-server-pr1738 (built from PR #1738 Haskell source)
+- Software: SMP server v6.5.0.11
+- Protocol range: v6-18 (both WebSocket and TLS)
+- ALPN list: ["smp/1", "h2", "http/1.1"]
+- Host: smp.simplego.dev (194.164.197.247)
+- Port 5223: native TLS (CLI/App connections)
+- Port 8444 -> Docker 443: HTTPS + WebSocket (browser connections, no Nginx)
+- Port 5224: Control port
+- Fingerprint: 7qw4hvuS-PvTHbotgtg_xiwrhFUk_s1q2upUQrGIWow=
+- TLS cert (HTTPS): 4096-bit RSA Let's Encrypt (expires 2026-06-26)
+- Nginx: STOPPED (no longer needed since Season 7)
+- Server source: /root/simplexmq-pr1738 (branch pr-1738)
+
+Docker run command:
+```bash
+docker run -d --name simplego-smp --restart always \
+  -p 5223:5223 -p 5224:5224 -p 8444:443 \
+  -v /root/simplex/smp/config/certificates:/certificates:z \
+  -v /root/simplex/smp/config:/etc/opt/simplex:z \
+  -v /root/simplex/smp/logs:/var/opt/simplex:z \
+  local/smp-server-pr1738
+```
 
 ## Known Traps
 
@@ -171,6 +247,16 @@ Connection error (AUTH) trying to send to our reply queue. Fix this first.
 5. NaCl crypto_box requires nacl.box() not raw xsalsa20poly1305 (HSalsa20 step missing otherwise)
 6. X448 has zero browser Web Crypto support - must use @noble/curves with raw byte arrays
 7. CSP `'self'` does NOT match `wss://` schemes - must explicitly include `connect-src wss://smp.simplego.dev:8444`
+8. sndSecure format is "S T" (with space), NOT "ST" - space is critical, "ST" gives CMD SYNTAX
+9. sndSecure requires v9+ negotiation - v6 command parser does not know sndSecure
+10. v7+ auth is COMPLETELY DIFFERENT from v6 - not just replacing signatures, whole auth scheme changes
+11. SKEY comes BEFORE SEND - CLI never sends AgentConfirmation if SKEY fails
+12. sessionId is 48 bytes on PR #1738 server (not 32 like on legacy WebSocket port)
+13. ServerHello includes certs=2 and signedKey on PR #1738 server (were absent on legacy WS port)
+14. queueDhKeyPair private key is discarded in invitation.ts - must be saved for AgentConfirmation decryption
+15. Contact address in base.njk may point to CLI test address from Season 7 - verify before testing
+16. Nginx is STOPPED - do not restart it, Docker port mapping handles everything
+17. Plesk owns port 443 on the host - SMP server port 443 is only inside Docker container
 
 ## Upstream Files (READ ONLY - never modify)
 
@@ -187,9 +273,10 @@ protocol/simplex-messaging.md  # SMP specification (upstream reference)
 
 ## Documentation
 
-1. docs/seasons/SEASON-06-connection-request.md - Season 6 closing protocol
-2. docs/seasons/SEASON-05-real-server.md - Season 5 closing protocol
-3. docs/seasons/SEASON-PLAN.md - Full roadmap
-4. docs/PROTOCOL.md - Main technical protocol
-5. docs/RESEARCH.md - Security and design research
-6. docs/SECURITY-HARDENING-ROADMAP.md - Six-phase browser security hardening plan
+1. docs/seasons/SEASON-07-server-upgrade.md - Season 7 closing protocol
+2. docs/seasons/SEASON-06-connection-request.md - Season 6 closing protocol
+3. docs/seasons/SEASON-05-real-server.md - Season 5 closing protocol
+4. docs/seasons/SEASON-PLAN.md - Full roadmap
+5. docs/PROTOCOL.md - Main technical protocol
+6. docs/RESEARCH.md - Security and design research
+7. docs/SECURITY-HARDENING-ROADMAP.md - Six-phase browser security hardening plan
