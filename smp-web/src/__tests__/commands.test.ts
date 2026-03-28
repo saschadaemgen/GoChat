@@ -104,7 +104,7 @@ describe("tag-only commands", () => {
 // v6 NEW format (confirmed by SimpleGo working C code, byte for byte):
 //   "NEW " [0x2C][44B authKey SPKI] [0x2C][44B dhKey SPKI] "S"
 // No spaces between fields. No basicAuth. No sndSecure.
-// Total: 4 + 45 + 45 + 1 = 95 bytes.
+// Total: 4 + 45 + 45 + 2 = 96 bytes (subscribeMode + sndSecure "T").
 
 describe("encodeNEW", () => {
   const baseParams: NewQueueParams = {
@@ -145,10 +145,10 @@ describe("encodeNEW", () => {
     expect(result[94]).toBe(0x43) // "C"
   })
 
-  it("has correct total length: 95 bytes", () => {
+  it("has correct total length: 96 bytes", () => {
     const result = encodeNEW(baseParams)
-    // "NEW "(4) + authKey(1+44) + dhKey(1+44) + "S"(1) = 95
-    expect(result.length).toBe(95)
+    // "NEW "(4) + authKey(1+44) + dhKey(1+44) + "ST"(2) = 96
+    expect(result.length).toBe(96)
   })
 
   it("has NO spaces between key fields", () => {
@@ -158,17 +158,18 @@ describe("encodeNEW", () => {
     expect(result[4 + 45]).toBe(0x2C) // dhKey length prefix
   })
 
-  it("does NOT include basicAuth or sndSecure", () => {
+  it("includes sndSecure 'T' after subscribeMode", () => {
     const result = encodeNEW(baseParams)
-    // Total should be exactly 95, not longer
-    expect(result.length).toBe(95)
-    // Last byte is subscribeMode, nothing after it
-    expect(result[result.length - 1]).toBe(0x53) // "S"
+    // Total should be exactly 96
+    expect(result.length).toBe(96)
+    // Last two bytes are subscribeMode + sndSecure
+    expect(result[result.length - 2]).toBe(0x53) // "S"
+    expect(result[result.length - 1]).toBe(0x54) // "T" = sndSecure
   })
 
-  it("exact byte sequence matches SimpleGo reference", () => {
-    // Build expected bytes: "NEW " + [0x2C][44xAA] + [0x2C][44xBB] + "S"
-    const expected = new Uint8Array(95)
+  it("exact byte sequence matches expected format", () => {
+    // Build expected bytes: "NEW " + [0x2C][44xAA] + [0x2C][44xBB] + "ST"
+    const expected = new Uint8Array(96)
     expected[0] = 0x4E // N
     expected[1] = 0x45 // E
     expected[2] = 0x57 // W
@@ -178,6 +179,7 @@ describe("encodeNEW", () => {
     expected[49] = 0x2C // dhKey length = 44
     expected.fill(0xBB, 50, 94) // 44 bytes dhKey
     expected[94] = 0x53 // "S"
+    expected[95] = 0x54 // "T" = sndSecure
 
     const result = encodeNEW(baseParams)
     expect(result).toEqual(expected)
