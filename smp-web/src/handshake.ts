@@ -26,7 +26,7 @@ import {SMP_BLOCK_SIZE} from "./transport.js"
 // -- SMP version constants
 
 export const minSMPClientVersion = 6
-export const maxSMPClientVersion = 6
+export const maxSMPClientVersion = 7
 
 export const smpClientVersionRange: VersionRange = {
   minVersion: minSMPClientVersion,
