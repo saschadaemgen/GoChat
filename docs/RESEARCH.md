@@ -114,6 +114,7 @@ During Seasons 4 and 5, the SimpleGo team (an independent C implementation of th
 | Ed25519 | SMP command authorization (signing) | @noble/curves/ed25519 |
 | AES-256-GCM | Double Ratchet body + header encryption | @noble/ciphers/aes |
 | XSalsa20-Poly1305 | NaCl crypto_box (SMP Layer 1) | @noble/ciphers |
+| NaCl crypto_box (nacl.box) | Per-queue E2E encryption (Layer 1) | tweetnacl |
 | HKDF-SHA512 | X3DH key derivation ("SimpleXX3DH") | @noble/hashes/hkdf |
 | HKDF-SHA256 | Ratchet chain key derivation ("SimpleXMK"/"SimpleXCK") | @noble/hashes/hkdf |
 | SHA-256 | Server identity fingerprint (keyHash in ClientHello) | @noble/hashes/sha256 |
@@ -160,6 +161,54 @@ The @noble/curves ed25519 library accepts the 32-byte private key (seed) directl
 The OID difference is ONE BYTE: `70` for Ed25519 (signing), `6e` for X25519 (DH). The SimpleGo team documented confusing these as a common early bug.
 
 The @noble ecosystem covers all required algorithms from a single audited source.
+
+### 2.8 NaCl crypto_box architecture (Season 6)
+
+Season 6 real-server testing revealed a critical distinction between `nacl.box()` (tweetnacl)
+and raw `xsalsa20poly1305` (@noble/ciphers):
+
+```
+nacl.box(plaintext, nonce, peerPublicKey, ourPrivateKey):
+  1. DH: shared_secret = X25519(ourPrivateKey, peerPublicKey)      // 32 bytes
+  2. HSalsa20: symmetric_key = HSalsa20(shared_secret, zeros[16])  // 32 bytes
+  3. XSalsa20-Poly1305: ciphertext = encrypt(symmetric_key, nonce, plaintext)
+```
+
+Using `@noble/ciphers` xsalsa20poly1305 directly with the raw DH shared secret skips step 2
+(HSalsa20 key derivation), producing ciphertext that the peer cannot decrypt (A_CRYPTO error).
+
+The HSalsa20 step exists because the raw DH output has non-uniform distribution. HSalsa20 acts
+as a key derivation function, producing a uniformly distributed symmetric key. This is part of
+Daniel Bernstein's original NaCl design.
+
+For GoChat, the fix was simple: use `nacl.box()` from tweetnacl instead of manually composing
+the cipher.
+
+### 2.9 AgentInvitation discovery (Season 6)
+
+Season 6 discovered that the SimpleX protocol uses two distinct agent message types for
+connection establishment, with completely different wire formats:
+
+| Property | AgentConfirmation (owner) | AgentInvitation (joiner) |
+|:---------|:--------------------------|:-------------------------|
+| PrivHeader | 'K' + 44B Ed25519 SPKI | '_' (PHEmpty, 1 byte) |
+| Tag | 'C' (0x43) | 'I' (0x49) |
+| E2E params | Inline (X448 SPKI keys) | In connReq URI (x3dh= param) |
+| Queue info | Binary SMPQueueInfo | URI string in connReq |
+| connInfo | Ratchet-encrypted encConnInfo | Plaintext Tail bytes |
+| Encryption | Per-queue E2E + Ratchet | Per-queue E2E only |
+
+The contact address owner sends AgentConfirmation (as implemented by SimpleGo in Session 8).
+The joining party sends AgentInvitation (as discovered by GoChat in Season 6).
+
+This distinction was not documented anywhere outside the Haskell source code. The definitive
+answer came from reading Agent/Client.hs:1654-1664 and Protocol.hs:800-801.
+
+**Key implication for Season 7:** When the app accepts and responds, it sends an
+AgentConfirmation back. This IS Ratchet-encrypted and contains X448 keys for X3DH.
+
+**Key implication for SimpleGo:** The SimpleGo team now has the complete joining-party
+protocol specification, enabling them to implement contact link scanning on the ESP32-S3.
 
 ---
 
@@ -516,6 +565,9 @@ The combination of both profiles in a single chat interface - selectable per con
 - **Zstd always required:** Even the first connection request uses zstd compression for connInfo. Verified by SimpleGo team.
 - **Nginx WSS proxy for browser TLS:** Resolved in Season 5. Standalone Nginx process with Let's Encrypt cert terminates browser TLS, forwards to SMP server's internal WebSocket port. Self-signed SMP cert accepted by Nginx with verify off.
 - **SMP v6 wire format:** Fully documented in Season 5 through 15 protocol fixes. SessionId asymmetry, batch framing, Ed25519 signing with sessionId in signed data - all verified against real server.
+- **AgentInvitation for joining party:** Confirmed from Haskell source (Season 6). The joining party sends AgentInvitation ('I' + PHEmpty '_' + connReq URI), NOT AgentConfirmation ('C' + PHConfirmation 'K'). This is non-negotiable - sending the wrong type causes A_MESSAGE.
+- **nacl.box() for NaCl encryption:** Use tweetnacl's nacl.box() instead of composing DH + xsalsa20poly1305 manually. The HSalsa20 key derivation step is essential and easy to miss with manual composition.
+- **connReq URI for queue info:** The joining party's queue information goes into a URI string (simplex:/invitation#/?...) inside the AgentInvitation, not into a binary SMPQueueInfo structure. The URI contains smp= (queue address with dh= and q=m) and e2e= (x3dh= with two X448 keys).
 
 ### Modified decisions from initial planning
 
@@ -568,3 +620,4 @@ The combination of both profiles in a single chat interface - selectable per con
 | 2026-03-25 | Dual-profile update. Added GRP security context throughout, expanded competitive analysis with dual-profile positioning, added post-quantum browser crypto section, referenced GoRelay research documents, updated architectural decisions with ChatTransport interface and dual-profile as key Season 1 decision. |
 | 2026-03-25 | Season 4 crypto verification. Added Section 2.6 documenting all crypto algorithms confirmed by SimpleGo team. X448 mandatory for ratchet, X25519 for NaCl Layer 1 only. Added X3DH variant details and agent confirmation format. Updated architectural decisions with three new verified findings. |
 | 2026-03-26 | Season 5 real-server findings. Added Section 2.7 (Ed25519 signing for SMP v6). Added Section 4.4 (WebSocket proxy architecture). Added Section 5 (SMP v6 protocol findings - batch framing, sessionId asymmetry, command authentication, length encoding, error progression). Updated Section 3.3 with implemented TLS solution (Nginx WSS proxy). Updated Section 6.1 design specs with implemented panel design (left-docked). Added Section 6.4 (chat panel implementation). Updated competitive analysis (mobile responsive: Done). Updated architectural decisions with Nginx proxy and v6 wire format findings. Added SimpleGo Protocol Analysis to references. |
+| 2026-03-28 | Season 6 findings. Added Section 2.8 (NaCl crypto_box architecture - HSalsa20 key derivation). Added Section 2.9 (AgentInvitation vs AgentConfirmation discovery). Added tweetnacl to algorithm table. Added three new architectural decisions. |

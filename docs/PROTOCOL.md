@@ -16,7 +16,7 @@
 **Ecosystem:** SimpleGo (hardware) / GoRelay (relay server) / GoChat (browser client)  
 **Date:** 2026-03-25  
 **Branch analyzed:** `ep/smp-web-spike` on `simplex-chat/simplexmq`  
-**Status:** Season 5 complete, Season 6 (bidirectional messaging + invitation flow) next
+**Status:** Season 6 complete, Season 7 (bidirectional messaging) next
 
 ---
 
@@ -428,6 +428,41 @@ This implements the "duplex connection over simplex queues" pattern. In Haskell 
   - connInfo as zstd-compressed JSON (ChatMessage v1-16, x.info event)
   - SKEY + SEND to contact queue, state -> PENDING
 
+### 5.1c Connection request to SimpleX App (Season 6)
+
+**Priority:** Completed in Season 6.
+
+Season 6 achieved the first successful connection request from browser to SimpleX App. The
+key discovery was that the joining party must send an AgentInvitation (tag 'I', PHEmpty '_'),
+not an AgentConfirmation (tag 'C', PHConfirmation 'K'). 12 protocol fixes were applied,
+resolving both A_CRYPTO and A_MESSAGE errors. The SimpleX App now displays "Website Visitor -
+New contact request" when GoChat connects.
+
+**Tasks:**
+
+- [x] **INV-1:** AgentInvitation builder (`invitation.ts`)
+  - PHEmpty '_' private header (1 byte, no Ed25519 auth key)
+  - AgentInvitation encoding: agentVersion(7) + 'I' + Large(connReq URI) + Tail(connInfo JSON)
+  - connReq URI: `simplex:/invitation#/?v=2-7&smp=...&e2e=...`
+  - NaCl crypto_box encryption via tweetnacl nacl.box()
+  - Padding to 15904 bytes, encrypted body 15920 bytes, SEND body 15992 bytes
+
+- [x] **INV-2:** connReq URI builder
+  - SMP queue URI: `smp://FINGERPRINT@HOST:5223/QUEUE_ID#/?v=1-4&dh=X25519_SPKI&q=m`
+  - E2E params: `v=2-3&x3dh=X448_KEY1,X448_KEY2` (two X448 SPKI keys, base64url, comma separated)
+  - Agent version range: v=2-7
+  - All values URL-encoded within the fragment
+
+- [x] **INV-3:** NaCl encryption fix
+  - Replaced raw xsalsa20poly1305 with nacl.box() (tweetnacl)
+  - nacl.box() includes HSalsa20 key derivation step that raw cipher lacks
+  - First contact uses plaintext encConnInfo (no Ratchet - peer X448 keys unavailable)
+
+- [x] **INV-4:** 12 protocol fixes
+  - 2x A_CRYPTO resolved (HSalsa20, plaintext encConnInfo)
+  - 8+ A_MESSAGE resolved (message type, URI format, version ranges, key params)
+  - Result: SimpleX App shows "Website Visitor - New contact request"
+
 ### 5.4 Layer 4: End-to-end encryption
 
 > **Note:** These tasks were originally planned for Season 5 but were deferred when the season scope shifted to real-server connectivity. They remain the next priority for completing the bidirectional messaging flow.
@@ -651,17 +686,32 @@ These tasks define the GRP profile implementation. They are documented here for 
 7. Result: Browser creates queue on real SMP server (NEW -> IDS)
 8. Test count: 485 tests across 19 files
 
-### Phase 3b: Bidirectional messaging (Season 6)
+### Phase 3b: Connection request (Season 6)
 
-**Goal:** Complete the 7-step SimpleX connection flow so browser and SimpleX app can exchange messages.
+**Goal:** Send a connection request from the browser that the SimpleX App recognizes and displays.
 
-1. Send invitation to contact queue (SKEY + SEND with connection request)
-2. Receive and process connection confirmation from SimpleX app
-3. Exchange HELLO messages (both directions)
-4. Achieve CON ("CONNECTED") state
-5. Bidirectional encrypted messaging via Double Ratchet
-6. Remove debug console.log statements
-7. Nginx proxy persistence (systemd service)
+**Status: COMPLETE (Season 6)**
+
+1. Send AgentInvitation to contact queue (NaCl crypto_box, connReq URI)
+2. SimpleX App receives and displays "New contact request"
+3. 12 protocol fixes (A_CRYPTO, A_MESSAGE errors)
+4. Key discovery: joining party sends AgentInvitation ('I'), not AgentConfirmation ('C')
+5. Security hardening roadmap created
+6. Result: Steps 1-3 of 7-step flow complete
+7. Test count: 493 tests across 19 files
+
+### Phase 3c: Bidirectional messaging (Season 7)
+
+**Goal:** Complete the 7-step SimpleX connection flow (Steps 4-7) so browser and SimpleX app can exchange messages.
+
+1. Fix AUTH error when app accepts connection request
+2. Receive and process connection confirmation (AgentConfirmation with X3DH)
+3. Initialize Double Ratchet with peer's X448 keys
+4. Exchange HELLO messages (both directions)
+5. Achieve CON ("CONNECTED") state
+6. Bidirectional encrypted messaging via Double Ratchet
+7. Remove debug console.log statements
+8. Nginx proxy persistence (systemd service)
 
 ### Phase 4: Hardening (Season 7-8)
 
@@ -854,6 +904,34 @@ SessionId present in responses for v6 (implySessId=false). Must skip before read
 - Incoming responses: sessionId IS present (must skip when parsing)
 - Signing: sessionId IS included in signed data with 0x20 length prefix
 
+**AgentInvitation wire format (Season 6 - joining party to contact queue):**
+
+```
+ClientMessage:
+  [0]      '_' (0x5F)         PHEmpty (1 byte, no auth key)
+  [1-2]    00 07              agentVersion (uint16 BE, v7)
+  [3]      'I' (0x49)         AgentInvitation tag
+  [4-5]    XX XX              connReq URI length (uint16 BE, Large encoding)
+  [6-N]    UTF-8 bytes        connReq URI string
+  [N+1+]   UTF-8 bytes        connInfo JSON (Tail, no length prefix)
+```
+
+connReq URI format:
+```
+simplex:/invitation#/?v=2-7
+  &smp=smp://FINGERPRINT@HOST:5223/QUEUE_ID#/?v=1-4&dh=X25519_SPKI_BASE64&q=m
+  &e2e=v=2-3&x3dh=X448_KEY1_BASE64,X448_KEY2_BASE64
+```
+
+**Critical: AgentInvitation vs AgentConfirmation:**
+- Joining party (scanning a link): AgentInvitation ('I') with PHEmpty ('_')
+- Contact address owner (responding): AgentConfirmation ('C') with PHConfirmation ('K')
+- These are completely different structures - sending the wrong one causes A_MESSAGE
+
+**NaCl crypto_box note:**
+`nacl.box()` = DH(X25519) + HSalsa20(key derivation) + XSalsa20-Poly1305(encryption).
+Using raw XSalsa20-Poly1305 without HSalsa20 produces wrong ciphertext and causes A_CRYPTO.
+
 ### 7.6 GRP cipher suite reference (for documentation, not code yet)
 
 ```
@@ -1000,6 +1078,11 @@ GoChat is one component of the SimpleGo ecosystem for encrypted communication ac
 | INFRA-2 | Infrastructure | Nginx WSS reverse proxy (port 8444) | S5 DONE |
 | INFRA-3 | Infrastructure | Contact address setup | S5 DONE |
 | PROTO-1:15 | Protocol | 15 real-server SMP v6 protocol fixes | S5 DONE |
+| INV-1 | Invitation | AgentInvitation builder (invitation.ts) | S6 DONE |
+| INV-2 | Invitation | connReq URI builder (smp + e2e params) | S6 DONE |
+| INV-3 | Invitation | NaCl encryption fix (nacl.box vs raw cipher) | S6 DONE |
+| INV-4 | Invitation | 12 protocol fixes (A_CRYPTO + A_MESSAGE) | S6 DONE |
+| SEC-6 | Security | Security hardening roadmap document | S6 DONE |
 | GRP-1 | GRP Transport | Noise Protocol transport | S10 |
 | GRP-2 | GRP Transport | ML-KEM-768 post-quantum | S10 |
 | GRP-3 | GRP Transport | Two-hop relay routing | S11 |
@@ -1016,3 +1099,4 @@ GoChat is one component of the SimpleGo ecosystem for encrypted communication ac
 | 2026-03-25 | Season 2 complete. WS-1, WS-2, WS-3 implemented: SMPWebSocketTransport, SMPClient with handshake and dispatch, SMPClientAgent with exponential backoff reconnection. Updated code map and task registry. |
 | 2026-03-25 | Season 4 complete. CONN-1 to CONN-4 implemented: contact address parser, connection state machine, queue pair creation, connection request with X3DH + Double Ratchet (6 crypto layers). 226 new tests (413 total). All CMD tasks marked done (Season 3). Added E2E-4/5/6 tasks for Season 5. Added LIB-1 to LIB-5 for Season 9 (simplex-js library). Updated code map and dependencies. |
 | 2026-03-26 | Season 5 complete. Scope shifted from E2E hardening to real-server connectivity. Built chat UI with left-docked panel design (Phase 1), browser client API with esbuild IIFE bundle and 24 integration tests (Phase 2), SMP server infrastructure with Docker + Nginx WSS proxy on port 8444 (Phase 3), and 15 protocol fixes for real SMP v6 server compatibility including sessionId handling, batch framing, Ed25519 signing, and exact NEW command format (Phase 4). 485 tests total across 19 files. First successful NEW -> IDS on real server from browser via WebSocket. Critical protocol knowledge from SimpleGo team (49 sessions of SMP reverse-engineering). Original E2E tasks (E2E-1 to E2E-6) deferred to Season 6. Added SMP v6 wire format reference (Section 7.5). |
+| 2026-03-28 | Season 6 complete. Connection request to SimpleX App. 4 PRs (#39, #42, #44, #45) plus direct pushes. 12 protocol fixes resolving A_CRYPTO and A_MESSAGE errors. Key discovery: joining party sends AgentInvitation (tag 'I', PHEmpty '_', connReq URI), not AgentConfirmation (tag 'C', PHConfirmation 'K'). First browser-native SMP connection request accepted by SimpleX App. 493 tests. Security hardening roadmap created. Added Section 5.1c, Phase 3b/3c split, AgentInvitation wire format, INV and SEC-6 task IDs. |
