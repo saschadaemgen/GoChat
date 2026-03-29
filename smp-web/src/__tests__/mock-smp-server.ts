@@ -161,11 +161,18 @@ export class MockSMPServer {
   // -- Command handlers
 
   private handleNEW(corrId: Uint8Array, command: Uint8Array): void {
-    // Parse NEW: "NEW " [authKey shortString][dhKey shortString]["S"]["T"]
-    // v9: No BasicAuth byte. Just subscribeMode + sndSecure after keys.
+    // Parse NEW: "NEW " [authKey][dhKey] "0" "S" "T"
+    // v9: Maybe BasicAuth = '0' (ASCII 0x30 = Nothing), then subMode, then sndSecure
     const d = new Decoder(command.subarray(4))
     const recipientAuthKey = this.readShortString(d)
     const recipientDhKey = this.readShortString(d)
+    // Maybe BasicAuth: '0' = Nothing, '1' = Just (skip auth data)
+    if (d.remaining() > 0) {
+      const maybeByte = String.fromCharCode(d.anyByte())
+      if (maybeByte === "1") {
+        this.readShortString(d) // skip basicAuth password
+      }
+    }
     const subMode = d.remaining() > 0 ? String.fromCharCode(d.anyByte()) : "S"
     let sndSecure = false
     if (d.remaining() > 0) {
