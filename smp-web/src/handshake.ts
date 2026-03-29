@@ -26,8 +26,7 @@ import {SMP_BLOCK_SIZE} from "./transport.js"
 // -- SMP version constants
 
 export const minSMPClientVersion = 6
-// TEMPORARY DIAGNOSTIC: revert to v6 to test if auth format is the issue
-export const maxSMPClientVersion = 6
+export const maxSMPClientVersion = 9
 
 export const smpClientVersionRange: VersionRange = {
   minVersion: minSMPClientVersion,
