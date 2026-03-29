@@ -232,6 +232,8 @@ export class SMPClientImpl implements SMPClient {
   readonly sessionId: Uint8Array
   readonly smpVersion: number
   readonly transport: ChatTransport
+  /** Server's X25519 public key for v7+ command authorization (null if v6) */
+  readonly serverAuthPubKeyRaw: Uint8Array | null
   private currentState: SMPClientState = "ready"
   private responseHandler: SMPResponseHandler | null = null
   private pushHandler: SMPPushHandler | null = null
@@ -250,10 +252,12 @@ export class SMPClientImpl implements SMPClient {
     keepaliveIntervalMs: number,
     commandTimeoutMs: number = 30000,
     debugFn?: (label: string, data: Uint8Array) => void,
+    serverAuthPubKeyRaw?: Uint8Array | null,
   ) {
     this.sessionId = sessionId
     this.smpVersion = smpVersion
     this.transport = transport
+    this.serverAuthPubKeyRaw = serverAuthPubKeyRaw ?? null
     this.keepaliveIntervalMs = keepaliveIntervalMs
     this.commandTimeoutMs = commandTimeoutMs
     this.debugFn = debugFn ?? null
@@ -652,7 +656,7 @@ export async function connectSMP(
     }
 
     // 8. Return client with command dispatch
-    console.log("[SMP] connectSMP: HANDSHAKE COMPLETE, creating SMPClient v" + smpVersion)
+    console.log("[SMP] connectSMP: HANDSHAKE COMPLETE, creating SMPClient v" + smpVersion + ", serverAuthKey=" + (serverHello.serverAuthPubKeyRaw ? serverHello.serverAuthPubKeyRaw.length + "B" : "null"))
     return new SMPClientImpl(
       serverHello.sessionId,
       smpVersion,
@@ -660,6 +664,7 @@ export async function connectSMP(
       cfg.keepaliveIntervalMs,
       cfg.commandTimeoutMs,
       debug ?? undefined,
+      serverHello.serverAuthPubKeyRaw,
     )
   } catch (e) {
     transport.close()
