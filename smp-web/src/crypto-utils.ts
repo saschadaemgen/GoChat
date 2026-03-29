@@ -129,3 +129,12 @@ export function decodeX448PublicKey(spki: Uint8Array): Uint8Array {
 export function x25519DH(privateKey: Uint8Array, publicKey: Uint8Array): Uint8Array {
   return x25519.getSharedSecret(privateKey, publicKey)
 }
+
+/**
+ * Compute X25519 raw scalar multiplication (no HSalsa20 key derivation).
+ * Used for CbAuthenticator where the raw DH secret is needed directly.
+ * @returns 32-byte raw DH shared secret
+ */
+export function x25519ScalarMult(privateKey: Uint8Array, publicKey: Uint8Array): Uint8Array {
+  return x25519.getSharedSecret(privateKey, publicKey)
+}

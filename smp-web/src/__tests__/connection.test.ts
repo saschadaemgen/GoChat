@@ -253,12 +253,12 @@ describe("initiateConnection with legacy full link", () => {
     expect(mockClient.createQueueCalls.length).toBe(1)
   })
 
-  it("passes 44-byte Ed25519 SPKI recipientAuthKey", async () => {
+  it("passes 44-byte X25519 SPKI recipientAuthKey (v7+ CbAuth)", async () => {
     await mgr.initiateConnection(buildLegacyContactURI())
     const params = mockClient.createQueueCalls[0]
     expect(params.recipientAuthKey.length).toBe(44)
-    // Verify Ed25519 OID
-    expect(params.recipientAuthKey[8]).toBe(0x70)
+    // Verify X25519 OID (0x6e for v7+ CbAuthenticator, was 0x70 for v6 Ed25519)
+    expect(params.recipientAuthKey[8]).toBe(0x6e)
   })
 
   it("passes 44-byte X25519 SPKI recipientDhKey", async () => {

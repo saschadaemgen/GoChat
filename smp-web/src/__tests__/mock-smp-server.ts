@@ -161,13 +161,25 @@ export class MockSMPServer {
   // -- Command handlers
 
   private handleNEW(corrId: Uint8Array, command: Uint8Array): void {
-    // Parse v6 NEW: "NEW " [authKey shortString][dhKey shortString][subMode char]
-    // No spaces between fields. No basicAuth. No sndSecure.
+    // Parse NEW: "NEW " [authKey shortString][dhKey shortString][Maybe BasicAuth][subMode][sndSecure?]
     const d = new Decoder(command.subarray(4))
     const recipientAuthKey = this.readShortString(d)
     const recipientDhKey = this.readShortString(d)
-    const subMode = String.fromCharCode(d.anyByte())
-    const sndSecure = false
+    // Maybe BasicAuth: read and skip (0x00 = Nothing, or shortString password)
+    if (d.remaining() > 0) {
+      const maybeByte = d.anyByte()
+      if (maybeByte !== 0x00) {
+        // Has basicAuth - skip the password shortString
+        const pwLen = d.anyByte()
+        d.take(pwLen)
+      }
+    }
+    const subMode = d.remaining() > 0 ? String.fromCharCode(d.anyByte()) : "S"
+    let sndSecure = false
+    if (d.remaining() > 0) {
+      const flag = String.fromCharCode(d.anyByte())
+      sndSecure = flag === "T"
+    }
 
     const recipientId = generateId(24)
     const senderId = generateId(24)

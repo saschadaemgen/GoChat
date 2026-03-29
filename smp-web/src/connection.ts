@@ -15,9 +15,7 @@ import type {ParsedContactAddress, SMPQueueURI, SMPServer} from "./address.js"
 import {ConnectionStateMachine} from "./state.js"
 import type {QueuePairInfo} from "./state.js"
 import {
-  generateEd25519KeyPair,
   generateX25519KeyPair,
-  encodeEd25519PublicKey,
   encodeX25519PublicKey,
 } from "./crypto-utils.js"
 import type {KeyPair} from "./crypto-utils.js"
@@ -165,8 +163,9 @@ export class ConnectionManager {
 
     // 3. Generate key pairs
     console.log("[SMP] initiateConnection: generating key pairs")
+    // v7+ uses X25519 for per-queue auth (CbAuthenticator), not Ed25519
     const keys: ConnectionKeys = {
-      recipientAuth: generateEd25519KeyPair(),
+      recipientAuth: generateX25519KeyPair(),  // X25519 for v7+ CbAuthenticator
       recipientDh: generateX25519KeyPair(),
       e2eDh: generateX25519KeyPair(),
     }
@@ -199,8 +198,8 @@ export class ConnectionManager {
       console.log("[SMP] initiateConnection: agent.getClient returned, calling createQueue")
 
       const ids = await client.createQueue({
-        recipientAuthKey: encodeEd25519PublicKey(keys.recipientAuth.publicKey),
-        recipientAuthPrivateKey: keys.recipientAuth.privateKey, // Ed25519 private key for signing
+        recipientAuthKey: encodeX25519PublicKey(keys.recipientAuth.publicKey), // X25519 SPKI for v7+ CbAuth
+        recipientAuthPrivateKey: keys.recipientAuth.privateKey, // X25519 private key for CbAuthenticator
         recipientDhKey: encodeX25519PublicKey(keys.recipientDh.publicKey),
         subscribeMode: this.config.subscribeMode ?? "S",
         sndSecure: this.config.sndSecure ?? true,

@@ -26,7 +26,7 @@ import {SMP_BLOCK_SIZE} from "./transport.js"
 // -- SMP version constants
 
 export const minSMPClientVersion = 6
-export const maxSMPClientVersion = 6
+export const maxSMPClientVersion = 9
 
 export const smpClientVersionRange: VersionRange = {
   minVersion: minSMPClientVersion,
@@ -176,14 +176,20 @@ export function decodeSMPServerHandshake(block: Uint8Array): SMPServerHandshake 
 // -- SMP ClientHello
 
 export interface SMPClientHandshake {
-  smpVersion: number    // negotiated version (6 or 7)
+  smpVersion: number    // negotiated version
   keyHash: Uint8Array   // SHA-256 fingerprint of server CA cert (32 bytes)
+  sessionAuthPubKeySPKI?: Uint8Array // X25519 SPKI (44 bytes) for v7+ auth
 }
 
 // Encode ClientHello as a 16KB padded block.
-// Wire format: pad(Word16(version) + shortString(keyHash), 16384)
+// v6: pad(Word16(version) + shortString(keyHash))
+// v7+: pad(Word16(version) + shortString(keyHash) + shortString(X25519_SPKI_44B))
 export function encodeSMPClientHandshake(ch: SMPClientHandshake): Uint8Array {
-  const body = concatBytes(encodeWord16(ch.smpVersion), encodeBytes(ch.keyHash))
+  const parts = [encodeWord16(ch.smpVersion), encodeBytes(ch.keyHash)]
+  if (ch.smpVersion >= 7 && ch.sessionAuthPubKeySPKI) {
+    parts.push(encodeBytes(ch.sessionAuthPubKeySPKI))
+  }
+  const body = concatBytes(...parts)
   return blockPad(body)
 }
 
