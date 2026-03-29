@@ -45,17 +45,16 @@ export interface EnableNotificationsParams {
 
 // -- Command encoders
 
-// v9 NEW format: "NEW " [authKey SPKI][dhKey SPKI] [0x00=Nothing BasicAuth] "S" "T"
+// v9 NEW format: "NEW " [authKey SPKI][dhKey SPKI] "S" "T"
 // authKey: X25519 SPKI for v7+ (was Ed25519 for v6). OID 2b 65 6e.
 // dhKey: X25519 SPKI (unchanged). sndSecure = "T" (required for v9).
-// [0x00] = Maybe BasicAuth = Nothing (shortString of empty).
-// Total: 4 + 45 + 45 + 1 + 1 + 1 = 97 bytes.
+// Maybe BasicAuth Nothing = 0 bytes (empty, NOT 0x00).
+// Total: 4 + 45 + 45 + 1 + 1 = 96 bytes.
 export function encodeNEW(params: NewQueueParams): Uint8Array {
   return concatBytes(
     ascii("NEW "),
     encodeBytes(params.recipientAuthKey),  // [0x2C][44B X25519 SPKI for v9]
     encodeBytes(params.recipientDhKey),     // [0x2C][44B X25519 SPKI]
-    new Uint8Array([0x00]),                 // Maybe BasicAuth = Nothing
     ascii(params.subscribeMode),            // "S" or "C"
     ascii("T")                              // sndSecure = True (v9 required)
   )
