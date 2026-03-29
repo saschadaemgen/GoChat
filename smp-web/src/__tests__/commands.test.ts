@@ -104,7 +104,7 @@ describe("tag-only commands", () => {
 // v6 NEW format (confirmed by SimpleGo working C code, byte for byte):
 //   "NEW " [0x2C][44B authKey SPKI] [0x2C][44B dhKey SPKI] "S"
 // No spaces between fields. No basicAuth. No sndSecure.
-// v9 NEW: 4 + 45 + 45 + 3 = 97 bytes (tail "0ST" = Maybe Nothing + Subscribe + sndSecure).
+// DIAGNOSTIC: v6 NEW: 4 + 45 + 45 + 1 = 95 bytes ("S" only, no Maybe/sndSecure).
 
 describe("encodeNEW", () => {
   const baseParams: NewQueueParams = {
@@ -131,27 +131,20 @@ describe("encodeNEW", () => {
     expect(result[50]).toBe(0xBB)
   })
 
-  it("encodes Maybe BasicAuth Nothing as ASCII '0' (0x30) after dhKey", () => {
+  it("encodes subscribeMode immediately after dhKey", () => {
     const result = encodeNEW(baseParams)
-    // After "NEW "(4) + authKey(45) + dhKey(45) = offset 94
-    expect(result[94]).toBe(0x30) // '0' = Maybe Nothing (ASCII, not binary 0x00!)
-  })
-
-  it("encodes subscribeMode after Maybe BasicAuth", () => {
-    const result = encodeNEW(baseParams)
-    expect(result[95]).toBe(0x53) // "S"
+    expect(result[94]).toBe(0x53) // "S"
   })
 
   it("encodes subscribeMode 'C' correctly", () => {
     const params: NewQueueParams = {...baseParams, subscribeMode: "C"}
     const result = encodeNEW(params)
-    expect(result[95]).toBe(0x43) // "C"
+    expect(result[94]).toBe(0x43) // "C"
   })
 
-  it("has correct total length: 97 bytes", () => {
+  it("has correct total length: 95 bytes", () => {
     const result = encodeNEW(baseParams)
-    // "NEW "(4) + authKey(45) + dhKey(45) + "0ST"(3) = 97
-    expect(result.length).toBe(97)
+    expect(result.length).toBe(95)
   })
 
   it("has NO spaces between key fields", () => {
@@ -160,20 +153,19 @@ describe("encodeNEW", () => {
     expect(result[4 + 45]).toBe(0x2C)
   })
 
-  it("includes sndSecure 'T' as last byte", () => {
+  it("last byte is subscribeMode", () => {
     const result = encodeNEW(baseParams)
-    expect(result[result.length - 1]).toBe(0x54) // "T" = sndSecure
+    expect(result[result.length - 1]).toBe(0x53) // "S"
   })
 
-  it("exact byte sequence matches v9 format", () => {
-    const expected = new Uint8Array(97)
+  it("exact byte sequence matches v6 format", () => {
+    const expected = new Uint8Array(95)
     expected[0] = 0x4E; expected[1] = 0x45; expected[2] = 0x57; expected[3] = 0x20
     expected[4] = 0x2C
     expected.fill(0xAA, 5, 49)
     expected[49] = 0x2C
     expected.fill(0xBB, 50, 94)
-    expected[94] = 0x30 // '0' = Maybe Nothing
-    expected[95] = 0x53 // "S"
+    expected[94] = 0x53 // "S"
     expected[96] = 0x54 // "T" sndSecure
 
     const result = encodeNEW(baseParams)
