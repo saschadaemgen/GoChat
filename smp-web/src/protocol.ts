@@ -70,9 +70,19 @@ export function encodeTransmission(
     parts.push(signature)
   } else if (auth && auth.type === "cb") {
     // v7+/v9: CbAuthenticator (80 bytes)
+    console.log("[SMP-AUTH] === CbAuthenticator Debug ===")
+    console.log("[SMP-AUTH] serverPubKeyRaw (" + auth.serverPubKeyRaw.length + "B):", Array.from(auth.serverPubKeyRaw).map(b => b.toString(16).padStart(2, "0")).join(""))
+    console.log("[SMP-AUTH] queuePrivKeyRaw (" + auth.queuePrivKeyRaw.length + "B):", Array.from(auth.queuePrivKeyRaw).map(b => b.toString(16).padStart(2, "0")).join(""))
     const rawDhSecret = nacl.scalarMult(auth.queuePrivKeyRaw, auth.serverPubKeyRaw)
+    console.log("[SMP-AUTH] rawDhSecret (" + rawDhSecret.length + "B):", Array.from(rawDhSecret).map(b => b.toString(16).padStart(2, "0")).join(""))
+    console.log("[SMP-AUTH] tForAuth (" + tForAuth.length + "B) first 80:", Array.from(tForAuth.subarray(0, 80)).map(b => b.toString(16).padStart(2, "0")).join(""))
+    console.log("[SMP-AUTH] tForAuth last 20:", Array.from(tForAuth.subarray(tForAuth.length - 20)).map(b => b.toString(16).padStart(2, "0")).join(""))
     const hash = sha512(tForAuth)
+    console.log("[SMP-AUTH] sha512(tForAuth) (" + hash.length + "B):", Array.from(hash).map(b => b.toString(16).padStart(2, "0")).join(""))
+    console.log("[SMP-AUTH] nonce/corrId (" + corrId.length + "B):", Array.from(corrId).map(b => b.toString(16).padStart(2, "0")).join(""))
     const authenticator = nacl.secretbox(hash, corrId, rawDhSecret) // 80 bytes
+    console.log("[SMP-AUTH] authenticator (" + authenticator.length + "B):", Array.from(authenticator).map(b => b.toString(16).padStart(2, "0")).join(""))
+    console.log("[SMP-AUTH] === End Debug ===")
     parts.push(new Uint8Array([0x50])) // authLen = 80
     parts.push(authenticator)
   } else {
