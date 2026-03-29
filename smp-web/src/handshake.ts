@@ -95,6 +95,7 @@ export interface SMPServerHandshake {
 // the 32-byte raw key that follows the BIT STRING header.
 function extractX25519AuthKey(signedKeyDer: Uint8Array): Uint8Array | null {
   if (signedKeyDer.length < 37) return null
+  console.log("[SMP-AUTH] signedKeyDer (" + signedKeyDer.length + "B) first 40:", Array.from(signedKeyDer.subarray(0, 40)).map(b => b.toString(16).padStart(2, "0")).join(""))
   // Search for X25519 OID: 06 03 2b 65 6e
   for (let i = 0; i < signedKeyDer.length - 37; i++) {
     if (signedKeyDer[i] === 0x06 &&
@@ -102,10 +103,12 @@ function extractX25519AuthKey(signedKeyDer: Uint8Array): Uint8Array | null {
         signedKeyDer[i + 2] === 0x2b &&
         signedKeyDer[i + 3] === 0x65 &&
         signedKeyDer[i + 4] === 0x6e) {
-      // After OID: 03 21 00 <32 bytes key> (BIT STRING, 33 bytes, 0 unused bits)
-      const keyStart = i + 5 + 2 + 1 // OID(5) + BIT STRING tag+len(2) + unused bits byte(1)
+      const keyStart = i + 5 + 2 + 1
       if (keyStart + 32 <= signedKeyDer.length) {
-        return signedKeyDer.slice(keyStart, keyStart + 32)
+        const key = signedKeyDer.slice(keyStart, keyStart + 32)
+        console.log("[SMP-AUTH] X25519 OID found at offset " + i + ", key at offset " + keyStart)
+        console.log("[SMP-AUTH] extracted serverAuthKey (" + key.length + "B):", Array.from(key).map(b => b.toString(16).padStart(2, "0")).join(""))
+        return key
       }
     }
   }
