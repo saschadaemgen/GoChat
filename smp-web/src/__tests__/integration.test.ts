@@ -60,7 +60,7 @@ describe("Scenario 1: Full messaging roundtrip", () => {
     expect(ids.recipientId.length).toBe(24)
     expect(ids.senderId.length).toBe(24)
     expect(ids.serverDhKey.length).toBe(32)
-    expect(ids.sndSecure).toBe(false)
+    expect(ids.sndSecure).toBe(true)
 
     // 2. Secure queue
     await client.secureQueue(ids.recipientId, fakeKey(0xCC))
@@ -118,7 +118,7 @@ describe("Scenario 2: Fast v9 procedure (sndSecure)", () => {
     })
 
     // v6 format does not include sndSecure, mock always returns false
-    expect(ids.sndSecure).toBe(false)
+    expect(ids.sndSecure).toBe(true)
 
     // 2. Secure queue by sender (v9 flow)
     await client.secureQueueSender(ids.senderId, fakeKey(0x33))

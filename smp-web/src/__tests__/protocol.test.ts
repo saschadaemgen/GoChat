@@ -421,8 +421,8 @@ describe("encodeTransmission v6 sessionId", () => {
     expect(eid).toEqual(entityId)
   })
 
-  it("v6 format (with sessionId): auth + sessionId + corrId + entityId + command", () => {
-    const tx = encodeTransmission(corrId, entityId, command, sessionId)
+  it("v6 format (implySessId=false): auth + sessionId + corrId + entityId + command", () => {
+    const tx = encodeTransmission(corrId, entityId, command, sessionId, undefined, false)
     const d = new Decoder(tx)
     const auth = decodeBytes(d)     // empty auth (sigLen=0x00)
     const sid = decodeBytes(d)      // sessionId AFTER auth
@@ -435,8 +435,8 @@ describe("encodeTransmission v6 sessionId", () => {
   })
 
   it("v6 transmission is longer than v7 by sessionId shortString size", () => {
-    const txV7 = encodeTransmission(corrId, entityId, command)
-    const txV6 = encodeTransmission(corrId, entityId, command, sessionId)
+    const txV7 = encodeTransmission(corrId, entityId, command, undefined, undefined, true)
+    const txV6 = encodeTransmission(corrId, entityId, command, sessionId, undefined, false)
     // v6 is longer by 1 (length prefix) + 32 (sessionId) = 33 bytes
     expect(txV6.length).toBe(txV7.length + 33)
   })
@@ -457,7 +457,7 @@ describe("decodeTransmission v6 sessionId", () => {
   })
 
   it("decodes v6 format (with sessionId) correctly", () => {
-    const tx = encodeTransmission(corrId, entityId, command, sessionId)
+    const tx = encodeTransmission(corrId, entityId, command, sessionId, undefined, false)
     const d = new Decoder(tx)
     const result = decodeTransmission(d, true)
     expect(result.corrId).toEqual(corrId)
@@ -465,7 +465,7 @@ describe("decodeTransmission v6 sessionId", () => {
   })
 
   it("roundtrips v6 encode/decode correctly", () => {
-    const tx = encodeTransmission(corrId, entityId, command, sessionId)
+    const tx = encodeTransmission(corrId, entityId, command, sessionId, undefined, false)
     const d = new Decoder(tx)
     const result = decodeTransmission(d, true)
     expect(result.corrId).toEqual(corrId)

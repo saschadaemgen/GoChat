@@ -86,20 +86,20 @@ describe("decodeSMPServerHandshake", () => {
 })
 
 describe("compatibleVRange", () => {
-  it("negotiates SMP v6 when server offers v6-v7", () => {
-    // Server supports v6-v7, client capped at v6
-    const serverRange: VersionRange = {minVersion: 6, maxVersion: 7}
+  it("negotiates v9 when server offers v6-18", () => {
+    // Server supports v6-18, client supports v6-9
+    const serverRange: VersionRange = {minVersion: 6, maxVersion: 18}
     const result = compatibleVRange(serverRange, smpClientVersionRange)
     expect(result).not.toBeNull()
     expect(result!.minVersion).toBe(6)
-    expect(result!.maxVersion).toBe(6)
+    expect(result!.maxVersion).toBe(9)
   })
 
-  it("returns null when server only supports v7", () => {
-    // Client capped at v6, v7-only server is incompatible
-    const serverRange: VersionRange = {minVersion: 7, maxVersion: 7}
+  it("negotiates v7 when server offers v6-v7", () => {
+    const serverRange: VersionRange = {minVersion: 6, maxVersion: 7}
     const result = compatibleVRange(serverRange, smpClientVersionRange)
-    expect(result).toBeNull()
+    expect(result).not.toBeNull()
+    expect(result!.maxVersion).toBe(7)
   })
 
   it("negotiates when server only supports v6", () => {
@@ -109,8 +109,8 @@ describe("compatibleVRange", () => {
     expect(result!.maxVersion).toBe(6)
   })
 
-  it("returns null for incompatible version (server min=8)", () => {
-    const serverRange: VersionRange = {minVersion: 8, maxVersion: 10}
+  it("returns null for incompatible version (server min=10)", () => {
+    const serverRange: VersionRange = {minVersion: 10, maxVersion: 18}
     const result = compatibleVRange(serverRange, smpClientVersionRange)
     expect(result).toBeNull()
   })
@@ -122,12 +122,12 @@ describe("compatibleVRange", () => {
   })
 
   it("selects highest mutual version", () => {
-    // Server supports v5-v8, client capped at v6
+    // Server supports v5-v8, client supports v6-v9
     const serverRange: VersionRange = {minVersion: 5, maxVersion: 8}
     const result = compatibleVRange(serverRange, smpClientVersionRange)
     expect(result).not.toBeNull()
-    // Should select v6 (highest mutual, client capped at v6)
-    expect(result!.maxVersion).toBe(6)
+    // Should select v8 (highest mutual)
+    expect(result!.maxVersion).toBe(8)
   })
 })
 

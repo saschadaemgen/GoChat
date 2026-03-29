@@ -7,6 +7,8 @@ import {
   decodeLarge
 } from "@simplex-chat/xftp-web/dist/protocol/encoding.js"
 import {ed25519} from "@noble/curves/ed25519"
+import nacl from "tweetnacl"
+import {sha512} from "@noble/hashes/sha512"
 
 // readTag/readSpace inlined from xftp-web/protocol/commands.ts to avoid
 // pulling libsodium through the commands.ts -> keys.ts import chain.
@@ -26,59 +28,65 @@ function readSpace(d: Decoder): void {
   if (d.anyByte() !== 0x20) throw new Error("expected space")
 }
 
-// -- Transmission encoding (Protocol.hs:2201-2203)
+// -- Transmission encoding
 //
-// SMP v6 wire format (from SimpleGo protocol team, 49 sessions of debugging):
-//   [sigLen][signature?][sessIdLen=0x20][sessionId 32B][corrIdLen][corrId][entityIdLen][entityId][cmd]
-//   Signature covers: [corrId][entityId][cmd] (sessionId is NOT signed)
-//   For unsigned commands: sigLen=0x00 (no signature bytes)
+// SMP v6: [sigLen][signature?][sessId shortString][corrId][entityId][cmd]
+//   Ed25519 signature. SessionId on wire. Signed data includes sessionId with length prefix.
 //
-// SMP v7+ (implySessId = True): sessionId is NOT on the wire
-//   [sigLen][signature?][corrIdLen][corrId][entityIdLen][entityId][cmd]
+// SMP v7+/v9: [authLen][authenticator?][corrId][entityId][cmd]
+//   CbAuthenticator (80 bytes). SessionId NOT on wire but IN authenticated data.
+//   CorrId = nonce (24 bytes). Auth = nacl.secretbox(sha512(tForAuth), nonce, rawDhSecret).
+
+export type TransmissionAuth =
+  | {type: "ed25519"; signKey: Uint8Array}
+  | {type: "cb"; serverPubKeyRaw: Uint8Array; queuePrivKeyRaw: Uint8Array}
+  | {type: "none"}
 
 export function encodeTransmission(
   corrId: Uint8Array,
   entityId: Uint8Array,
   command: Uint8Array,
   sessionId?: Uint8Array,
-  signKey?: Uint8Array
+  auth?: TransmissionAuth,
+  implySessId: boolean = true
 ): Uint8Array {
-  // The tail (corrId + entityId + command) appears both in the
-  // signed data and on the wire after sessionId.
-  const tail = concatBytes(
+  const tToSend = concatBytes(
     encodeBytes(corrId),
     encodeBytes(entityId),
     command
   )
 
-  // For v6: signed data INCLUDES sessionId WITH its length prefix!
-  // signedData = [0x20][32B sessionId] + [corrId][entityId][command]
-  // SimpleGo team confirmed: the 0x20 length prefix byte MUST be present.
-  // Without it: ERR AUTH. This cost SimpleGo a full day to discover.
-  const signedData = sessionId
-    ? concatBytes(encodeBytes(sessionId), tail)
-    : tail
+  // tForAuth always includes sessionId (with length prefix) even when not on wire
+  const tForAuth = sessionId
+    ? concatBytes(encodeBytes(sessionId), tToSend)
+    : tToSend
 
   const parts: Uint8Array[] = []
 
-  if (signKey) {
-    // Signed transmission: [sigLen=0x40][64B Ed25519 signature]
-    const signature = ed25519.sign(signedData, signKey)
+  if (auth && auth.type === "ed25519") {
+    // v6: Ed25519 signature (64 bytes)
+    const signature = ed25519.sign(tForAuth, auth.signKey)
     parts.push(new Uint8Array([0x40])) // sigLen = 64
     parts.push(signature)
+  } else if (auth && auth.type === "cb") {
+    // v7+/v9: CbAuthenticator (80 bytes)
+    const rawDhSecret = nacl.scalarMult(auth.queuePrivKeyRaw, auth.serverPubKeyRaw)
+    const hash = sha512(tForAuth)
+    const authenticator = nacl.secretbox(hash, corrId, rawDhSecret) // 80 bytes
+    parts.push(new Uint8Array([0x50])) // authLen = 80
+    parts.push(authenticator)
   } else {
-    // Unsigned transmission: [sigLen=0x00]
+    // Unsigned: [0x00]
     parts.push(new Uint8Array([0x00]))
   }
 
-  // For SMP v6: sessionId goes AFTER sig, BEFORE corrId on the wire
-  if (sessionId) {
+  // v6 (implySessId=false): sessionId goes on wire AFTER auth, BEFORE corrId
+  // v7+ (implySessId=true): sessionId NOT on wire
+  if (sessionId && !implySessId) {
     parts.push(encodeBytes(sessionId))
   }
 
-  // Append tail (corrId + entityId + command)
-  parts.push(tail)
-
+  parts.push(tToSend)
   return concatBytes(...parts)
 }
 

@@ -26,7 +26,7 @@ import {SMP_BLOCK_SIZE} from "./transport.js"
 // -- SMP version constants
 
 export const minSMPClientVersion = 6
-export const maxSMPClientVersion = 6
+export const maxSMPClientVersion = 9
 
 export const smpClientVersionRange: VersionRange = {
   minVersion: minSMPClientVersion,
@@ -87,6 +87,29 @@ export interface SMPServerHandshake {
   sessionId: Uint8Array
   certChainDer: Uint8Array[] // NonEmpty list of DER certificate blobs (empty for WebSocket)
   signedKeyDer: Uint8Array   // signed X25519 DH public key (DER, empty for WebSocket)
+  serverAuthPubKeyRaw: Uint8Array | null // Raw 32-byte X25519 public key for v7+ command auth
+}
+
+// Extract raw 32-byte X25519 public key from a SignedExact PubKey DER structure.
+// Searches for the X25519 OID (1.3.101.110 = 06 03 2b 65 6e) and extracts
+// the 32-byte raw key that follows the BIT STRING header.
+function extractX25519AuthKey(signedKeyDer: Uint8Array): Uint8Array | null {
+  if (signedKeyDer.length < 37) return null
+  // Search for X25519 OID: 06 03 2b 65 6e
+  for (let i = 0; i < signedKeyDer.length - 37; i++) {
+    if (signedKeyDer[i] === 0x06 &&
+        signedKeyDer[i + 1] === 0x03 &&
+        signedKeyDer[i + 2] === 0x2b &&
+        signedKeyDer[i + 3] === 0x65 &&
+        signedKeyDer[i + 4] === 0x6e) {
+      // After OID: 03 21 00 <32 bytes key> (BIT STRING, 33 bytes, 0 unused bits)
+      const keyStart = i + 5 + 2 + 1 // OID(5) + BIT STRING tag+len(2) + unused bits byte(1)
+      if (keyStart + 32 <= signedKeyDer.length) {
+        return signedKeyDer.slice(keyStart, keyStart + 32)
+      }
+    }
+  }
+  return null
 }
 
 // Decode ServerHello from a 16KB padded block.
@@ -128,31 +151,45 @@ export function decodeSMPServerHandshake(block: Uint8Array): SMPServerHandshake 
   // decode the certificate chain.
   let certChainDer: Uint8Array[] = []
   let signedKeyDer = new Uint8Array(0)
+  let serverAuthPubKeyRaw: Uint8Array | null = null
 
   if (d.remaining() > 0) {
     try {
       certChainDer = decodeNonEmpty(decodeLarge, d)
       signedKeyDer = decodeLarge(d)
+      // Extract the X25519 public key for v7+ command authorization
+      if (signedKeyDer.length > 0) {
+        serverAuthPubKeyRaw = extractX25519AuthKey(signedKeyDer)
+        if (serverAuthPubKeyRaw) {
+          console.log("[SMP] Server auth X25519 key extracted: " + serverAuthPubKeyRaw.length + " bytes")
+        }
+      }
     } catch (_e) {
       // Failed to decode cert chain - likely WebSocket format with no certs.
       // Leave certChainDer empty and signedKeyDer empty.
     }
   }
 
-  return {smpVersionRange, sessionId, certChainDer, signedKeyDer}
+  return {smpVersionRange, sessionId, certChainDer, signedKeyDer, serverAuthPubKeyRaw}
 }
 
 // -- SMP ClientHello
 
 export interface SMPClientHandshake {
-  smpVersion: number    // negotiated version (6 or 7)
+  smpVersion: number    // negotiated version
   keyHash: Uint8Array   // SHA-256 fingerprint of server CA cert (32 bytes)
+  sessionAuthPubKeySPKI?: Uint8Array // X25519 SPKI (44 bytes) for v7+ auth
 }
 
 // Encode ClientHello as a 16KB padded block.
-// Wire format: pad(Word16(version) + shortString(keyHash), 16384)
+// v6: pad(Word16(version) + shortString(keyHash))
+// v7+: pad(Word16(version) + shortString(keyHash) + shortString(X25519_SPKI_44B))
 export function encodeSMPClientHandshake(ch: SMPClientHandshake): Uint8Array {
-  const body = concatBytes(encodeWord16(ch.smpVersion), encodeBytes(ch.keyHash))
+  const parts = [encodeWord16(ch.smpVersion), encodeBytes(ch.keyHash)]
+  if (ch.smpVersion >= 7 && ch.sessionAuthPubKeySPKI) {
+    parts.push(encodeBytes(ch.sessionAuthPubKeySPKI))
+  }
+  const body = concatBytes(...parts)
   return blockPad(body)
 }
 

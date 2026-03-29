@@ -9,9 +9,12 @@
 // Season 3 adds typed command methods that encode commands, send 16KB blocks,
 // and return typed Promises resolved via corrId-matched dispatch.
 
+import nacl from "tweetnacl"
+import {sha512} from "@noble/hashes/sha512"
 import {Decoder, concatBytes, encodeBytes, encodeLarge} from "@simplex-chat/xftp-web/dist/protocol/encoding.js"
 import {encodeTransmission, decodeTransmission, decodeResponse} from "./protocol.js"
-import type {SMPResponse, SMPError} from "./protocol.js"
+import {encodeX25519PublicKey, x25519ScalarMult} from "./crypto-utils.js"
+import type {SMPResponse, SMPError, TransmissionAuth} from "./protocol.js"
 import {SMPWebSocketTransport, SMP_BLOCK_SIZE} from "./transport.js"
 import {
   decodeSMPServerHandshake,
@@ -232,6 +235,8 @@ export class SMPClientImpl implements SMPClient {
   readonly sessionId: Uint8Array
   readonly smpVersion: number
   readonly transport: ChatTransport
+  /** Server's X25519 public key for v7+ command authorization (null if v6) */
+  readonly serverAuthPubKeyRaw: Uint8Array | null
   private currentState: SMPClientState = "ready"
   private responseHandler: SMPResponseHandler | null = null
   private pushHandler: SMPPushHandler | null = null
@@ -250,10 +255,12 @@ export class SMPClientImpl implements SMPClient {
     keepaliveIntervalMs: number,
     commandTimeoutMs: number = 30000,
     debugFn?: (label: string, data: Uint8Array) => void,
+    serverAuthPubKeyRaw?: Uint8Array | null,
   ) {
     this.sessionId = sessionId
     this.smpVersion = smpVersion
     this.transport = transport
+    this.serverAuthPubKeyRaw = serverAuthPubKeyRaw ?? null
     this.keepaliveIntervalMs = keepaliveIntervalMs
     this.commandTimeoutMs = commandTimeoutMs
     this.debugFn = debugFn ?? null
@@ -373,8 +380,8 @@ export class SMPClientImpl implements SMPClient {
   }
 
   // Send a typed command and wait for the corrId-matched response.
-  // signKey: optional Ed25519 private key (32 bytes) for signing the command.
-  private sendTypedCommand(entityId: Uint8Array, command: Uint8Array, signKey?: Uint8Array): Promise<SMPResponse> {
+  // queuePrivKeyRaw: X25519 private key for v7+ CbAuthenticator, or Ed25519 key for v6.
+  private sendTypedCommand(entityId: Uint8Array, command: Uint8Array, queuePrivKeyRaw?: Uint8Array): Promise<SMPResponse> {
     if (this.currentState !== "ready") {
       if (this.debugFn) {
         this.debugFn("sendTypedCommand rejected: state=" + this.currentState, command.subarray(0, 16))
@@ -383,14 +390,21 @@ export class SMPClientImpl implements SMPClient {
     }
 
     const corrId = generateCorrId()
-    // SMP v6: include sessionId AFTER auth, BEFORE corrId
-    const sessId = this.smpVersion < 7 ? this.sessionId : undefined
-    const transmission = encodeTransmission(corrId, entityId, command, sessId, signKey)
+    // Build auth based on version
+    let auth: TransmissionAuth | undefined
+    if (queuePrivKeyRaw && this.smpVersion >= 7 && this.serverAuthPubKeyRaw) {
+      auth = {type: "cb", serverPubKeyRaw: this.serverAuthPubKeyRaw, queuePrivKeyRaw}
+    } else if (queuePrivKeyRaw && this.smpVersion < 7) {
+      auth = {type: "ed25519", signKey: queuePrivKeyRaw}
+    }
+    // Always pass sessionId for auth calculation. implySessId controls wire presence.
+    const implySessId = this.smpVersion >= 7
+    const transmission = encodeTransmission(corrId, entityId, command, this.sessionId, auth, implySessId)
     const block = buildCommandBlock(transmission)
     const key = toHex(corrId)
 
     console.log("[SMP] sendTypedCommand: corrId=" + key.substring(0, 16) + "..., entityId=" + toHex(entityId) + ", cmd first 4:", toHex(command.subarray(0, 4)))
-    console.log("[SMP] sendTypedCommand: sessId=" + (sessId ? toHex(sessId.subarray(0, 8)) + "... (" + sessId.length + "B)" : "none") + ", transmission " + transmission.length + "B")
+    console.log("[SMP] sendTypedCommand: sessId=" + toHex(this.sessionId.subarray(0, 8)) + "... (" + this.sessionId.length + "B), implySessId=" + implySessId + ", transmission " + transmission.length + "B")
     console.log("[SMP] sendTypedCommand: transmission first 48:", toHex(transmission.subarray(0, 48)))
 
     return new Promise<SMPResponse>((resolve, reject) => {
@@ -443,8 +457,9 @@ export class SMPClientImpl implements SMPClient {
     this.keepaliveTimer = setInterval(() => {
       if (this.currentState !== "ready") return
       const corrId = generateCorrId()
-      const sessId = this.smpVersion < 7 ? this.sessionId : undefined
-      const transmission = encodeTransmission(corrId, new Uint8Array(0), encodePING(), sessId)
+      // PING is unsigned for all versions
+      const implySessId = this.smpVersion >= 7
+      const transmission = encodeTransmission(corrId, new Uint8Array(0), encodePING(), this.sessionId, undefined, implySessId)
       const block = buildCommandBlock(transmission)
       this.transport.send(block).catch(() => {
         // Send failed - connection may be dead.
@@ -624,11 +639,17 @@ export async function connectSMP(
     console.log("[SMP] connectSMP: negotiated version=" + smpVersion)
 
     // 6. Send ClientHello
+    // For v7+: generate session X25519 key pair and include in ClientHello
+    let sessionAuthKeyPair: {publicKey: Uint8Array; secretKey: Uint8Array} | null = null
+    if (smpVersion >= 7) {
+      sessionAuthKeyPair = nacl.box.keyPair()
+    }
     const clientHello = encodeSMPClientHandshake({
       smpVersion,
       keyHash: server.keyHash,
+      sessionAuthPubKeySPKI: sessionAuthKeyPair ? encodeX25519PublicKey(sessionAuthKeyPair.publicKey) : undefined,
     })
-    console.log("[SMP] connectSMP: sending ClientHello, version=" + smpVersion + ", keyHash=" + server.keyHash.length + "B")
+    console.log("[SMP] connectSMP: sending ClientHello, version=" + smpVersion + ", keyHash=" + server.keyHash.length + "B" + (sessionAuthKeyPair ? ", sessionAuthKey=32B" : ""))
     if (debug) {
       debug("ClientHello full block (first 64 bytes)", clientHello.subarray(0, 64))
       debug("ClientHello keyHash", server.keyHash)
@@ -652,7 +673,7 @@ export async function connectSMP(
     }
 
     // 8. Return client with command dispatch
-    console.log("[SMP] connectSMP: HANDSHAKE COMPLETE, creating SMPClient v" + smpVersion)
+    console.log("[SMP] connectSMP: HANDSHAKE COMPLETE, creating SMPClient v" + smpVersion + ", serverAuthKey=" + (serverHello.serverAuthPubKeyRaw ? serverHello.serverAuthPubKeyRaw.length + "B" : "null"))
     return new SMPClientImpl(
       serverHello.sessionId,
       smpVersion,
@@ -660,6 +681,7 @@ export async function connectSMP(
       cfg.keepaliveIntervalMs,
       cfg.commandTimeoutMs,
       debug ?? undefined,
+      serverHello.serverAuthPubKeyRaw,
     )
   } catch (e) {
     transport.close()
