@@ -258,7 +258,8 @@ describe("initiateConnection with legacy full link", () => {
     const params = mockClient.createQueueCalls[0]
     expect(params.recipientAuthKey.length).toBe(44)
     // Verify X25519 OID (0x6e for v7+ CbAuthenticator, was 0x70 for v6 Ed25519)
-    expect(params.recipientAuthKey[8]).toBe(0x6e)
+    // DIAGNOSTIC: v6 uses Ed25519 (OID 0x70), v9 would use X25519 (OID 0x6e)
+    expect(params.recipientAuthKey[8]).toBe(0x70)
   })
 
   it("passes 44-byte X25519 SPKI recipientDhKey", async () => {

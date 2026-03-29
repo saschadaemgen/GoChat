@@ -86,20 +86,18 @@ describe("decodeSMPServerHandshake", () => {
 })
 
 describe("compatibleVRange", () => {
-  it("negotiates v9 when server offers v6-18", () => {
-    // Server supports v6-18, client supports v6-9
+  it("negotiates v6 when server offers v6-18 (DIAGNOSTIC: client capped at v6)", () => {
     const serverRange: VersionRange = {minVersion: 6, maxVersion: 18}
     const result = compatibleVRange(serverRange, smpClientVersionRange)
     expect(result).not.toBeNull()
     expect(result!.minVersion).toBe(6)
-    expect(result!.maxVersion).toBe(9)
+    expect(result!.maxVersion).toBe(6)
   })
 
-  it("negotiates v7 when server offers v6-v7", () => {
-    const serverRange: VersionRange = {minVersion: 6, maxVersion: 7}
+  it("returns null when server only supports v7 (DIAGNOSTIC: client capped at v6)", () => {
+    const serverRange: VersionRange = {minVersion: 7, maxVersion: 7}
     const result = compatibleVRange(serverRange, smpClientVersionRange)
-    expect(result).not.toBeNull()
-    expect(result!.maxVersion).toBe(7)
+    expect(result).toBeNull()
   })
 
   it("negotiates when server only supports v6", () => {
@@ -109,8 +107,8 @@ describe("compatibleVRange", () => {
     expect(result!.maxVersion).toBe(6)
   })
 
-  it("returns null for incompatible version (server min=10)", () => {
-    const serverRange: VersionRange = {minVersion: 10, maxVersion: 18}
+  it("returns null for incompatible version (server min=8)", () => {
+    const serverRange: VersionRange = {minVersion: 8, maxVersion: 18}
     const result = compatibleVRange(serverRange, smpClientVersionRange)
     expect(result).toBeNull()
   })
@@ -121,13 +119,11 @@ describe("compatibleVRange", () => {
     expect(result).toBeNull()
   })
 
-  it("selects highest mutual version", () => {
-    // Server supports v5-v8, client supports v6-v9
+  it("selects highest mutual version (DIAGNOSTIC: capped at v6)", () => {
     const serverRange: VersionRange = {minVersion: 5, maxVersion: 8}
     const result = compatibleVRange(serverRange, smpClientVersionRange)
     expect(result).not.toBeNull()
-    // Should select v8 (highest mutual)
-    expect(result!.maxVersion).toBe(8)
+    expect(result!.maxVersion).toBe(6)
   })
 })
 

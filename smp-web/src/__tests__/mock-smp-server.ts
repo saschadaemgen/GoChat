@@ -161,23 +161,30 @@ export class MockSMPServer {
   // -- Command handlers
 
   private handleNEW(corrId: Uint8Array, command: Uint8Array): void {
-    // Parse NEW: "NEW " [authKey][dhKey] "0" "S" "T"
-    // v9: Maybe BasicAuth = '0' (ASCII 0x30 = Nothing), then subMode, then sndSecure
+    // Parse NEW: supports both v6 and v9 formats
+    // v6: "NEW " [authKey][dhKey] "S"                    (95 bytes)
+    // v9: "NEW " [authKey][dhKey] "0" "S" "T"            (97 bytes)
     const d = new Decoder(command.subarray(4))
     const recipientAuthKey = this.readShortString(d)
     const recipientDhKey = this.readShortString(d)
-    // Maybe BasicAuth: '0' = Nothing, '1' = Just (skip auth data)
-    if (d.remaining() > 0) {
+    // Detect format: if remaining is 1 byte -> v6 (just subMode)
+    // If remaining is 3 bytes -> v9 (maybe + subMode + sndSecure)
+    const remaining = d.remaining()
+    let subMode = "S"
+    let sndSecure = false
+    if (remaining === 1) {
+      // v6 format: just subscribeMode
+      subMode = String.fromCharCode(d.anyByte())
+    } else if (remaining >= 3) {
+      // v9 format: Maybe BasicAuth + subMode + sndSecure
       const maybeByte = String.fromCharCode(d.anyByte())
       if (maybeByte === "1") {
-        this.readShortString(d) // skip basicAuth password
+        this.readShortString(d) // skip basicAuth
       }
-    }
-    const subMode = d.remaining() > 0 ? String.fromCharCode(d.anyByte()) : "S"
-    let sndSecure = false
-    if (d.remaining() > 0) {
-      const flag = String.fromCharCode(d.anyByte())
-      sndSecure = flag === "T"
+      subMode = d.remaining() > 0 ? String.fromCharCode(d.anyByte()) : "S"
+      if (d.remaining() > 0) {
+        sndSecure = String.fromCharCode(d.anyByte()) === "T"
+      }
     }
 
     const recipientId = generateId(24)
