@@ -175,6 +175,10 @@ export {parseSmpEncConfirmation, decryptLayer1, parseSmpConfirmation} from "./la
 export type {E2ERatchetParams, KemParams, ParsedAgentConfirmation} from "./agent-confirmation.js"
 export {parseAgentConfirmation} from "./agent-confirmation.js"
 
+// X3DH key agreement (Season 9)
+export type {X448KeyPair, RatchetInitParams} from "./x3dh-agreement.js"
+export {x3dhReceiver} from "./x3dh-agreement.js"
+
 // Browser client (Season 5 Phase 2)
 export type {BrowserClientConfig, BrowserClient, ClientStatus} from "./browser-client.js"
 export {createBrowserClient} from "./browser-client.js"
