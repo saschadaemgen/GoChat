@@ -11,9 +11,9 @@ import nacl from "tweetnacl"
 // -- Parse smpEncConfirmation envelope
 
 export interface SmpEncConfirmation {
-  aliceDhPublicKeyRaw: Uint8Array  // 32 bytes raw X25519
-  nonce: Uint8Array                 // 24 bytes
-  encryptedBody: Uint8Array         // rest (includes 16B Poly1305 tag)
+  aliceDhPublicKeyRaw: Uint8Array | null  // 32 bytes raw X25519, null if Nothing (subsequent msgs)
+  nonce: Uint8Array                        // 24 bytes
+  encryptedBody: Uint8Array                // rest (includes 16B Poly1305 tag)
 }
 
 export function parseSmpEncConfirmation(data: Uint8Array): SmpEncConfirmation {
@@ -23,15 +23,17 @@ export function parseSmpEncConfirmation(data: Uint8Array): SmpEncConfirmation {
   const maybeTag = data[offset]
   offset += 1
 
-  let aliceDhPublicKeyRaw: Uint8Array
+  let aliceDhPublicKeyRaw: Uint8Array | null
   if (maybeTag === 0x31) { // '1' = Just (key follows)
     const keyLen = data[offset]
     offset += 1
     const keySpki = data.subarray(offset, offset + keyLen)
     offset += keyLen
     aliceDhPublicKeyRaw = keySpki.length === 44 ? keySpki.subarray(12) : keySpki
+  } else if (maybeTag === 0x30) { // '0' = Nothing (subsequent messages reuse stored key)
+    aliceDhPublicKeyRaw = null
   } else {
-    throw new Error("smpEncConfirmation: no DH key (tag=0x" + maybeTag.toString(16) + ")")
+    throw new Error("smpEncConfirmation: unexpected Maybe tag 0x" + maybeTag.toString(16))
   }
 
   const nonce = data.subarray(offset, offset + 24)
@@ -46,12 +48,20 @@ export function parseSmpEncConfirmation(data: Uint8Array): SmpEncConfirmation {
 
 export function decryptLayer1(
   envelope: SmpEncConfirmation,
-  e2eDhPrivateKey: Uint8Array
+  e2eDhPrivateKey: Uint8Array,
+  storedAliceDhKey?: Uint8Array
 ): Uint8Array | null {
+  // Use the DH key from the envelope if present, otherwise use stored key
+  const aliceKey = envelope.aliceDhPublicKeyRaw ?? storedAliceDhKey
+  if (!aliceKey) {
+    console.log("[SMP] decryptLayer1: no DH key available (Nothing in envelope and no stored key)")
+    return null
+  }
+
   const decrypted = nacl.box.open(
     envelope.encryptedBody,
     envelope.nonce,
-    envelope.aliceDhPublicKeyRaw,
+    aliceKey,
     e2eDhPrivateKey
   )
   if (!decrypted) return null

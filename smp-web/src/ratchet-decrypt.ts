@@ -204,23 +204,24 @@ function parseMsgHeader(paddedHeader: Uint8Array): ParsedMsgHeader {
 
   // KEM field (v >= 3)
   if (msgVersion >= 3) {
-    const kemTag = content[offset]
+    const kemMaybe = content[offset]
     offset += 1
-    if (kemTag === 0x31) { // '1' = Just - skip KEM params
-      // KEM tag + data - simplified skip
+    if (kemMaybe === 0x31) { // '1' = Just - skip KEM params
       const kemType = content[offset]
       offset += 1
-      if (kemType === 0x50) { // 'P' = Proposed
-        const kLen = content[offset]; offset += 1
-        offset += kLen
-      } else if (kemType === 0x41) { // 'A' = Accepted
-        // ciphertext + key (both length-prefixed)
-        if (content[offset] === 0xff) { offset += 1; const l = (content[offset] << 8) | content[offset+1]; offset += 2 + l }
-        else { const l = content[offset]; offset += 1 + l }
-        if (content[offset] === 0xff) { offset += 1; const l = (content[offset] << 8) | content[offset+1]; offset += 2 + l }
-        else { const l = content[offset]; offset += 1 + l }
+      if (kemType === 0x50) { // 'P' = Proposed: Word16 BE key
+        const kLen = (content[offset] << 8) | content[offset + 1]
+        offset += 2 + kLen
+        console.log("[DIAG] MsgHeader KEM Proposed: skipped " + kLen + "B key")
+      } else if (kemType === 0x41) { // 'A' = Accepted: Word16 BE ct + Word16 BE key
+        const ctLen = (content[offset] << 8) | content[offset + 1]
+        offset += 2 + ctLen
+        const kLen = (content[offset] << 8) | content[offset + 1]
+        offset += 2 + kLen
+        console.log("[DIAG] MsgHeader KEM Accepted: skipped ct=" + ctLen + "B, key=" + kLen + "B")
       }
     }
+    // else kemMaybe === 0x30 (Nothing), offset already advanced
   }
 
   const msgPN = readWord32BE(content, offset); offset += 4
@@ -300,6 +301,126 @@ export function decryptEncConnInfo(state: RatchetState, encConnInfo: Uint8Array)
     ns: 0,
     assocData: state.assocData,
   }
+
+  return {agentMessage, updatedState}
+}
+
+// --- General Ratchet Decrypt (SameRatchet + AdvanceRatchet) ---
+
+/**
+ * General ratchet decrypt that handles both SameRatchet and AdvanceRatchet.
+ *
+ * SameRatchet: header decrypts with hkr, peer DH unchanged, chain advances.
+ * AdvanceRatchet: header decrypts with nhkr, peer DH changed, two rootKdf + new keypair.
+ *
+ * Tries hkr first (SameRatchet), falls back to nhkr (AdvanceRatchet).
+ */
+export function rcDecrypt(state: RatchetState, encMessage: Uint8Array): DecryptResult {
+  // Step 1: Parse EncRatchetMessage
+  const {emHeaderRaw, emAuthTag, emBody} = parseEncRatchetMessage(encMessage)
+
+  // Step 2: Parse EncMessageHeader
+  const {ehVersion, ehIV, ehAuthTag, ehBody} = parseEncMessageHeader(emHeaderRaw)
+
+  // Step 3: Try decrypting header with hkr (SameRatchet) then nhkr (AdvanceRatchet)
+  let decryptedHeader: Uint8Array | null = null
+  let isAdvanceRatchet = false
+  const headerCipherInput = concat(ehBody, ehAuthTag)
+
+  // Try SameRatchet first (hkr must be non-zero)
+  if (state.hkr.some(b => b !== 0)) {
+    try {
+      const headerCipher = gcm(state.hkr, ehIV, state.assocData)
+      decryptedHeader = headerCipher.decrypt(headerCipherInput)
+      console.log("[DIAG] Ratchet decrypt: SameRatchet mode (header decrypted with HKr)")
+    } catch (_) {
+      // SameRatchet failed, will try AdvanceRatchet
+    }
+  }
+
+  if (!decryptedHeader) {
+    // Try AdvanceRatchet (nhkr)
+    const headerCipher = gcm(state.nhkr, ehIV, state.assocData)
+    decryptedHeader = headerCipher.decrypt(headerCipherInput)
+    isAdvanceRatchet = true
+    console.log("[DIAG] Ratchet decrypt: AdvanceRatchet mode (header decrypted with NHKr)")
+  }
+
+  // Step 4: Parse MsgHeader
+  const msgHeader = parseMsgHeader(decryptedHeader)
+
+  let messageKey: Uint8Array
+  let bodyIV: Uint8Array
+  let updatedState: RatchetState
+
+  if (isAdvanceRatchet) {
+    // AdvanceRatchet: two rootKdf + new keypair (same as decryptEncConnInfo)
+    const dhRecv = x448.scalarMult(state.dhSelf.privateKey, msgHeader.peerDhRaw)
+    console.log("[DIAG] AdvanceRatchet dhRecv: " + hex(dhRecv))
+    const [newRK1, ckr, nhkrNew] = rootKdf(state.rootKey, dhRecv)
+
+    const newDhSelf = generateX448KeyPair()
+    const dhSend = x448.scalarMult(newDhSelf.privateKey, msgHeader.peerDhRaw)
+    console.log("[DIAG] AdvanceRatchet dhSend: " + hex(dhSend))
+    const [newRK2, cks, nhksNew] = rootKdf(newRK1, dhSend)
+
+    // chainKdf - skip to correct message number
+    let currentCKr = ckr
+    for (let i = 0; i < msgHeader.msgNs; i++) {
+      const [nextCKr] = chainKdf(currentCKr)
+      currentCKr = nextCKr
+    }
+    const [newCKr, mk, bIV, _hIV] = chainKdf(currentCKr)
+    messageKey = mk
+    bodyIV = bIV
+
+    updatedState = {
+      rootKey: newRK2,
+      ckr: newCKr,
+      cks,
+      hks: state.nhks,
+      hkr: state.nhkr,
+      nhks: nhksNew,
+      nhkr: nhkrNew,
+      dhSelf: newDhSelf,
+      dhPeer: msgHeader.peerDhRaw,
+      pn: state.ns,
+      nr: msgHeader.msgNs + 1,
+      ns: 0,
+      assocData: state.assocData,
+    }
+  } else {
+    // SameRatchet: advance chain key from ckr
+    let currentCKr = state.ckr
+    for (let i = state.nr; i < msgHeader.msgNs; i++) {
+      const [nextCKr] = chainKdf(currentCKr)
+      currentCKr = nextCKr
+    }
+    const [newCKr, mk, bIV, _hIV] = chainKdf(currentCKr)
+    messageKey = mk
+    bodyIV = bIV
+
+    updatedState = {
+      ...state,
+      ckr: newCKr,
+      nr: msgHeader.msgNs + 1,
+    }
+  }
+
+  console.log("[DIAG] chainKdf: mk=" + hex(messageKey) + ", bodyIV=" + hex(bodyIV))
+
+  // Step 5: Decrypt body
+  const bodyAAD = concat(state.assocData, emHeaderRaw)
+  console.log("[DIAG] Body AAD: " + bodyAAD.length + "B")
+
+  const bodyCipherInput = concat(emBody, emAuthTag)
+  const bodyCipher = gcm(messageKey, bodyIV, bodyAAD)
+  const decryptedBody = bodyCipher.decrypt(bodyCipherInput)
+  console.log("[DIAG] Body decrypted: " + decryptedBody.length + "B")
+
+  // Step 6: unPad
+  const agentMessage = unPad(decryptedBody)
+  console.log("[DIAG] AgentMessage: " + agentMessage.length + "B, tag=0x" + agentMessage[0].toString(16))
 
   return {agentMessage, updatedState}
 }
