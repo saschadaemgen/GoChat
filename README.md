@@ -244,6 +244,7 @@ GoChat/
 |       +-- connection-request.ts   # Connection request builder + zstd
 |       +-- browser-client.ts       # High-level browser API for chat integration
 |       +-- msg-decrypt.ts          # Server-to-recipient MSG decryption (nacl.box.open)
+|       +-- layer1-decrypt.ts      # Layer 1 NaCl smpEncConfirmation decryption
 |       +-- __tests__/              # 494 tests across 19 files
 |   +-- esbuild.config.mjs         # Browser bundle config (IIFE format)
 +-- xftp-web/                       # Shared infrastructure (upstream)

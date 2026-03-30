@@ -18,7 +18,7 @@
 **Code by:** Claude Code  
 **Direction by:** Sascha (saschadaemgen)  
 **Repository:** [saschadaemgen/GoChat](https://github.com/saschadaemgen/GoChat)  
-**Base branch:** `ep/smp-web-spike`
+**Base branch:** `feat/simplego-support-chat`
 
 ---
 
@@ -37,7 +37,7 @@ All commits follow Conventional Commits format: `type(scope): description`
 
 Season protocol documents live in `docs/seasons/` and serve as a development diary - anyone can look at the source code and understand how and why we built things the way we did.
 
-At the end of each season, ALL project documents are updated: README.md, PROTOCOL.md, RESEARCH.md, SEASON-PLAN.md, and SECURITY-HARDENING-ROADMAP.md. This is a main priority and non-negotiable.
+At the end of each season, ALL project documents are updated: README.md, PROTOCOL.md, RESEARCH.md, SEASON-PLAN.md, CLAUDE.md, and SECURITY-HARDENING-ROADMAP.md. This is a main priority and non-negotiable.
 
 ```
 docs/
@@ -53,7 +53,8 @@ docs/
     SEASON-05-real-server.md     # Chat UI + browser client + real server connectivity
     SEASON-06-connection-request.md # Connection request to SimpleX App
     SEASON-07-server-upgrade.md  # Server upgrade, ALPN fix, v6-18 over WebSocket
-    SEASON-08-messaging.md       # v7+ auth + bidirectional messaging (next)
+    SEASON-08-v9-auth.md         # v9 CbAuthenticator, server rebuild, MSG + Layer 1 decrypt
+    SEASON-09-x3dh-ratchet.md    # AgentConfirmation, X3DH, Double Ratchet, HELLO, CON (next)
 ```
 
 ---
@@ -216,15 +217,6 @@ docs/
 - [x] SessionId in signed data with 0x20 length prefix
 - [x] Result: NEW -> IDS (queue successfully created on real server!)
 
-### Success criteria
-
-- [x] Chat panel visible and functional on website
-- [x] Browser connects to real SMP server via WebSocket
-- [x] SMP handshake completes (ServerHello/ClientHello)
-- [x] NEW command accepted by server (IDS response)
-- [x] 485 tests passing, zero regressions
-- [ ] ~~Bidirectional messaging with SimpleX app~~ (deferred to Season 6)
-
 ### Key lessons
 
 - esbuild.config.mjs gets overwritten by rebases - must be IIFE, not ESM
@@ -245,67 +237,26 @@ docs/
 
 ### Deliverables
 
-**Phase 1: SEND Command Implementation**
-- [x] Wire up sendInvitation() after IDS response
 - [x] SEND command with correct format (ASCII flags 'F', unsigned sigLen=0x00)
-- [x] EntityId from contact address URI (not from own IDS response)
-- [x] Server returns OK to SEND
-
-**Phase 2: Encryption Fix (A_CRYPTO resolved)**
-- [x] Discovered missing HSalsa20 step in NaCl encryption
-- [x] Replaced raw xsalsa20poly1305 with nacl.box() (tweetnacl)
-- [x] Discovered first contact uses plaintext encConnInfo (no Ratchet)
-- [x] Removed unnecessary Double Ratchet encryption from first SEND path
-- [x] Built and removed: full X3DH + HKDF-SHA512 + AES-256-GCM Ratchet (code preserved for Season 8)
-
-**Phase 3: Message Type Fix (A_MESSAGE resolved)**
-- [x] Discovered joining party sends AgentInvitation ('I'), not AgentConfirmation ('C')
-- [x] Changed PrivHeader from PHConfirmation ('K' + Ed25519 SPKI) to PHEmpty ('_')
-- [x] Built connReq URI builder (simplex:/invitation#/?v=2-7&smp=...&e2e=...)
-- [x] Added x3dh= with two X448 SPKI keys (not dh= with one X25519)
-- [x] Added q=m (QMMessaging), dh= (X25519 DH key), correct version ranges
-- [x] Added explicit port 5223 in SMP queue URI
-
-**Phase 4: Security Research**
-- [x] Deep research: Web Crypto API, CSP/SRI, browser attack vectors, messenger comparison
-- [x] Created SECURITY-HARDENING-ROADMAP.md with six-phase plan
-- [x] Documented Signal, WhatsApp, Element, Wire browser crypto approaches
+- [x] NaCl encryption fix: nacl.box() instead of raw xsalsa20poly1305 (HSalsa20 step)
+- [x] AgentInvitation ('I' tag) with PHEmpty ('_') instead of AgentConfirmation
+- [x] connReq URI builder with X448 x3dh= params
+- [x] Security hardening roadmap document
 
 ### Fix progression (12 fixes)
 
-| # | Error | Root Cause | Fix |
-|---|-------|------------|-----|
-| 1 | SEND body empty | sendConnectionRequest() never called | Wire up sendInvitation() |
-| 2 | Wrong sizes | Incorrect padding (16000 instead of 14832/15904) | Correct Haskell constants |
-| 3 | A_CRYPTO | Raw xsalsa20poly1305 without HSalsa20 | Use nacl.box() |
-| 4 | A_CRYPTO | Ratchet encryption for first contact | Remove Ratchet, use plaintext encConnInfo |
-| 5 | A_MESSAGE | AgentConfirmation instead of AgentInvitation | Tag 'I' not 'C' |
-| 6 | A_MESSAGE | PHConfirmation instead of PHEmpty | Tag '_' not 'K' |
-| 7 | A_MESSAGE | Binary SMPQueueInfo instead of connReq URI | URI string |
-| 8 | A_MESSAGE | Missing dh= in SMP queue URI | Add X25519 DH key |
-| 9 | A_MESSAGE | Wrong e2e format (dh= with X25519) | x3dh= with two X448 keys |
-| 10 | A_MESSAGE | Wrong version ranges | Agent v=2-7, e2e v=2-3 |
-| 11 | A_MESSAGE | Missing q=m in SMP queue URI | Add QMMessaging marker |
-| 12 | A_MESSAGE | Missing port in SMP queue URI | Add explicit port 5223 |
-
-### Success criteria
-
-- [x] Connection request reaches SimpleX mobile/desktop app
-- [x] App displays "Website Visitor - New contact request"
-- [x] NaCl encryption accepted by app (A_CRYPTO resolved)
-- [x] Message format accepted by app (A_MESSAGE resolved)
-- [x] 493 tests passing, 3 skipped (require CONNECTED state)
-- [ ] ~~Support team can accept connection~~ (AUTH error, deferred to Season 7)
-- [ ] ~~Bidirectional messaging~~ (deferred to Season 7)
+| # | Error | Fix |
+|---|-------|-----|
+| 1-2 | Empty body, wrong sizes | Wire up sendInvitation, correct padding constants |
+| 3-4 | A_CRYPTO | nacl.box() for HSalsa20, remove premature Ratchet encryption |
+| 5-12 | A_MESSAGE | Tag 'I' not 'C', PHEmpty '_', connReq URI, x3dh= keys, q=m, port 5223 |
 
 ### Key discoveries
 
 1. **Joining party sends AgentInvitation, not AgentConfirmation** - completely different message structure
 2. **First contact has no Ratchet** - no peer X448 keys available, only per-queue NaCl encryption
 3. **nacl.box() includes HSalsa20** - raw XSalsa20-Poly1305 produces wrong ciphertext without it
-4. **connReq URI contains reply queue info** - not a binary SMPQueueInfo structure
-5. **x3dh= with two X448 keys** - not dh= with one X25519 key for e2e params
-6. Full closing protocol: [SEASON-06-connection-request.md](SEASON-06-connection-request.md)
+4. Full closing protocol: [SEASON-06-connection-request.md](SEASON-06-connection-request.md)
 
 ---
 
@@ -326,58 +277,6 @@ CLI sends SKEY -> AUTH (queue has no sndSecure)
       -> FIX: PR #1738 extends ALPN list, browser gets v6-v18
 ```
 
-### Deliverables
-
-**Phase 1: Root cause identification**
-- [x] CLI debug logging (`simplex-chat -l debug --log-agent --log-tls-errors`)
-- [x] Identified SKEY as immediate AUTH cause (CLI sends SKEY before SEND)
-- [x] Identified ALPN as version-range root cause (SimpleGo team + Haskell source)
-- [x] Confirmed sndSecure is v9+ only (3 attempts, all CMD SYNTAX on v6 parser)
-
-**Phase 2: Server upgrade**
-- [x] Upgraded Docker image to v6.5.0-beta.6 (still v6-v6 over WebSocket)
-- [x] Found PR #1738 "smp: allow websocket connections on the same port"
-- [x] Analyzed PR #1738 source code (Ritter on branch `pr-1738`)
-- [x] Built SMP server from PR #1738 Haskell source (~20 min Docker build)
-
-**Phase 3: Infrastructure overhaul**
-- [x] Generated 4096-bit RSA Let's Encrypt certificate (PR #1738 requires it)
-- [x] Eliminated Nginx (Docker maps port 443 directly to host 8444)
-- [x] Configured smp-server.ini: websockets off, static_path enabled, web cert paths
-- [x] Verified: browser gets ServerHello v6-18, negotiates v6, NEW/IDS/SEND/OK all work
-
-**Phase 4: Version cap**
-- [x] Capped maxSMPClientVersion to 6 (v7 auth not yet implemented)
-- [x] Confirmed v7 negotiation causes AUTH (different auth scheme: X25519 DH vs Ed25519)
-
-### PRs (all sndSecure attempts, all reverted)
-
-| PR | Change | Result |
-|----|--------|--------|
-| #47 | "ST" (no space) | CMD SYNTAX |
-| #48 | Revert #47 | OK |
-| #49 | "S T" (with space) | CMD SYNTAX on v6 |
-| #50 | maxVersion=6 + "S T" | CMD SYNTAX (v6 parser) |
-
-### Infrastructure changes
-
-| Before (S6) | After (S7) |
-|:------------|:-----------|
-| Docker `simplexchat/smp-server:v6.4.5` | Docker `local/smp-server-pr1738` (v6.5.0.11 + PR #1738) |
-| Nginx HTTP proxy -> Port 5225 (separate WS) | Docker 443 -> Host 8444 (direct, no Nginx) |
-| 2048-bit RSA (Nginx Let's Encrypt) | 4096-bit RSA (Let's Encrypt, mounted into Docker) |
-| Server protocol v6-v6 (WebSocket) | Server protocol v6-v18 (WebSocket) |
-
-### Success criteria
-
-- [x] Root cause chain identified (SKEY -> sndSecure -> ALPN -> v6-v6)
-- [x] Server rebuilt from PR #1738 source
-- [x] v6-18 over WebSocket confirmed in browser console
-- [x] Nginx eliminated
-- [x] NEW/IDS/SEND/OK all working on new infrastructure
-- [ ] ~~sndSecure enabled~~ (needs v9+ negotiation, deferred to Season 8)
-- [ ] ~~SKEY accepted by server~~ (needs sndSecure, deferred to Season 8)
-
 ### Key discoveries
 
 1. **SKEY comes before SEND** - CLI aborts immediately if SKEY fails, AgentConfirmation never sent
@@ -389,48 +288,113 @@ CLI sends SKEY -> AUTH (queue has no sndSecure)
 
 ---
 
-## Season 8: v7+ command auth, sndSecure, bidirectional messaging (NEXT)
+## Season 8: v9 command authorization, server rebuild, MSG + Layer 1 decrypt
+
+**Status:** Complete  
+**Goal:** Implement v9 command authorization (CbAuthenticator), rebuild server infrastructure, process incoming MSG, and decrypt the AgentConfirmation.
+**Result:** 13 PRs merged (#52-#65). 494 tests. Server rebuilt on Debian 13. CLI's AgentConfirmation decrypted (14,777 bytes, version 7, tag 'C').
+
+### Deliverables
+
+**Phase 1: v9 CbAuthenticator**
+- [x] Parse ServerHello authPubKey from X.509 certificate chain
+- [x] Send ClientHello with session X25519 auth public key
+- [x] CbAuthenticator: X25519 DH + SHA-512 hash + nacl.box encryption (80 bytes)
+- [x] NEW v9 format: 97 bytes with Maybe BasicAuth (ASCII '0') + sndSecure ('T')
+- [x] v6 diagnostic fallback to isolate CbAuth as the problem
+- [x] Server-side debug logging (3 iterations) to compare browser vs server computations
+- [x] THE FIX: nacl.box instead of nacl.secretbox (HSalsa20 key derivation)
+
+**Phase 2: Server infrastructure rebuild**
+- [x] Plesk removed (caused Nginx/Apache port conflicts)
+- [x] Debian 13 fresh install at IONOS
+- [x] Nginx + Certbot (Let's Encrypt, auto-renewal, expires 2026-06-27)
+- [x] Docker SMP server v6.5.0.11 rebuilt from PR #1738
+- [x] Chrome certificate issue resolved (removed Plesk certs from Windows store)
+
+**Phase 3: MSG processing**
+- [x] MSG detection (empty corrId = server push)
+- [x] Server-to-recipient decryption: nacl.box.open with serverDhKey + recipientDhPrivKey
+- [x] RcvMsgBody parsing: 12B SystemTime + 1B MsgFlags + 1B space + body
+- [x] ACK with CbAuthenticator (v9)
+
+**Phase 4: Layer 1 NaCl decryption**
+- [x] Parse smpEncConfirmation envelope (no version prefix, Maybe DH key, nonce, encrypted body)
+- [x] Decrypt with nacl.box.open using Alice's DH pub + our queueDh private key
+- [x] Unpad content (2B BE length prefix + data + '#' fill)
+- [x] Parse smpConfirmation (sender auth key + AgentConfirmation body)
+- [x] Result: 14,777B AgentConfirmation, starts with 00 07 43 (version 7, tag 'C')
+
+### PRs
+
+| PR | Change | Result |
+|:---|:-------|:-------|
+| #52 | ServerHello authPubKey + v9 CbAuth | CMD SYNTAX |
+| #53 | Fix Maybe BasicAuth (0x00) | CMD SYNTAX |
+| #54 | Fix Maybe BasicAuth (ASCII '0') | AUTH |
+| #55 | Debug logging | AUTH (visible) |
+| #56 | v6 diagnostic fallback | IDS + SEND OK |
+| #57 | Revert to v9 | AUTH (server debug) |
+| #58 | **nacl.box fix** | **IDS! SKEY! SEND!** |
+| #59 | MSG processing + ACK | MSG decrypted, ACK OK |
+| #61 | Layer 1 NaCl decrypt | Parse error |
+| #62 | Fix SystemTime (12B not 8B) | Body parsed |
+| #63 | Fix no version prefix | Wrong key |
+| #64 | Fix Layer 1 key | Still wrong key |
+| #65 | **Save queueDhKeyPair** | **Layer 1 decrypted!** |
+
+### Key discoveries
+
+1. **HSalsa20 trap:** nacl.box includes HSalsa20, nacl.secretbox does not. Same bug as SimpleGo Session 34.
+2. **SMP Maybe = ASCII '0'/'1':** NOT binary 0x00/0x01.
+3. **SystemTime = 12 bytes:** Int64 (8B) + Word32 (4B), not 8.
+4. **No version prefix in incoming smpEncConfirmation:** Starts directly with Maybe tag.
+5. **Four DH keypairs:** recipientAuth, recipientDh, queueDh, e2eDh - each for a different purpose.
+6. **queueDhKeyPair must be preserved:** Private key needed for Layer 1, was thrown away in buildInvitation().
+7. Full closing protocol: [SEASON-08-v9-auth.md](SEASON-08-v9-auth.md)
+
+---
+
+## Season 9: AgentConfirmation, X3DH, Double Ratchet, HELLO, CON
 
 **Status:** Next  
-**Goal:** Implement v7+ command authorization (X25519 DH), negotiate v9+, enable sndSecure, and complete the 7-step connection flow for bidirectional encrypted messaging.
+**Goal:** Parse the decrypted AgentConfirmation, perform X3DH key agreement with real keys, initialize the Double Ratchet, exchange HELLO messages, and reach CON (connected) state for bidirectional encrypted messaging.
 
 ### Starting point
 
-Server offers v6-18 over WebSocket. Browser negotiates v6 (maxSMPClientVersion capped). The CLI's SKEY fails because the queue has no sndSecure. To enable sndSecure, we must negotiate v9+. To negotiate v9+, we must implement v7+ command authorization first.
+The browser has the CLI's decrypted AgentConfirmation (14,777 bytes). The first bytes are `00 07 43` - agentVersion 7, tag 'C'. This data contains Alice's X448 keys and e2eEncryption parameters.
 
 ### The plan
 
 ```
-Phase 1: v7+ command authorization (X25519 DH instead of Ed25519 signatures)
-Phase 2: Negotiate v9+ (unlock sndSecure in server parser)
-Phase 3: Enable sndSecure "S T" in NEW + &k=s in connReq URI
-Phase 4: CLI SKEY succeeds, AgentConfirmation arrives
-Phase 5: SUB on own queue, receive and decrypt AgentConfirmation
-Phase 6: X3DH with peer X448 keys, initialize Double Ratchet
-Phase 7: HELLO exchange, achieve CON state
-Phase 8: Bidirectional encrypted messaging
+Phase 1: Parse AgentConfirmation (extract X448 keys, e2e params, connInfo)
+Phase 2: X3DH key agreement with real X448 keys (4 DH + HKDF-SHA512)
+Phase 3: Double Ratchet initialization (receiving side)
+Phase 4: Decrypt CLI's HELLO message
+Phase 5: Send our HELLO message
+Phase 6: CON state - bidirectional encrypted messaging
+Phase 7: Documentation (SMP-VERSIONS.md, SMP-HANDSHAKE.md)
 ```
 
 ### Key references
 
-- PR #982 "smp: command authorization" - defines the v7+ auth scheme
-- Evgeny's `ep/smp-web` branch - TypeScript implementation of v7+ auth
-- `C:\Projects\simplexmq-latest` (branch `pr-1738`) - server source code
-- Season 4 code (`x3dh.ts`, `ratchet.ts`) - X3DH and Double Ratchet building blocks
+- `Agent/Client.hs` - AgentConfirmation encoding, X3DH flow
+- `Crypto.hs` - X3DH key agreement, Double Ratchet initialization
+- Season 4 code (`x3dh.ts`, `ratchet.ts`) - existing building blocks (untested with real data)
+- SimpleGo Protocol Analysis Sessions 14-25 - X3DH and Double Ratchet wire format
 
 ### Success criteria
 
-- [ ] v7+ command authorization implemented (X25519 DH crypto_box)
-- [ ] Server negotiates v9+ with browser
-- [ ] sndSecure "S T" accepted in NEW command
-- [ ] CLI SKEY succeeds (no more AUTH error)
-- [ ] Browser receives AgentConfirmation via SUB
-- [ ] X3DH key agreement with app's X448 keys
-- [ ] Double Ratchet initialized both directions
-- [ ] HELLO exchange completes
+- [ ] AgentConfirmation parsed (X448 keys, e2e version, connInfo)
+- [ ] X3DH key agreement with real keys produces shared secrets
+- [ ] Double Ratchet initialized for receiving direction
+- [ ] CLI's HELLO message decrypted
+- [ ] Our HELLO message sent and accepted
 - [ ] CON state reached
-- [ ] Browser sends message, app displays it
-- [ ] App sends message, browser displays it
+- [ ] Browser sends message, CLI displays it
+- [ ] CLI sends message, browser displays it
+- [ ] SMP-VERSIONS.md created (version differences table)
+- [ ] SMP-HANDSHAKE.md created (complete handshake reference)
 
 ### This is the milestone
 
@@ -438,7 +402,7 @@ After this season, a website visitor can click "Start Encrypted Chat", connect t
 
 ---
 
-## Season 9: Production polish and website integration
+## Season 10: Production polish and website integration
 
 **Status:** Planned  
 **Goal:** Polish the chat experience to Intercom-level quality and fully integrate into the SimpleGo website.
@@ -453,19 +417,11 @@ After this season, a website visitor can click "Start Encrypted Chat", connect t
 - Encryption badge with SMP/GRP profile indicator
 - Accessibility audit (WCAG 2.1 AA)
 - Chat + Player coexistence refinement
-
-### Success criteria
-
-- [ ] Intercom-quality animations (200-300ms ease-out, prefers-reduced-motion)
-- [ ] Chat history persists across page navigation and reloads
-- [ ] Works on mobile (full-screen, 44x44px touch targets)
-- [ ] WCAG 2.1 AA compliance
-- [ ] Encryption badge always visible with profile indicator
-- [ ] SharedWorker maintains connection across tabs
+- Debug logging cleanup (remove all DIAG logs from invitation.ts)
 
 ---
 
-## Season 10: Production hardening + security review
+## Season 11: Production hardening + security review
 
 **Status:** Planned  
 **Goal:** Battle-tested, deployable encrypted support chat with complete security hardening.
@@ -483,11 +439,11 @@ After this season, a website visitor can click "Start Encrypted Chat", connect t
 
 ### SMP profile complete after this season
 
-After Season 10, GoChat's SMP profile is production-ready. The GRP profile development begins afterward.
+After Season 11, GoChat's SMP profile is production-ready. The GRP profile development begins afterward.
 
 ---
 
-## Season 11: simplex-js npm library
+## Season 12: simplex-js npm library
 
 **Status:** Planned  
 **Goal:** Extract the SMP browser client into a standalone npm library that anyone can use.
@@ -503,7 +459,7 @@ After Season 10, GoChat's SMP profile is production-ready. The GRP profile devel
 
 ---
 
-## Season 12: GRP - Noise transport
+## Season 13: GRP - Noise transport
 
 **Status:** Future  
 **Goal:** Implement the Noise Protocol transport layer for the GRP profile.
@@ -524,7 +480,7 @@ After Season 10, GoChat's SMP profile is production-ready. The GRP profile devel
 
 ---
 
-## Season 13: GRP - Post-quantum key exchange
+## Season 14: GRP - Post-quantum key exchange
 
 **Status:** Future  
 **Goal:** Add mandatory ML-KEM-768 hybrid key exchange to the GRP transport.
@@ -535,7 +491,7 @@ After Season 10, GoChat's SMP profile is production-ready. The GRP profile devel
 
 ---
 
-## Season 14: GRP - Two-hop relay routing
+## Season 15: GRP - Two-hop relay routing
 
 **Status:** Future  
 **Goal:** Implement mandatory two-hop message routing for the GRP profile.
@@ -547,7 +503,7 @@ After Season 10, GoChat's SMP profile is production-ready. The GRP profile devel
 
 ---
 
-## Season 15+: GRP - Triple Shield and beyond
+## Season 16+: GRP - Triple Shield and beyond
 
 **Status:** Future  
 **Goal:** Implement the Triple Shield defense layer and additional features.
@@ -578,19 +534,19 @@ After Season 10, GoChat's SMP profile is production-ready. The GRP profile devel
 | S5 | Chat UI + real server | Chat panel, browser-client, Nginx proxy, 15 protocol fixes, 485 tests | Complete |
 | S6 | Connection request | AgentInvitation, connReq URI, NaCl crypto_box, 12 fixes, 493 tests | Complete |
 | S7 | Server upgrade + ALPN | PR #1738 build, v6-18 over WebSocket, Nginx eliminated, 4096-bit cert | Complete |
-| **S8** | **v7+ auth + messaging** | **v7+ command auth, sndSecure, Steps 4-7, Double Ratchet, real chat** | **Next** |
-| S9 | Production polish | Animations, SharedWorker, IndexedDB, accessibility | Planned |
-| S10 | Security hardening | CSP, SRI, Web Worker crypto, security review | Planned |
-| S11 | simplex-js library | Standalone npm package for SMP browser client | Planned |
-| S12 | GRP: Noise transport | `grp/transport.ts`, Noise IK/XX | Future |
-| S13 | GRP: Post-quantum | ML-KEM-768 hybrid key exchange | Future |
-| S14 | GRP: Two-hop routing | PFWD/RFWD/RRES/PRES, cover traffic | Future |
-| S15+ | GRP: Triple Shield | ZKP, Shamir, steganographic transport | Future |
+| S8 | v9 auth + MSG + Layer 1 | CbAuthenticator, server rebuild, MSG decrypt, AgentConfirmation, 494 tests | Complete |
+| **S9** | **X3DH + Ratchet + CON** | **Parse AgentConf, X3DH, Double Ratchet, HELLO, real chat** | **Next** |
+| S10 | Production polish | Animations, SharedWorker, IndexedDB, accessibility | Planned |
+| S11 | Security hardening | CSP, SRI, Web Worker crypto, security review | Planned |
+| S12 | simplex-js library | Standalone npm package for SMP browser client | Planned |
+| S13 | GRP: Noise transport | `grp/transport.ts`, Noise IK/XX | Future |
+| S14 | GRP: Post-quantum | ML-KEM-768 hybrid key exchange | Future |
+| S15 | GRP: Two-hop routing | PFWD/RFWD/RRES/PRES, cover traffic | Future |
+| S16+ | GRP: Triple Shield | ZKP, Shamir, steganographic transport | Future |
 
-**SMP critical path:** S1 -> S2 -> S3 -> S4 -> S5 -> S6 -> S7 -> S8 -> S9 -> S10
-**SMP parallel track:** S9 (polish) can start alongside S8
-**Library track:** S11 after S10
-**GRP track:** S12 -> S13 -> S14 -> S15+ (begins after SMP profile is production-ready)
+**SMP critical path:** S1 -> S2 -> S3 -> S4 -> S5 -> S6 -> S7 -> S8 -> S9 -> S10 -> S11
+**Library track:** S12 after S11
+**GRP track:** S13 -> S14 -> S15 -> S16+ (begins after SMP profile is production-ready)
 **GRP dependency:** GoRelay must complete its corresponding phases first
 
 ---
@@ -606,3 +562,4 @@ After Season 10, GoChat's SMP profile is production-ready. The GRP profile devel
 | 2026-03-26 | Season 5 complete. Scope shifted from E2E hardening to real-server connectivity. 4 phases: Chat UI, Browser Client (3 tasks), Server Infrastructure (Docker + Nginx WSS proxy), Protocol Debugging (15 fixes). 485 tests, 15 PRs (#19-#33). First NEW -> IDS on real SMP v6 server. |
 | 2026-03-28 | Season 6 complete. 4 PRs (#39, #42, #44, #45) plus ~10 direct pushes. 12 protocol fixes (2x A_CRYPTO, 8+ A_MESSAGE). Key discovery: joining party sends AgentInvitation ('I'), not AgentConfirmation ('C'). First browser-native SMP connection request accepted by SimpleX App. 493 tests. Security hardening roadmap created. |
 | 2026-03-28 | Season 7 complete. Server upgrade to PR #1738 build. ALPN fix enables v6-18 over WebSocket. Nginx eliminated, Docker direct port mapping (8444->443). 4096-bit RSA Let's Encrypt cert. Three-layer root cause chain resolved (SKEY -> sndSecure -> ALPN). sndSecure confirmed as v9+ only. v7+ command auth identified as Season 8 prerequisite. Season numbers shifted: S8 = v7+ auth + bidirectional messaging, S9 = polish, S10 = security, S11 = library, S12-S15+ = GRP. Added document update rule to workflow section. |
+| 2026-03-30 | Season 8 complete. 13 PRs (#52-#65). v9 CbAuthenticator implemented (nacl.box fix for HSalsa20). Server rebuilt on Debian 13 (Plesk removed). MSG processing with server-to-recipient decryption. Layer 1 NaCl decryption of AgentConfirmation (14,777B). 494 tests. Season numbers shifted: S9 = X3DH + Ratchet + CON, S10 = polish, S11 = security, S12 = library, S13+ = GRP. Added CLAUDE.md to document update list. |

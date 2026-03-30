@@ -16,7 +16,7 @@
 **Ecosystem:** SimpleGo (hardware) / GoRelay (relay server) / GoChat (browser client)
 **Date:** 2026-03-28
 **Branch analyzed:** `ep/smp-web-spike` on `simplex-chat/simplexmq`
-**Status:** Season 7 complete, Season 8 (v7+ command auth + bidirectional messaging) next
+**Status:** Season 8 complete, Season 9 (X3DH + Double Ratchet + CON) next
 
 ---
 
@@ -327,6 +327,29 @@ The fix required building the SMP server from Evgeny's unmerged PR #1738, which 
 - [x] **S7-9:** Verify v6-18 over WebSocket (confirmed in browser console)
 - [x] **S7-10:** Cap maxSMPClientVersion to 6 (v7 auth not yet implemented)
 
+### 5.1e v9 command authorization, server rebuild, MSG + Layer 1 (Season 8)
+
+**Priority:** Completed in Season 8.
+
+Season 8 implemented SMP v9 command authorization (CbAuthenticator), rebuilt the server infrastructure from scratch (Debian 13, no Plesk), processed incoming MSG pushes with server-to-recipient decryption, and decrypted the CLI's AgentConfirmation through the NaCl Layer 1 envelope. The critical breakthrough was discovering that Haskell's cryptoBox includes an HSalsa20 key derivation step internally, meaning JavaScript must use nacl.box instead of nacl.secretbox.
+
+**Tasks:**
+
+- [x] **S8-1:** Parse server auth X25519 key from ServerHello CertChainPubKey
+- [x] **S8-2:** Implement CbAuthenticator (nacl.box over SHA-512 hash of authorized data)
+- [x] **S8-3:** Raise maxSMPClientVersion to 9, ClientHello with session X25519 key
+- [x] **S8-4:** Per-queue auth keys: Ed25519 -> X25519 for CbAuthenticator
+- [x] **S8-5:** v9 NEW command format with Maybe BasicAuth '0' + sndSecure 'T' (97 bytes)
+- [x] **S8-6:** Fix SMP Maybe encoding: ASCII '0' (0x30), not binary 0x00
+- [x] **S8-7:** Fix CbAuthenticator: nacl.box (DH+HSalsa20+XSalsa20), not nacl.secretbox
+- [x] **S8-8:** Server infrastructure rebuild (Debian 13, Nginx + Certbot, Docker)
+- [x] **S8-9:** Remove debug logging, clean up protocol.ts and handshake.ts
+- [x] **S8-10:** MSG processing with server-to-recipient decryption (nacl.box.open)
+- [x] **S8-11:** Parse RcvMsgBody (SystemTime=12B, not 8B)
+- [x] **S8-12:** ACK with CbAuthenticator
+- [x] **S8-13:** Layer 1 NaCl decryption of smpEncConfirmation
+- [x] **S8-14:** Parse smpConfirmation (sender key + AgentConfirmation body)
+
 ### 5.2 Layer 2: SMP command implementation
 
 **Priority:** Completed in Season 3.
@@ -418,20 +441,40 @@ The fix required building the SMP server from Evgeny's unmerged PR #1738, which 
 9. Capped maxSMPClientVersion to 6 (v7 auth not yet implemented)
 10. Result: NEW/IDS/SEND/OK all working on new server infrastructure
 
-### Phase 3d: v7+ command auth and bidirectional messaging (Season 8)
+### Phase 3d: v9 command auth, server rebuild, MSG + Layer 1 (Season 8)
 
-**Goal:** Implement v7+ command authorization (X25519 DH), negotiate v9+, enable sndSecure, complete Steps 4-7 of the connection flow.
+**Goal:** Implement v9 CbAuthenticator, rebuild server, process MSG, decrypt Layer 1.
 
-1. Implement v7+ command authorization (X25519 DH instead of Ed25519 signatures)
-2. Increase maxSMPClientVersion to 9+ (unlocks sndSecure in NEW parser)
-3. Enable sndSecure "S T" in NEW command + `&k=s` in connReq URI
-4. CLI SKEY succeeds, AgentConfirmation arrives
-5. SUB on own queue to receive AgentConfirmation
-6. Decrypt AgentConfirmation (X3DH + Double Ratchet)
-7. Exchange HELLO messages (both directions)
-8. Achieve CON state - bidirectional encrypted messaging
+**Status: COMPLETE (Season 8)**
 
-### Phase 4: Hardening (Season 9-10)
+1. Implemented CbAuthenticator (nacl.box over SHA-512, 80-byte authenticator)
+2. Raised maxSMPClientVersion to 9, ClientHello with X25519 session key
+3. Per-queue auth keys changed from Ed25519 to X25519
+4. v9 NEW command with Maybe BasicAuth '0' + sndSecure 'T' (97 bytes)
+5. Discovered HSalsa20 requirement: nacl.box not nacl.secretbox
+6. Server rebuilt from scratch (Debian 13, Nginx + Certbot, Docker)
+7. MSG processing with server-to-recipient decryption
+8. RcvMsgBody parsing (SystemTime = 12 bytes, not 8)
+9. ACK with CbAuthenticator
+10. Layer 1 NaCl decryption of smpEncConfirmation
+11. smpConfirmation parsing (sender key + AgentConfirmation body)
+12. Result: CLI accepts connection, AgentConfirmation received and decrypted
+13. 494 tests across 19 files
+
+### Phase 3e: X3DH + Double Ratchet + CON (Season 9)
+
+**Goal:** Parse AgentConfirmation, perform X3DH with real keys, initialize Double Ratchet, exchange HELLO messages, achieve CON state.
+
+1. Parse AgentConfirmation (e2e params, X448 keys, connInfo)
+2. X3DH key agreement with real peer X448 keys
+3. Initialize Double Ratchet from X3DH output
+4. Decrypt HELLO from peer (first Ratchet message)
+5. Send HELLO to peer
+6. Achieve CON ("CONNECTED") state
+7. Bidirectional encrypted messaging via Double Ratchet
+8. Document SMP-VERSIONS.md and SMP-HANDSHAKE.md
+
+### Phase 4: Hardening (Season 10-11)
 
 **Goal:** Production-ready encrypted support chat.
 
@@ -737,23 +780,39 @@ GoChat is one component of the SimpleGo ecosystem for encrypted communication ac
 | INV-4 | Invitation | 12 protocol fixes (A_CRYPTO + A_MESSAGE) | S6 DONE |
 | SEC-6 | Security | Security hardening roadmap document | S6 DONE |
 | S7-1:10 | Infrastructure | Server upgrade, ALPN fix, PR #1738 build, Nginx elimination | S7 DONE |
-| S8-1 | Auth | v7+ command authorization (X25519 DH) | S8 |
-| S8-2 | Auth | Negotiate v9+ (unlock sndSecure) | S8 |
-| S8-3 | Protocol | Enable sndSecure "S T" in NEW + k=s in URI | S8 |
-| S8-4 | Protocol | SUB on own queue, receive AgentConfirmation | S8 |
-| S8-5 | Crypto | X3DH with peer X448 keys from AgentConfirmation | S8 |
-| S8-6 | Crypto | Double Ratchet initialization + HELLO exchange | S8 |
-| S8-7 | Protocol | Achieve CON state, bidirectional messaging | S8 |
-| SEC-1 | Security | Content Security Policy | S10 |
-| SEC-2 | Security | Subresource Integrity | S10 |
-| SEC-3 | Security | Web Worker crypto isolation | S8 |
-| SEC-4 | Security | Trust boundary documentation | S10 |
+| S8-1 | Auth | Parse server auth X25519 key from ServerHello | S8 DONE |
+| S8-2 | Auth | CbAuthenticator (nacl.box over SHA-512) | S8 DONE |
+| S8-3 | Auth | Negotiate v9, ClientHello with X25519 session key | S8 DONE |
+| S8-4 | Auth | Per-queue auth keys Ed25519 -> X25519 | S8 DONE |
+| S8-5 | Protocol | v9 NEW with Maybe BasicAuth '0' + sndSecure 'T' | S8 DONE |
+| S8-6 | Protocol | Fix SMP Maybe encoding (ASCII '0', not binary 0x00) | S8 DONE |
+| S8-7 | Crypto | Fix CbAuth: nacl.box not nacl.secretbox (HSalsa20) | S8 DONE |
+| S8-8 | Infrastructure | Server rebuild (Debian 13, Nginx + Certbot, Docker) | S8 DONE |
+| S8-9 | Protocol | Remove debug logging, clean up protocol.ts | S8 DONE |
+| S8-10 | Protocol | MSG processing with server-to-recipient decryption | S8 DONE |
+| S8-11 | Protocol | Parse RcvMsgBody (SystemTime=12B) | S8 DONE |
+| S8-12 | Protocol | ACK with CbAuthenticator | S8 DONE |
+| S8-13 | Crypto | Layer 1 NaCl decryption of smpEncConfirmation | S8 DONE |
+| S8-14 | Crypto | Parse smpConfirmation (sender key + AgentConfirmation) | S8 DONE |
+| E2E-1 | Encryption | Parse AgentConfirmation (e2e params, X448 keys) | S9 |
+| E2E-2 | Encryption | X3DH with real peer X448 keys | S9 |
+| E2E-3 | Encryption | Double Ratchet initialization from X3DH | S9 |
+| E2E-4 | Encryption | Decrypt HELLO from peer | S9 |
+| E2E-5 | Encryption | Send HELLO to peer | S9 |
+| E2E-6 | Encryption | Achieve CON state | S9 |
+| E2E-7 | Encryption | Symmetric ratchet step | S9 |
+| E2E-8 | Encryption | DH ratchet step (re-key) | S9 |
+| E2E-9 | Encryption | Key storage (IndexedDB + AES-256-GCM) | S10 |
+| SEC-1 | Security | Content Security Policy | S11 |
+| SEC-2 | Security | Subresource Integrity | S11 |
+| SEC-3 | Security | Web Worker crypto isolation | S10 |
+| SEC-4 | Security | Trust boundary documentation | S11 |
 | SEC-5 | Security | TLS certificate strategy | S5/S7 DONE |
-| LIB-1:5 | Library | simplex-js npm library | S11 |
-| GRP-1 | GRP Transport | Noise Protocol transport | S12 |
-| GRP-2 | GRP Transport | ML-KEM-768 post-quantum | S12 |
-| GRP-3 | GRP Transport | Two-hop relay routing | S12+ |
-| GRP-4 | GRP Transport | Triple Shield (ZKP, Shamir, Stego) | S12+ |
+| LIB-1:5 | Library | simplex-js npm library | S12 |
+| GRP-1 | GRP Transport | Noise Protocol transport | S13 |
+| GRP-2 | GRP Transport | ML-KEM-768 post-quantum | S13 |
+| GRP-3 | GRP Transport | Two-hop relay routing | S13+ |
+| GRP-4 | GRP Transport | Triple Shield (ZKP, Shamir, Stego) | S13+ |
 
 ---
 
@@ -768,3 +827,4 @@ GoChat is one component of the SimpleGo ecosystem for encrypted communication ac
 | 2026-03-26 | Season 5 complete. Chat UI, browser client API, SMP server infrastructure, 15 protocol fixes. 485 tests. |
 | 2026-03-28 | Season 6 complete. Connection request to SimpleX App. 12 protocol fixes. 493 tests. |
 | 2026-03-28 | Season 7 complete. Server upgrade to PR #1738 build. ALPN fix enables v6-18 over WebSocket. Nginx eliminated, Docker direct port mapping. 4096-bit RSA cert. sndSecure confirmed as v9+ only (v6 parser limitation). v7+ command auth identified as Season 8 prerequisite. Added Section 5.1d, Phase 3c/3d, Section 7.6, S7 and S8 task IDs. Season numbers shifted: S8 = v7+ auth + bidirectional messaging, S9 = polish, S10 = security, S11 = library, S12+ = GRP. |
+| 2026-03-30 | Season 8 complete. Implemented v9 CbAuthenticator (nacl.box over SHA-512), server rebuilt on Debian 13 (Nginx + Certbot + Docker), MSG processing with server-to-recipient decryption (nacl.box.open), Layer 1 NaCl decryption of smpEncConfirmation, RcvMsgBody parsing (SystemTime=12B), ACK with CbAuth. Key discoveries: HSalsa20 in nacl.box (not nacl.secretbox), Maybe encoding = ASCII '0'/'1' (not binary), four DH keypairs per connection, asymmetric smpEncConfirmation format. 494 tests. 14 S8 task IDs (all DONE). E2E tasks renumbered for S9 (X3DH + Double Ratchet + CON). Added Section 5.1e, Phase 3d/3e. |

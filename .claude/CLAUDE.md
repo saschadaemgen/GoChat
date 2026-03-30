@@ -100,37 +100,43 @@ smp-web/src/
   x3dh.ts               # Modified 4-DH X3DH key agreement (for Season 8)
   ratchet.ts            # Double Ratchet init + encrypt (for Season 8)
   agent-envelope.ts     # Agent confirmation encoding (for Season 8)
-  connection-request.ts # Connection request builder + zstd (for Season 8)
+  connection-request.ts # Connection request builder + zstd (for Season 9)
   browser-client.ts     # High-level browser API for chat integration
-  __tests__/            # 493 tests across 19 files
+  msg-decrypt.ts        # Server-to-recipient MSG decryption (nacl.box.open)
+  layer1-decrypt.ts     # Layer 1 NaCl smpEncConfirmation decryption
+  __tests__/            # 494 tests across 19 files
 ```
 
 ## Current State
 
-Season 7 is COMPLETE. The server has been upgraded to PR #1738 build with v6-18 over WebSocket.
+Season 8 is COMPLETE. v9 CbAuthenticator works, server rebuilt on Debian 13, MSG + Layer 1 decrypted.
 
-### What works (Seasons 1-7)
-- WebSocket transport with SMP handshake (v6-18 offered, v6 negotiated)
+### What works (Seasons 1-8)
+- WebSocket transport with SMP handshake (v6-18 offered, v9 negotiated)
 - 14 SMP command encoders with full response decoder
 - Contact address parser (simplex:/ and https:// formats)
 - Connection state machine (7 states)
-- Queue creation on real SMP server (NEW -> IDS)
+- Queue creation on real SMP server (NEW -> IDS) with v9 CbAuthenticator
 - AgentInvitation with connReq URI sent to contact queue (SEND -> OK)
 - NaCl crypto_box encryption (tweetnacl nacl.box)
 - SimpleX App/CLI shows "Website Visitor - New contact request"
-- Server upgraded to PR #1738 build (v6-18 over WebSocket via ALPN fix)
-- Nginx eliminated (Docker direct port mapping 8444->443)
-- 4096-bit RSA Let's Encrypt certificate for HTTPS handler
-- 493 tests across 19 files
+- CLI accepts connection request (SKEY succeeds with sndSecure)
+- Server rebuilt on Debian 13 (Nginx + Certbot + Docker, PR #1738 build v6.5.0.11)
+- v9 CbAuthenticator (nacl.box over SHA-512 hash, 80-byte authenticator)
+- sndSecure + SKEY (Fast Duplex sender queue securing)
+- MSG processing with server-to-recipient decryption (nacl.box.open)
+- Layer 1 NaCl decryption of smpEncConfirmation (AgentConfirmation extracted)
+- ACK with CbAuthenticator
+- queueDhKeyPair preserved for Layer 1 decryption
+- 494 tests across 19 files
 
 ### What does NOT work yet
-- CLI sends SKEY -> AUTH (queue has no sndSecure, needs v9+ negotiation)
-- v7+ command authorization not implemented (X25519 DH instead of Ed25519 signatures)
-- maxSMPClientVersion capped at 6 (temporary workaround)
-- No incoming message reception (SUB + MSG handling)
-- No Double Ratchet for bidirectional encryption
-- No HELLO exchange or CON state
-- queueDhKeyPair private key is discarded in invitation.ts (needed for Phase 2)
+- AgentConfirmation parsing (e2e params, X448 keys, connInfo)
+- X3DH key agreement with real peer X448 keys (only mock keys used so far)
+- Double Ratchet initialization from X3DH output
+- HELLO exchange (both directions)
+- CON state (bidirectional encrypted messaging)
+- Remove debug console.log statements
 
 ## Development Roadmap
 
@@ -141,19 +147,20 @@ Season 7 is COMPLETE. The server has been upgraded to PR #1738 build with v6-18 
 - Season 5: Chat UI + Browser Client + Real Server (485 tests) - COMPLETE
 - Season 6: Connection Request to SimpleX App (493 tests) - COMPLETE
 - Season 7: Server Upgrade, ALPN Fix, v6-18 over WebSocket - COMPLETE
-- Season 8: v7+ Command Auth, sndSecure, Bidirectional Messaging - NEXT
-- Season 9: Production Polish (animations, SharedWorker, IndexedDB)
-- Season 10: Security Hardening (CSP, SRI, Web Worker crypto)
-- Season 11: simplex-js npm Library
-- Season 12+: GRP Profile (Noise, ML-KEM-768, Two-hop Routing)
+- Season 8: v9 Command Auth, Server Rebuild, MSG + Layer 1 (494 tests) - COMPLETE
+- Season 9: X3DH + Double Ratchet + HELLO + CON - NEXT
+- Season 10: Production Polish (animations, SharedWorker, IndexedDB)
+- Season 11: Security Hardening (CSP, SRI, Web Worker crypto)
+- Season 12: simplex-js npm Library
+- Season 13+: GRP Profile (Noise, ML-KEM-768, Two-hop Routing)
 
-## Season 8 Context
+## Season 9 Context
 
 ### Starting point
-Server offers v6-18 over WebSocket. Browser negotiates v6 (maxSMPClientVersion=6).
-NEW/IDS/SEND/OK all work. CLI receives invitation. But CLI sends SKEY which fails
-with AUTH because queue has no sndSecure. sndSecure needs v9+ negotiation.
-v9+ negotiation needs v7+ command authorization first.
+Server offers v6-18 over WebSocket. Browser negotiates v9. CbAuthenticator works.
+NEW/IDS/SEND/OK/MSG/ACK all work. CLI accepts invitation. AgentConfirmation received
+and decrypted through Layer 1 NaCl. Next: parse AgentConfirmation, perform X3DH with
+real X448 keys, initialize Double Ratchet, exchange HELLO messages, achieve CON state.
 
 ### Season 8 plan (in order)
 1. Implement v7+ command authorization (X25519 DH crypto_box instead of Ed25519 signatures)
@@ -214,7 +221,7 @@ connReq URI must include &k=s when sndSecure is enabled.
 - Ratchet v3: 124B emHeader, 2B Word16 BE prefix
 - MsgHeader v3: content_len + version + 68B SPKI + KEM Nothing + PN + NS
 
-### Server infrastructure (Season 7 - current)
+### Server infrastructure (Season 8 - current, rebuilt on Debian 13)
 - Docker image: local/smp-server-pr1738 (built from PR #1738 Haskell source)
 - Software: SMP server v6.5.0.11
 - Protocol range: v6-18 (both WebSocket and TLS)
@@ -253,10 +260,15 @@ docker run -d --name simplego-smp --restart always \
 11. SKEY comes BEFORE SEND - CLI never sends AgentConfirmation if SKEY fails
 12. sessionId is 48 bytes on PR #1738 server (not 32 like on legacy WebSocket port)
 13. ServerHello includes certs=2 and signedKey on PR #1738 server (were absent on legacy WS port)
-14. queueDhKeyPair private key is discarded in invitation.ts - must be saved for AgentConfirmation decryption
-15. Contact address in base.njk may point to CLI test address from Season 7 - verify before testing
-16. Nginx is STOPPED - do not restart it, Docker port mapping handles everything
-17. Plesk owns port 443 on the host - SMP server port 443 is only inside Docker container
+14. queueDhKeyPair private key must be saved on ManagedConnection for Layer 1 decryption (fixed in S8)
+15. Contact address in base.njk may point to CLI test address - verify before testing
+16. Nginx runs on port 8444 with TLS termination, proxies to SMP server on port 5225 (Debian 13 setup)
+17. SMP Maybe encoding uses ASCII '0' (0x30) for Nothing, NOT binary 0x00 - causes CMD SYNTAX
+18. CbAuthenticator uses nacl.box (DH + HSalsa20), NOT nacl.secretbox (raw key) - causes ERR AUTH
+19. SystemTime in RcvMsgBody is 12 bytes (Int64 seconds + Word32 nanoseconds), NOT 8 bytes
+20. smpEncConfirmation format is ASYMMETRIC: outgoing has version prefix, incoming does NOT
+21. Four X25519 keypairs per connection - confusing any two causes decryption failure
+22. nacl.box.keyPair() generates X25519 keys compatible with both nacl.box and nacl.scalarMult
 
 ## Upstream Files (READ ONLY - never modify)
 
@@ -273,7 +285,8 @@ protocol/simplex-messaging.md  # SMP specification (upstream reference)
 
 ## Documentation
 
-1. docs/seasons/SEASON-07-server-upgrade.md - Season 7 closing protocol
+1. docs/seasons/SEASON-08-v9-auth.md - Season 8 closing protocol
+2. docs/seasons/SEASON-07-server-upgrade.md - Season 7 closing protocol
 2. docs/seasons/SEASON-06-connection-request.md - Season 6 closing protocol
 3. docs/seasons/SEASON-05-real-server.md - Season 5 closing protocol
 4. docs/seasons/SEASON-PLAN.md - Full roadmap

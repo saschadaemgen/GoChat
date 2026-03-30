@@ -630,6 +630,14 @@ The chat panel was implemented in Season 5 with the following architecture:
 - **v7+ auth before sndSecure:** Must implement X25519 DH authorization to negotiate v9+ for sndSecure
 - **SKEY before SEND:** CLI sends SKEY first, aborts if it fails - no workaround via KEY
 
+### From Season 8 (v9 command auth)
+- **nacl.box for all crypto_box:** Haskell's cryptoBox includes HSalsa20 internally. JavaScript MUST use nacl.box (DH + HSalsa20 + XSalsa20-Poly1305), NEVER nacl.secretbox (raw key, no DH/HSalsa20).
+- **ASCII encoding for Maybe/Bool:** SMP Maybe Nothing = ASCII '0' (0x30), not binary 0x00. Bool True = ASCII 'T' (0x54). These are Haskell Encoding.hs conventions.
+- **SystemTime = 12 bytes:** Int64 seconds (8B) + Word32 nanoseconds (4B) = 12 bytes total. NOT 8 bytes.
+- **Preserve queueDhKeyPair:** The X25519 keypair from buildInvitation whose public key goes into connReq URI dh=. The private key is needed later for Layer 1 NaCl decryption of peer's response.
+- **Four DH keypairs per connection:** recipientAuth (CbAuth), recipientDh (server MSG encryption), queueDh (peer Layer 1 encryption), e2eDh (future X3DH). Confusing any two causes decryption failure.
+- **Clean server (Debian 13):** Plesk caused port conflicts and cert issues. Clean Debian with manual Nginx + Certbot + Docker is more reliable and debuggable.
+
 ---
 
 ## 10. References
@@ -665,3 +673,4 @@ The chat panel was implemented in Season 5 with the following architecture:
 | 2026-03-26 | Season 5 real-server findings. Added Section 2.7, 4.4, 5. Updated Section 3.3 with Nginx TLS solution. |
 | 2026-03-28 | Season 6 findings. Added Section 2.8 (NaCl crypto_box) and 2.9 (AgentInvitation). |
 | 2026-03-28 | Season 7 findings. Added Section 2.10 (ALPN and protocol version negotiation), Section 2.11 (v6 vs v7+ command authorization), Section 6 (SKEY, sndSecure, Fast Duplex). Updated Section 3.3 (TLS cert challenge resolved with PR #1738, Nginx eliminated). Updated Section 4.4 (WebSocket proxy architecture evolution). Updated Section 5.1 (v7+ auth differences). Added Season 7 architectural decisions. Added PR #1738 and PR #982 to references. |
+| 2026-03-30 | Season 8 findings. Added Season 8 architectural decisions: nacl.box for all crypto_box (HSalsa20 discovery), ASCII encoding for Maybe/Bool, SystemTime = 12 bytes, preserve queueDhKeyPair, four DH keypairs per connection, clean server (Debian 13). |
