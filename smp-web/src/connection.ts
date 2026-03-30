@@ -24,6 +24,7 @@ import type {SMPServerAddress} from "./types.js"
 import {buildConnectionRequest} from "./connection-request.js"
 import type {ConnectionRequestParams} from "./connection-request.js"
 import {buildInvitation} from "./invitation.js"
+import {decryptMsgBody, parseRcvMsgBody, extractRawX25519} from "./msg-decrypt.js"
 
 // -- Types
 
@@ -403,6 +404,58 @@ export class ConnectionManager {
       })
       throw err
     }
+  }
+
+  /**
+   * Set up MSG handler for a connection. Decrypts incoming MSG bodies
+   * using the server DH key and recipient DH private key, parses the
+   * RcvMsgBody, and sends ACK.
+   *
+   * @param connectionId - ID of the managed connection
+   * @param onMsgBody - callback with the decrypted SEND body (smpEncConfirmation)
+   */
+  async setupMsgHandler(
+    connectionId: string,
+    onMsgBody: (msgBody: Uint8Array) => void
+  ): Promise<void> {
+    const conn = this.connections.get(connectionId)
+    if (!conn || !conn.receiveQueue) return
+
+    const targetServer = this.resolveTargetServer(conn.contactAddress)
+    let serverForConnection = toSMPServerAddress(targetServer)
+    if (this.config.queueServer) {
+      serverForConnection = toSMPServerAddress({
+        hosts: this.config.queueServer.hosts,
+        port: this.config.queueServer.port,
+        serverIdentity: targetServer.serverIdentity,
+      })
+    }
+
+    const client = await this.agent.getClient(serverForConnection)
+    const serverDhRaw = extractRawX25519(conn.receiveQueue.serverDhKey)
+    const recipientDhPriv = conn.keys.recipientDh.privateKey
+    const recipientAuthPriv = conn.keys.recipientAuth.privateKey
+    const recipientId = conn.receiveQueue.recipientId
+
+    client.onMessage((entityId, msgId, encBody) => {
+      console.log("[SMP] MSG received: msgId=" + msgId.length + "B, encBody=" + encBody.length + "B")
+      const decrypted = decryptMsgBody(encBody, msgId, serverDhRaw, recipientDhPriv)
+      if (!decrypted) {
+        console.log("[SMP] MSG decryption FAILED")
+        return
+      }
+      console.log("[SMP] MSG decrypted: " + decrypted.length + "B")
+      const msg = parseRcvMsgBody(decrypted)
+      console.log("[SMP] MSG parsed: msgBody=" + msg.msgBody.length + "B, flags=" + msg.msgFlags)
+      onMsgBody(msg.msgBody)
+
+      // ACK the message (must be signed with recipientAuth for v9)
+      client.acknowledge(recipientId, msgId, recipientAuthPriv).then(() => {
+        console.log("[SMP] ACK sent for msgId")
+      }).catch((err: Error) => {
+        console.log("[SMP] ACK failed: " + err.message)
+      })
+    })
   }
 
   async closeConnection(connectionId: string): Promise<void> {

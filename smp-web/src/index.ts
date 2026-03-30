@@ -163,6 +163,10 @@ export {
 export type {InvitationResult} from "./invitation.js"
 export {buildInvitation, buildInvitationConnInfo} from "./invitation.js"
 
+// MSG decryption (Season 8)
+export type {ReceivedMessage} from "./msg-decrypt.js"
+export {decryptMsgBody, parseRcvMsgBody, extractRawX25519} from "./msg-decrypt.js"
+
 // Browser client (Season 5 Phase 2)
 export type {BrowserClientConfig, BrowserClient, ClientStatus} from "./browser-client.js"
 export {createBrowserClient} from "./browser-client.js"

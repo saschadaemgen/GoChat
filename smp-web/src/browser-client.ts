@@ -133,11 +133,17 @@ class BrowserClientImpl implements BrowserClient {
             this.config.displayName || "Website Visitor"
           )
           console.log("[SMP] BrowserClient.connect: invitation sent, state=PENDING")
+
+          // Set up MSG handler to receive the peer's confirmation
+          await this.connManager.setupMsgHandler(this.conn.state.id, (msgBody) => {
+            console.log("[SMP] BrowserClient: received MSG body " + msgBody.length + "B (peer's smpEncConfirmation)")
+            // msgBody is the peer's smpEncConfirmation - Phase 3 will decrypt this
+            // For now, just log that we received it
+          })
+          console.log("[SMP] BrowserClient.connect: MSG handler set up, waiting for peer confirmation")
         } catch (invErr) {
           const msg = invErr instanceof Error ? invErr.message : String(invErr)
           console.log("[SMP] BrowserClient.connect: invitation FAILED: " + msg)
-          // Don't throw - queue was created successfully.
-          // The invitation failure is non-fatal for the MVP.
         }
       }
 
