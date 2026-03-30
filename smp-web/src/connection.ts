@@ -71,6 +71,8 @@ export interface ManagedConnection {
     senderId: Uint8Array
     serverDhKey: Uint8Array
   } | null
+  /** X25519 private key for Layer 1 NaCl decryption (from invitation queueDhKeyPair) */
+  queueDhPrivateKey: Uint8Array | null
 }
 
 /**
@@ -189,6 +191,7 @@ export class ConnectionManager {
       contactAddress,
       contactQueue,
       receiveQueue: null,
+      queueDhPrivateKey: null,
     }
 
     // 7. Create receiving queue on the SMP server
@@ -351,7 +354,8 @@ export class ConnectionManager {
       console.log("[SMP] sendInvitation: building invitation for '" + displayName + "'")
 
       // 1. Build the invitation (NaCl-encrypted agent envelope with our keys)
-      const {smpEncConfirmation} = await buildInvitation(conn, displayName, 6)
+      const {smpEncConfirmation, queueDhKeyPair} = await buildInvitation(conn, displayName, 6)
+      conn.queueDhPrivateKey = queueDhKeyPair.privateKey
 
       // 2. Get SMP client for the contact queue server.
       // The contact queue may be on a DIFFERENT server than our queue.
@@ -436,7 +440,7 @@ export class ConnectionManager {
     const serverDhRaw = extractRawX25519(conn.receiveQueue.serverDhKey)
     const recipientDhPriv = conn.keys.recipientDh.privateKey
     const recipientAuthPriv = conn.keys.recipientAuth.privateKey
-    const layer1DhPriv = conn.keys.recipientDh.privateKey
+    const layer1DhPriv = conn.queueDhPrivateKey || conn.keys.recipientDh.privateKey
     const recipientId = conn.receiveQueue.recipientId
 
     client.onMessage((entityId, msgId, encBody) => {
