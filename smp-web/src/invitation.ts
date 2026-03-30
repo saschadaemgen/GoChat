@@ -164,6 +164,7 @@ export interface InvitationResult {
   smpEncConfirmation: Uint8Array
   ratchetKeyPair: KeyPair
   ephemeralKeyPair: KeyPair
+  queueDhKeyPair: KeyPair
 }
 
 export async function buildInvitation(
@@ -249,6 +250,7 @@ export async function buildInvitation(
     smpEncConfirmation: smpEnc,
     ratchetKeyPair,
     ephemeralKeyPair,
+    queueDhKeyPair,
   }
 }
 
