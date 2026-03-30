@@ -455,8 +455,7 @@ export class ConnectionManager {
       // Step 2: Decrypt Layer 1 NaCl (smpEncConfirmation -> smpConfirmation)
       try {
         const envelope = parseSmpEncConfirmation(msg.msgBody)
-        console.log("[SMP] Layer1: smpVersion=" + envelope.smpVersion +
-                    ", aliceDhKey=" + envelope.aliceDhPublicKeyRaw.length + "B" +
+        console.log("[SMP] Layer1: aliceDhKey=" + envelope.aliceDhPublicKeyRaw.length + "B" +
                     ", encBody=" + envelope.encryptedBody.length + "B")
 
         const l1Decrypted = decryptLayer1(envelope, e2eDhPriv)
