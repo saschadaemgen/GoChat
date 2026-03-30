@@ -160,7 +160,7 @@ GoChat can be used standalone (without GoShop) as a simple encrypted support cha
 
 ## What exists vs. what we build
 
-### Done (Seasons 1-6)
+### Done
 
 | Component | Season | Description |
 |:----------|:-------|:------------|
@@ -169,19 +169,24 @@ GoChat can be used standalone (without GoShop) as a simple encrypted support cha
 | Connection flow | S4 | Contact address parser, X3DH key agreement, Double Ratchet, 413 tests |
 | Chat UI | S5 | Left-docked panel, responsive, animations, encryption badge |
 | Browser client API | S5 | createBrowserClient(), esbuild IIFE bundle |
-| Server infrastructure | S5 | Docker SMP server, Nginx WSS proxy, contact address |
+| Server infrastructure | S5+S7 | Docker SMP server v6.5.0.11 (PR #1738), WebSocket on same port |
 | Real server connectivity | S5 | 15 protocol fixes for SMP v6 compatibility, 485 tests |
 | Connection request to SimpleX App | S6 | AgentInvitation, connReq URI, NaCl crypto_box, 12 fixes, 493 tests |
+| Server infrastructure overhaul | S7 | Debian 13 clean server, Nginx + Certbot, Docker rebuild |
+| SMP v9 command authorization | S8 | CbAuthenticator (X25519 DH + HSalsa20 + XSalsa20-Poly1305), 494 tests |
+| sndSecure + SKEY | S8 | Fast Duplex sender queue securing, CLI accepts connection |
 
 ### To do
 
 | Component | Season | Description |
 |:----------|:-------|:------------|
-| Bidirectional messaging | S7 | Complete connection flow, Double Ratchet E2E, HELLO exchange |
-| Production polish | S8 | Animations, SharedWorker, IndexedDB persistence, accessibility |
-| Security hardening | S9 | CSP, SRI, Web Worker isolation, security review |
-| GoShop integration | S10 | Structured e-commerce messaging, product catalog, order flow |
-| simplex-js library | S11 | Standalone npm package for SMP browser client |
+| MSG processing + ACK | S8 | Decrypt server-to-recipient messages, send acknowledgments |
+| AgentConfirmation decryption | S8 | Layer 1 NaCl, X3DH with real keys, Double Ratchet |
+| HELLO + CON | S8 | Complete bidirectional connection, real message exchange |
+| Production polish | S9 | Animations, SharedWorker, IndexedDB persistence, accessibility |
+| Security hardening | S10 | CSP, SRI, Web Worker isolation, security review |
+| GoShop integration | S11 | Structured e-commerce messaging, product catalog, order flow |
+| simplex-js library | S12 | Standalone npm package for SMP browser client |
 
 Full task breakdown: [docs/PROTOCOL.md](docs/PROTOCOL.md)
 
@@ -199,14 +204,14 @@ We develop in seasons - each with a clear goal, defined scope, and a protocol do
 | **S4** | Connection flow + X3DH + Double Ratchet (413 tests) | Complete |
 | **S5** | Chat UI + browser client + real server (485 tests) | Complete |
 | **S6** | Connection request to SimpleX App (493 tests) | Complete |
-| **S7** | Bidirectional messaging (Double Ratchet E2E) | Next |
-| **S8** | Production polish (animations, persistence, accessibility) | Planned |
-| **S9** | Security hardening + review | Planned |
-| **S10** | GoShop integration | Planned |
-| **S11** | simplex-js npm library | Planned |
+| **S7** | Server infrastructure overhaul (Docker, TLS, WebSocket) | Complete |
+| **S8** | v9 command authorization + bidirectional messaging (494 tests) | Active |
+| **S9** | Production polish (animations, persistence, accessibility) | Planned |
+| **S10** | Security hardening + review | Planned |
+| **S11** | GoShop integration | Planned |
+| **S12** | simplex-js npm library | Planned |
 
-**Critical path:** S1-S6 DONE - S7 - S8 - S9 - S10
-**Parallel track:** S8 (polish) can run alongside S7
+**Critical path:** S1-S7 DONE - S8 (active) - S9 - S10 - S11
 
 Full season plan: [docs/seasons/SEASON-PLAN.md](docs/seasons/SEASON-PLAN.md)
 
@@ -238,7 +243,8 @@ GoChat/
 |       +-- agent-envelope.ts       # Agent confirmation encoding
 |       +-- connection-request.ts   # Connection request builder + zstd
 |       +-- browser-client.ts       # High-level browser API for chat integration
-|       +-- __tests__/              # 493 tests across 19 files
+|       +-- msg-decrypt.ts          # Server-to-recipient MSG decryption (nacl.box.open)
+|       +-- __tests__/              # 494 tests across 19 files
 |   +-- esbuild.config.mjs         # Browser bundle config (IIFE format)
 +-- xftp-web/                       # Shared infrastructure (upstream)
 +-- docs/
@@ -280,7 +286,7 @@ GoChat is one component of a larger ecosystem for encrypted communication across
 
 ## Status
 
-Seasons 1 through 6 are complete. Season 7 (bidirectional messaging) is next.
+Seasons 1 through 7 are complete. Season 8 (v9 authorization + bidirectional messaging) is active.
 
 | Component | Status |
 |:----------|:-------|
@@ -294,10 +300,13 @@ Seasons 1 through 6 are complete. Season 7 (bidirectional messaging) is next.
 | Real server connectivity (15 protocol fixes) | Done |
 | Connection request to SimpleX App (12 fixes) | Done |
 | Security hardening roadmap | Done |
-| Bidirectional messaging | Season 7 |
-| Production polish | Season 8 |
-| Security hardening | Season 9 |
-| GoShop integration | Season 10 |
+| Server infrastructure overhaul (Debian 13) | Done |
+| SMP v9 CbAuthenticator command authorization | Done |
+| sndSecure + SKEY (Fast Duplex) | Done |
+| MSG processing + bidirectional messaging | Season 8 |
+| Production polish | Season 9 |
+| Security hardening | Season 10 |
+| GoShop integration | Season 11 |
 
 ---
 
