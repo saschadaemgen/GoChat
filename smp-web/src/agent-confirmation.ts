@@ -142,6 +142,27 @@ function validateSpkiX448(spki: Uint8Array, label: string): void {
   }
 }
 
+/**
+ * Read SMP length-prefixed field.
+ * Standard: 1-byte length for values <= 254
+ * Large: 0xFF marker + Word16 BE for values > 254
+ */
+function readLengthPrefixed(
+  data: Uint8Array, offset: number
+): {value: Uint8Array; newOffset: number} {
+  let len: number
+  if (data[offset] === 0xff) {
+    offset += 1
+    len = (data[offset] << 8) | data[offset + 1]
+    offset += 2
+  } else {
+    len = data[offset]
+    offset += 1
+  }
+  const value = data.slice(offset, offset + len)
+  return {value, newOffset: offset + len}
+}
+
 function parseMaybeKemParams(
   data: Uint8Array, offset: number
 ): {params?: KemParams; newOffset: number} {
@@ -159,42 +180,20 @@ function parseMaybeKemParams(
   const kemTag = data[offset]
   offset += 1
 
-  if (kemTag === 0x50) { // 'P' = Proposed
-    const keyLen = data[offset]
-    offset += 1
-    const publicKey = data.slice(offset, offset + keyLen)
-    offset += keyLen
-    return {params: {type: "proposed", publicKey}, newOffset: offset}
+  if (kemTag === 0x50) { // 'P' = Proposed: length-prefixed KEMPublicKey
+    const keyResult = readLengthPrefixed(data, offset)
+    console.log("[DIAG] KEM Proposed: key " + keyResult.value.length + " bytes")
+    return {params: {type: "proposed", publicKey: keyResult.value}, newOffset: keyResult.newOffset}
   }
 
-  if (kemTag === 0x41) { // 'A' = Accepted
-    // KEM ciphertext may be > 254 bytes: 0xFF + Word16 BE
-    let ctLen: number
-    if (data[offset] === 0xff) {
-      offset += 1
-      ctLen = (data[offset] << 8) | data[offset + 1]
-      offset += 2
-    } else {
-      ctLen = data[offset]
-      offset += 1
+  if (kemTag === 0x41) { // 'A' = Accepted: length-prefixed ciphertext + key
+    const ctResult = readLengthPrefixed(data, offset)
+    const keyResult = readLengthPrefixed(data, ctResult.newOffset)
+    console.log("[DIAG] KEM Accepted: ct " + ctResult.value.length + "B, key " + keyResult.value.length + "B")
+    return {
+      params: {type: "accepted", publicKey: keyResult.value, ciphertext: ctResult.value},
+      newOffset: keyResult.newOffset,
     }
-    const ciphertext = data.slice(offset, offset + ctLen)
-    offset += ctLen
-
-    // KEM public key may also be > 254 bytes
-    let keyLen: number
-    if (data[offset] === 0xff) {
-      offset += 1
-      keyLen = (data[offset] << 8) | data[offset + 1]
-      offset += 2
-    } else {
-      keyLen = data[offset]
-      offset += 1
-    }
-    const publicKey = data.slice(offset, offset + keyLen)
-    offset += keyLen
-
-    return {params: {type: "accepted", publicKey, ciphertext}, newOffset: offset}
   }
 
   throw new Error("KEM tag: expected 'P' (0x50) or 'A' (0x41), got 0x" + kemTag.toString(16))
