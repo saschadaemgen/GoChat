@@ -436,7 +436,7 @@ export class ConnectionManager {
     const serverDhRaw = extractRawX25519(conn.receiveQueue.serverDhKey)
     const recipientDhPriv = conn.keys.recipientDh.privateKey
     const recipientAuthPriv = conn.keys.recipientAuth.privateKey
-    const e2eDhPriv = conn.keys.e2eDh.privateKey
+    const layer1DhPriv = conn.keys.recipientDh.privateKey
     const recipientId = conn.receiveQueue.recipientId
 
     client.onMessage((entityId, msgId, encBody) => {
@@ -458,7 +458,7 @@ export class ConnectionManager {
         console.log("[SMP] Layer1: aliceDhKey=" + envelope.aliceDhPublicKeyRaw.length + "B" +
                     ", encBody=" + envelope.encryptedBody.length + "B")
 
-        const l1Decrypted = decryptLayer1(envelope, e2eDhPriv)
+        const l1Decrypted = decryptLayer1(envelope, layer1DhPriv)
         if (l1Decrypted) {
           console.log("[SMP] Layer1 decrypted: " + l1Decrypted.length + "B")
           const confirmation = parseSmpConfirmation(l1Decrypted)
