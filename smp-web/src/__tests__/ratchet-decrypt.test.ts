@@ -1,5 +1,6 @@
 import {describe, it, expect} from "vitest"
-import {rootKdf, chainKdf, unPad, parseEncRatchetMessage} from "../ratchet-decrypt.js"
+import {rootKdf, chainKdf, unPad, parseEncRatchetMessage, rcDecrypt} from "../ratchet-decrypt.js"
+import type {RatchetState} from "../ratchet-decrypt.js"
 
 describe("rootKdf", () => {
   it("produces three 32-byte outputs", () => {

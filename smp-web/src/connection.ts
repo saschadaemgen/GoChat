@@ -28,7 +28,8 @@ import {decryptMsgBody, parseRcvMsgBody, extractRawX25519} from "./msg-decrypt.j
 import {parseSmpEncConfirmation, decryptLayer1, parseSmpConfirmation} from "./layer1-decrypt.js"
 import {parseAgentConfirmation} from "./agent-confirmation.js"
 import {x3dhReceiver} from "./x3dh-agreement.js"
-import {initRcvRatchet, decryptEncConnInfo} from "./ratchet-decrypt.js"
+import {initRcvRatchet, decryptEncConnInfo, rcDecrypt} from "./ratchet-decrypt.js"
+import type {RatchetState} from "./ratchet-decrypt.js"
 
 // -- Types
 
@@ -80,6 +81,12 @@ export interface ManagedConnection {
   e2eKey1: KeyPair | null
   /** X448 keypair 2 for X3DH (from invitation, e2ePubKey2) */
   e2eKey2: KeyPair | null
+  /** Double Ratchet state (set after first AgentConfirmation decrypt) */
+  ratchetState: RatchetState | null
+  /** Peer's X25519 DH public key from first smpEncConfirmation (reused for subsequent msgs) */
+  e2eDhPubKey: Uint8Array | null
+  /** Count of received MSGs (0 = AgentConfirmation, 1+ = subsequent messages like HELLO) */
+  msgCount: number
 }
 
 /**
@@ -201,6 +208,9 @@ export class ConnectionManager {
       queueDhPrivateKey: null,
       e2eKey1: null,
       e2eKey2: null,
+      ratchetState: null,
+      e2eDhPubKey: null,
+      msgCount: 0,
     }
 
     // 7. Create receiving queue on the SMP server
@@ -455,7 +465,9 @@ export class ConnectionManager {
     const recipientId = conn.receiveQueue.recipientId
 
     client.onMessage((entityId, msgId, encBody) => {
-      console.log("[SMP] MSG received: msgId=" + msgId.length + "B, encBody=" + encBody.length + "B")
+      conn.msgCount++
+      const msgNum = conn.msgCount
+      console.log("[SMP] MSG #" + msgNum + " received: msgId=" + msgId.length + "B, encBody=" + encBody.length + "B")
 
       // Step 1: Decrypt server-to-recipient encryption
       const decrypted = decryptMsgBody(encBody, msgId, serverDhRaw, recipientDhPriv)
@@ -470,65 +482,36 @@ export class ConnectionManager {
       // Step 2: Decrypt Layer 1 NaCl (smpEncConfirmation -> smpConfirmation)
       try {
         const envelope = parseSmpEncConfirmation(msg.msgBody)
-        console.log("[SMP] Layer1: aliceDhKey=" + envelope.aliceDhPublicKeyRaw.length + "B" +
+        const hasNewKey = envelope.aliceDhPublicKeyRaw !== null
+        console.log("[SMP] Layer1: e2ePubKey=" + (hasNewKey ? envelope.aliceDhPublicKeyRaw!.length + "B" : "Nothing (reuse stored)") +
                     ", encBody=" + envelope.encryptedBody.length + "B")
 
-        const l1Decrypted = decryptLayer1(envelope, layer1DhPriv)
-        if (l1Decrypted) {
-          console.log("[SMP] Layer1 decrypted: " + l1Decrypted.length + "B")
-          const confirmation = parseSmpConfirmation(l1Decrypted)
-          console.log("[SMP] smpConfirmation: senderKey=" +
-                      (confirmation.senderAuthKeySPKI ? confirmation.senderAuthKeySPKI.length + "B" : "none") +
-                      ", agentConf=" + confirmation.agentConfirmation.length + "B")
-          const ac = confirmation.agentConfirmation
-          console.log("[SMP] AgentConfirmation first 10B:", Array.from(ac.subarray(0, Math.min(10, ac.length))).map(b => b.toString(16).padStart(2, "0")).join(" "))
+        // Save alice DH key from first message for reuse
+        if (hasNewKey && !conn.e2eDhPubKey) {
+          conn.e2eDhPubKey = new Uint8Array(envelope.aliceDhPublicKeyRaw!)
+          console.log("[SMP] Stored e2eDhPubKey for subsequent messages")
+        }
 
-          // Parse AgentConfirmation to extract X448 ratchet keys
-          try {
-            const parsed = parseAgentConfirmation(ac)
-            console.log("[SMP] AgentConfirmation parsed: agentVersion=" + parsed.agentVersion +
-                        ", e2eVersion=" + parsed.e2eEncryption.e2eVersion +
-                        ", encConnInfo=" + parsed.encConnInfo.length + "B")
-
-            // X3DH key agreement (if we have our X448 keys from invitation)
-            if (conn.e2eKey1 && conn.e2eKey2) {
-              const initParams = x3dhReceiver(
-                conn.e2eKey1,
-                conn.e2eKey2,
-                parsed.e2eEncryption.key1Raw,
-                parsed.e2eEncryption.key2Raw
-              )
-              console.log("[SMP] X3DH complete: ratchetKey=" + initParams.ratchetKey.length + "B, sndHK=" + initParams.sndHK.length + "B, rcvNextHK=" + initParams.rcvNextHK.length + "B, assocData=" + initParams.assocData.length + "B")
-
-              // Initialize receiving ratchet and decrypt encConnInfo
-              try {
-                const ratchetState = initRcvRatchet(initParams, conn.e2eKey2)
-                const {agentMessage} = decryptEncConnInfo(ratchetState, parsed.encConnInfo)
-                console.log("[SMP] encConnInfo decrypted! AgentMessage tag=0x" + agentMessage[0].toString(16) + ", length=" + agentMessage.length + "B")
-
-                // Try to find JSON in the agentMessage
-                try {
-                  const text = new TextDecoder().decode(agentMessage)
-                  const jsonStart = text.indexOf("{")
-                  if (jsonStart >= 0) {
-                    const jsonStr = text.substring(jsonStart)
-                    console.log("[SMP] ConnInfo JSON found at offset " + jsonStart + ": " + jsonStr.substring(0, 200))
-                  }
-                } catch (_) {}
-              } catch (ratchetErr) {
-                console.log("[SMP] Ratchet decrypt error: " + (ratchetErr instanceof Error ? ratchetErr.message : String(ratchetErr)))
-              }
-            } else {
-              console.log("[SMP] X3DH skipped: e2eKey1/e2eKey2 not stored on connection")
-            }
-          } catch (parseErr) {
-            console.log("[SMP] AgentConfirmation parse/X3DH error: " + (parseErr instanceof Error ? parseErr.message : String(parseErr)))
-          }
-
-          onMsgBody(msg.msgBody)
-        } else {
+        const l1Decrypted = decryptLayer1(envelope, layer1DhPriv, conn.e2eDhPubKey ?? undefined)
+        if (!l1Decrypted) {
           console.log("[SMP] Layer1 decryption FAILED")
-          onMsgBody(msg.msgBody) // Pass raw body anyway for debugging
+          onMsgBody(msg.msgBody)
+          return
+        }
+        console.log("[SMP] Layer1 decrypted: " + l1Decrypted.length + "B")
+
+        const confirmation = parseSmpConfirmation(l1Decrypted)
+        console.log("[SMP] smpConfirmation: senderKey=" +
+                    (confirmation.senderAuthKeySPKI ? confirmation.senderAuthKeySPKI.length + "B" : "none") +
+                    ", body=" + confirmation.agentConfirmation.length + "B")
+        const innerBody = confirmation.agentConfirmation
+
+        if (msgNum === 1) {
+          // --- First MSG: AgentConfirmation ---
+          this.handleAgentConfirmation(conn, innerBody, onMsgBody, msg.msgBody)
+        } else {
+          // --- Subsequent MSGs: AgentMsgEnvelope (HELLO, etc.) ---
+          this.handleAgentMsgEnvelope(conn, innerBody, msgNum, onMsgBody, msg.msgBody)
         }
       } catch (e) {
         const errMsg = e instanceof Error ? e.message : String(e)
@@ -543,6 +526,167 @@ export class ConnectionManager {
         console.log("[SMP] ACK failed: " + err.message)
       })
     })
+  }
+
+  /**
+   * Handle the first MSG: AgentConfirmation with X3DH + Ratchet decrypt.
+   */
+  private handleAgentConfirmation(
+    conn: ManagedConnection,
+    innerBody: Uint8Array,
+    onMsgBody: (body: Uint8Array) => void,
+    rawMsgBody: Uint8Array
+  ): void {
+    console.log("[SMP] AgentConfirmation first 10B:", Array.from(innerBody.subarray(0, Math.min(10, innerBody.length))).map(b => b.toString(16).padStart(2, "0")).join(" "))
+
+    try {
+      const parsed = parseAgentConfirmation(innerBody)
+      console.log("[SMP] AgentConfirmation parsed: agentVersion=" + parsed.agentVersion +
+                  ", e2eVersion=" + parsed.e2eEncryption.e2eVersion +
+                  ", encConnInfo=" + parsed.encConnInfo.length + "B")
+
+      if (!conn.e2eKey1 || !conn.e2eKey2) {
+        console.log("[SMP] X3DH skipped: e2eKey1/e2eKey2 not stored on connection")
+        onMsgBody(rawMsgBody)
+        return
+      }
+
+      // X3DH key agreement
+      const initParams = x3dhReceiver(
+        conn.e2eKey1,
+        conn.e2eKey2,
+        parsed.e2eEncryption.key1Raw,
+        parsed.e2eEncryption.key2Raw
+      )
+      console.log("[SMP] X3DH complete: ratchetKey=" + initParams.ratchetKey.length + "B" +
+                  ", sndHK=" + initParams.sndHK.length + "B" +
+                  ", rcvNextHK=" + initParams.rcvNextHK.length + "B" +
+                  ", assocData=" + initParams.assocData.length + "B")
+
+      // Initialize ratchet and decrypt encConnInfo
+      const ratchetState = initRcvRatchet(initParams, conn.e2eKey2)
+      const {agentMessage, updatedState} = decryptEncConnInfo(ratchetState, parsed.encConnInfo)
+      console.log("[SMP] encConnInfo decrypted! AgentMessage tag=0x" + agentMessage[0].toString(16) + ", length=" + agentMessage.length + "B")
+
+      // Save ratchet state for subsequent messages (HELLO, etc.)
+      conn.ratchetState = updatedState
+      console.log("[SMP] Ratchet state saved (nr=" + updatedState.nr + ")")
+
+      // Try to find JSON in the agentMessage
+      try {
+        const text = new TextDecoder().decode(agentMessage)
+        const jsonStart = text.indexOf("{")
+        if (jsonStart >= 0) {
+          const jsonStr = text.substring(jsonStart)
+          console.log("[SMP] ConnInfo JSON found at offset " + jsonStart + ": " + jsonStr.substring(0, 200))
+        }
+      } catch (_) {}
+
+      onMsgBody(rawMsgBody)
+    } catch (err) {
+      console.log("[SMP] AgentConfirmation parse/X3DH/Ratchet error: " + (err instanceof Error ? err.message : String(err)))
+      onMsgBody(rawMsgBody)
+    }
+  }
+
+  /**
+   * Handle subsequent MSGs: AgentMsgEnvelope (tag 'M') with ratchet decrypt.
+   * Parses the outer AgentMsgEnvelope, ratchet-decrypts the inner message,
+   * and identifies the AgentMessage type (HELLO, etc.).
+   */
+  private handleAgentMsgEnvelope(
+    conn: ManagedConnection,
+    innerBody: Uint8Array,
+    msgNum: number,
+    onMsgBody: (body: Uint8Array) => void,
+    rawMsgBody: Uint8Array
+  ): void {
+    // Parse AgentMsgEnvelope: [2B agentVersion][1B tag][...payload]
+    let offset = 0
+    const agentVersion = (innerBody[offset] << 8) | innerBody[offset + 1]
+    offset += 2
+    const envTag = innerBody[offset]
+    offset += 1
+    const envTagChar = String.fromCharCode(envTag)
+    console.log("[SMP] MSG #" + msgNum + " AgentMsgEnvelope: agentVersion=" + agentVersion + ", tag='" + envTagChar + "' (0x" + envTag.toString(16) + ")")
+
+    if (envTag !== 0x4D) { // 'M' = AgentMessage
+      console.log("[SMP] MSG #" + msgNum + ": unexpected envelope tag '" + envTagChar + "', expected 'M'")
+      onMsgBody(rawMsgBody)
+      return
+    }
+
+    // encAgentMessage = Tail (everything remaining)
+    const encAgentMessage = innerBody.subarray(offset)
+    console.log("[SMP] encAgentMessage: " + encAgentMessage.length + "B")
+
+    if (!conn.ratchetState) {
+      console.log("[SMP] MSG #" + msgNum + ": no ratchet state available (AgentConfirmation not yet processed)")
+      onMsgBody(rawMsgBody)
+      return
+    }
+
+    // Ratchet decrypt
+    try {
+      const {agentMessage, updatedState} = rcDecrypt(conn.ratchetState, encAgentMessage)
+      conn.ratchetState = updatedState
+      console.log("[SMP] MSG #" + msgNum + " ratchet decrypted: " + agentMessage.length + "B, ratchet nr=" + updatedState.nr)
+
+      // Parse AgentMessage: [1B tag][...content]
+      // 'M' = A_MSG (contains APrivHeader + AMessage)
+      const amTag = agentMessage[0]
+      const amTagChar = String.fromCharCode(amTag)
+      console.log("[SMP] AgentMessage tag='" + amTagChar + "' (0x" + amTag.toString(16) + ")")
+
+      if (amTag === 0x4D) { // 'M' = A_MSG
+        // APrivHeader + AMessage follow
+        // APrivHeader = [2B prevMsgHash length][hash][...] - skip for now
+        // For HELLO detection, scan for 'H' tag in AMessage
+        // AMessage types: 'H' = HELLO, 'A' = A_MSG (chat message), etc.
+        this.parseAgentMessageContent(agentMessage, msgNum)
+      } else {
+        console.log("[SMP] MSG #" + msgNum + ": AgentMessage tag '" + amTagChar + "' - not A_MSG")
+      }
+
+      onMsgBody(rawMsgBody)
+    } catch (err) {
+      console.log("[SMP] MSG #" + msgNum + " ratchet decrypt error: " + (err instanceof Error ? err.message : String(err)))
+      onMsgBody(rawMsgBody)
+    }
+  }
+
+  /**
+   * Parse AgentMessage content to identify HELLO and other message types.
+   * AgentMessage = tag + APrivHeader + AMessage
+   *
+   * A_MSG ('M'): [1B 'M'][APrivHeader][AMessage]
+   * APrivHeader: [Word16 prevMsgHash length][hash bytes]
+   * AMessage: HELLO = 'H', A_MSG = 'M', ...
+   */
+  private parseAgentMessageContent(agentMessage: Uint8Array, msgNum: number): void {
+    let offset = 1 // skip outer 'M' tag
+
+    // APrivHeader: Word16 BE length prefix for prevMsgHash
+    const hashLen = (agentMessage[offset] << 8) | agentMessage[offset + 1]
+    offset += 2
+    offset += hashLen // skip the hash bytes
+    console.log("[DIAG] APrivHeader: prevMsgHash=" + hashLen + "B, remaining=" + (agentMessage.length - offset) + "B")
+
+    // AMessage tag
+    if (offset < agentMessage.length) {
+      const innerTag = agentMessage[offset]
+      const innerTagChar = String.fromCharCode(innerTag)
+      console.log("[DIAG] AMessage tag='" + innerTagChar + "' (0x" + innerTag.toString(16) + ")")
+
+      if (innerTag === 0x48) { // 'H' = HELLO
+        console.log("[SMP] HELLO received! Connection established.")
+        console.log("[SMP] MSG #" + msgNum + " is HELLO - bidirectional ratchet confirmed")
+      } else if (innerTag === 0x4D) { // 'M' = A_MSG (chat message)
+        console.log("[SMP] MSG #" + msgNum + ": chat message received")
+      } else {
+        console.log("[SMP] MSG #" + msgNum + ": AMessage tag '" + innerTagChar + "'")
+      }
+    }
   }
 
   async closeConnection(connectionId: string): Promise<void> {
