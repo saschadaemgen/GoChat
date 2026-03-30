@@ -171,6 +171,10 @@ export {decryptMsgBody, parseRcvMsgBody, extractRawX25519} from "./msg-decrypt.j
 export type {SmpEncConfirmation, SmpConfirmation} from "./layer1-decrypt.js"
 export {parseSmpEncConfirmation, decryptLayer1, parseSmpConfirmation} from "./layer1-decrypt.js"
 
+// AgentConfirmation parser (Season 9)
+export type {E2ERatchetParams, KemParams, ParsedAgentConfirmation} from "./agent-confirmation.js"
+export {parseAgentConfirmation} from "./agent-confirmation.js"
+
 // Browser client (Season 5 Phase 2)
 export type {BrowserClientConfig, BrowserClient, ClientStatus} from "./browser-client.js"
 export {createBrowserClient} from "./browser-client.js"

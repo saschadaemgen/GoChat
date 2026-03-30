@@ -26,6 +26,7 @@ import type {ConnectionRequestParams} from "./connection-request.js"
 import {buildInvitation} from "./invitation.js"
 import {decryptMsgBody, parseRcvMsgBody, extractRawX25519} from "./msg-decrypt.js"
 import {parseSmpEncConfirmation, decryptLayer1, parseSmpConfirmation} from "./layer1-decrypt.js"
+import {parseAgentConfirmation} from "./agent-confirmation.js"
 
 // -- Types
 
@@ -471,6 +472,17 @@ export class ConnectionManager {
                       ", agentConf=" + confirmation.agentConfirmation.length + "B")
           const ac = confirmation.agentConfirmation
           console.log("[SMP] AgentConfirmation first 10B:", Array.from(ac.subarray(0, Math.min(10, ac.length))).map(b => b.toString(16).padStart(2, "0")).join(" "))
+
+          // Parse AgentConfirmation to extract X448 ratchet keys
+          try {
+            const parsed = parseAgentConfirmation(ac)
+            console.log("[SMP] AgentConfirmation parsed: agentVersion=" + parsed.agentVersion +
+                        ", e2eVersion=" + parsed.e2eEncryption.e2eVersion +
+                        ", encConnInfo=" + parsed.encConnInfo.length + "B")
+          } catch (parseErr) {
+            console.log("[SMP] AgentConfirmation parse error: " + (parseErr instanceof Error ? parseErr.message : String(parseErr)))
+          }
+
           onMsgBody(msg.msgBody)
         } else {
           console.log("[SMP] Layer1 decryption FAILED")
