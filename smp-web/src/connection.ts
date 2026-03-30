@@ -25,6 +25,7 @@ import {buildConnectionRequest} from "./connection-request.js"
 import type {ConnectionRequestParams} from "./connection-request.js"
 import {buildInvitation} from "./invitation.js"
 import {decryptMsgBody, parseRcvMsgBody, extractRawX25519} from "./msg-decrypt.js"
+import {parseSmpEncConfirmation, decryptLayer1, parseSmpConfirmation} from "./layer1-decrypt.js"
 
 // -- Types
 
@@ -435,21 +436,50 @@ export class ConnectionManager {
     const serverDhRaw = extractRawX25519(conn.receiveQueue.serverDhKey)
     const recipientDhPriv = conn.keys.recipientDh.privateKey
     const recipientAuthPriv = conn.keys.recipientAuth.privateKey
+    const e2eDhPriv = conn.keys.e2eDh.privateKey
     const recipientId = conn.receiveQueue.recipientId
 
     client.onMessage((entityId, msgId, encBody) => {
       console.log("[SMP] MSG received: msgId=" + msgId.length + "B, encBody=" + encBody.length + "B")
+
+      // Step 1: Decrypt server-to-recipient encryption
       const decrypted = decryptMsgBody(encBody, msgId, serverDhRaw, recipientDhPriv)
       if (!decrypted) {
-        console.log("[SMP] MSG decryption FAILED")
+        console.log("[SMP] MSG server decryption FAILED")
         return
       }
-      console.log("[SMP] MSG decrypted: " + decrypted.length + "B")
+      console.log("[SMP] MSG server-decrypted: " + decrypted.length + "B")
       const msg = parseRcvMsgBody(decrypted)
       console.log("[SMP] MSG parsed: msgBody=" + msg.msgBody.length + "B, flags=" + msg.msgFlags)
-      onMsgBody(msg.msgBody)
 
-      // ACK the message (must be signed with recipientAuth for v9)
+      // Step 2: Decrypt Layer 1 NaCl (smpEncConfirmation -> smpConfirmation)
+      try {
+        const envelope = parseSmpEncConfirmation(msg.msgBody)
+        console.log("[SMP] Layer1: smpVersion=" + envelope.smpVersion +
+                    ", aliceDhKey=" + envelope.aliceDhPublicKeyRaw.length + "B" +
+                    ", encBody=" + envelope.encryptedBody.length + "B")
+
+        const l1Decrypted = decryptLayer1(envelope, e2eDhPriv)
+        if (l1Decrypted) {
+          console.log("[SMP] Layer1 decrypted: " + l1Decrypted.length + "B")
+          const confirmation = parseSmpConfirmation(l1Decrypted)
+          console.log("[SMP] smpConfirmation: senderKey=" +
+                      (confirmation.senderAuthKeySPKI ? confirmation.senderAuthKeySPKI.length + "B" : "none") +
+                      ", agentConf=" + confirmation.agentConfirmation.length + "B")
+          const ac = confirmation.agentConfirmation
+          console.log("[SMP] AgentConfirmation first 10B:", Array.from(ac.subarray(0, Math.min(10, ac.length))).map(b => b.toString(16).padStart(2, "0")).join(" "))
+          onMsgBody(msg.msgBody)
+        } else {
+          console.log("[SMP] Layer1 decryption FAILED")
+          onMsgBody(msg.msgBody) // Pass raw body anyway for debugging
+        }
+      } catch (e) {
+        const errMsg = e instanceof Error ? e.message : String(e)
+        console.log("[SMP] Layer1 parse/decrypt error: " + errMsg)
+        onMsgBody(msg.msgBody)
+      }
+
+      // Step 3: ACK the message
       client.acknowledge(recipientId, msgId, recipientAuthPriv).then(() => {
         console.log("[SMP] ACK sent for msgId")
       }).catch((err: Error) => {
