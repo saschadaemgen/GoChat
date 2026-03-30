@@ -27,6 +27,7 @@ import {buildInvitation} from "./invitation.js"
 import {decryptMsgBody, parseRcvMsgBody, extractRawX25519} from "./msg-decrypt.js"
 import {parseSmpEncConfirmation, decryptLayer1, parseSmpConfirmation} from "./layer1-decrypt.js"
 import {parseAgentConfirmation} from "./agent-confirmation.js"
+import {x3dhReceiver} from "./x3dh-agreement.js"
 
 // -- Types
 
@@ -74,6 +75,10 @@ export interface ManagedConnection {
   } | null
   /** X25519 private key for Layer 1 NaCl decryption (from invitation queueDhKeyPair) */
   queueDhPrivateKey: Uint8Array | null
+  /** X448 keypair 1 for X3DH (from invitation, e2ePubKey1) */
+  e2eKey1: KeyPair | null
+  /** X448 keypair 2 for X3DH (from invitation, e2ePubKey2) */
+  e2eKey2: KeyPair | null
 }
 
 /**
@@ -193,6 +198,8 @@ export class ConnectionManager {
       contactQueue,
       receiveQueue: null,
       queueDhPrivateKey: null,
+      e2eKey1: null,
+      e2eKey2: null,
     }
 
     // 7. Create receiving queue on the SMP server
@@ -355,8 +362,10 @@ export class ConnectionManager {
       console.log("[SMP] sendInvitation: building invitation for '" + displayName + "'")
 
       // 1. Build the invitation (NaCl-encrypted agent envelope with our keys)
-      const {smpEncConfirmation, queueDhKeyPair} = await buildInvitation(conn, displayName, 6)
+      const {smpEncConfirmation, queueDhKeyPair, ratchetKeyPair, ephemeralKeyPair} = await buildInvitation(conn, displayName, 6)
       conn.queueDhPrivateKey = queueDhKeyPair.privateKey
+      conn.e2eKey1 = ratchetKeyPair
+      conn.e2eKey2 = ephemeralKeyPair
 
       // 2. Get SMP client for the contact queue server.
       // The contact queue may be on a DIFFERENT server than our queue.
@@ -479,8 +488,21 @@ export class ConnectionManager {
             console.log("[SMP] AgentConfirmation parsed: agentVersion=" + parsed.agentVersion +
                         ", e2eVersion=" + parsed.e2eEncryption.e2eVersion +
                         ", encConnInfo=" + parsed.encConnInfo.length + "B")
+
+            // X3DH key agreement (if we have our X448 keys from invitation)
+            if (conn.e2eKey1 && conn.e2eKey2) {
+              const initParams = x3dhReceiver(
+                conn.e2eKey1,
+                conn.e2eKey2,
+                parsed.e2eEncryption.key1Raw,
+                parsed.e2eEncryption.key2Raw
+              )
+              console.log("[SMP] X3DH complete: ratchetKey=" + initParams.ratchetKey.length + "B, sndHK=" + initParams.sndHK.length + "B, rcvNextHK=" + initParams.rcvNextHK.length + "B, assocData=" + initParams.assocData.length + "B")
+            } else {
+              console.log("[SMP] X3DH skipped: e2eKey1/e2eKey2 not stored on connection")
+            }
           } catch (parseErr) {
-            console.log("[SMP] AgentConfirmation parse error: " + (parseErr instanceof Error ? parseErr.message : String(parseErr)))
+            console.log("[SMP] AgentConfirmation parse/X3DH error: " + (parseErr instanceof Error ? parseErr.message : String(parseErr)))
           }
 
           onMsgBody(msg.msgBody)
