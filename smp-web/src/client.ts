@@ -521,7 +521,13 @@ export class SMPClientImpl implements SMPClient {
     await this.expectOK(senderId, encodeSEND(params))
   }
 
-  async acknowledge(recipientId: Uint8Array, msgId: Uint8Array): Promise<void> {
+  async acknowledge(recipientId: Uint8Array, msgId: Uint8Array, authPrivKey?: Uint8Array): Promise<void> {
+    if (authPrivKey) {
+      const response = await this.sendTypedCommand(recipientId, encodeACK(msgId), authPrivKey)
+      if (response.type === "OK") return
+      if (response.type === "ERR") throw new SMPCommandError(response.error)
+      throw new Error("Unexpected response to ACK: " + response.type)
+    }
     await this.expectOK(recipientId, encodeACK(msgId))
   }
 
