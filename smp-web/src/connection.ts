@@ -28,6 +28,7 @@ import {decryptMsgBody, parseRcvMsgBody, extractRawX25519} from "./msg-decrypt.j
 import {parseSmpEncConfirmation, decryptLayer1, parseSmpConfirmation} from "./layer1-decrypt.js"
 import {parseAgentConfirmation} from "./agent-confirmation.js"
 import {x3dhReceiver} from "./x3dh-agreement.js"
+import {initRcvRatchet, decryptEncConnInfo} from "./ratchet-decrypt.js"
 
 // -- Types
 
@@ -498,6 +499,25 @@ export class ConnectionManager {
                 parsed.e2eEncryption.key2Raw
               )
               console.log("[SMP] X3DH complete: ratchetKey=" + initParams.ratchetKey.length + "B, sndHK=" + initParams.sndHK.length + "B, rcvNextHK=" + initParams.rcvNextHK.length + "B, assocData=" + initParams.assocData.length + "B")
+
+              // Initialize receiving ratchet and decrypt encConnInfo
+              try {
+                const ratchetState = initRcvRatchet(initParams, conn.e2eKey2)
+                const {agentMessage} = decryptEncConnInfo(ratchetState, parsed.encConnInfo)
+                console.log("[SMP] encConnInfo decrypted! AgentMessage tag=0x" + agentMessage[0].toString(16) + ", length=" + agentMessage.length + "B")
+
+                // Try to find JSON in the agentMessage
+                try {
+                  const text = new TextDecoder().decode(agentMessage)
+                  const jsonStart = text.indexOf("{")
+                  if (jsonStart >= 0) {
+                    const jsonStr = text.substring(jsonStart)
+                    console.log("[SMP] ConnInfo JSON found at offset " + jsonStart + ": " + jsonStr.substring(0, 200))
+                  }
+                } catch (_) {}
+              } catch (ratchetErr) {
+                console.log("[SMP] Ratchet decrypt error: " + (ratchetErr instanceof Error ? ratchetErr.message : String(ratchetErr)))
+              }
             } else {
               console.log("[SMP] X3DH skipped: e2eKey1/e2eKey2 not stored on connection")
             }

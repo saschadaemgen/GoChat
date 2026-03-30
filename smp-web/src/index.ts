@@ -179,6 +179,10 @@ export {parseAgentConfirmation} from "./agent-confirmation.js"
 export type {X448KeyPair, RatchetInitParams} from "./x3dh-agreement.js"
 export {x3dhReceiver} from "./x3dh-agreement.js"
 
+// Double Ratchet decrypt (Season 9)
+export type {RatchetState, DecryptResult} from "./ratchet-decrypt.js"
+export {initRcvRatchet, decryptEncConnInfo, rootKdf, chainKdf, unPad, parseEncRatchetMessage} from "./ratchet-decrypt.js"
+
 // Browser client (Season 5 Phase 2)
 export type {BrowserClientConfig, BrowserClient, ClientStatus} from "./browser-client.js"
 export {createBrowserClient} from "./browser-client.js"
