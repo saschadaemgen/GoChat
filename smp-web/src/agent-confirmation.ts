@@ -163,6 +163,16 @@ function readLengthPrefixed(
   return {value, newOffset: offset + len}
 }
 
+/** Read a Word16 BE length-prefixed field (used for KEM keys/ciphertext) */
+function readWord16Prefixed(
+  data: Uint8Array, offset: number
+): {value: Uint8Array; newOffset: number} {
+  const len = (data[offset] << 8) | data[offset + 1]
+  offset += 2
+  const value = data.slice(offset, offset + len)
+  return {value, newOffset: offset + len}
+}
+
 function parseMaybeKemParams(
   data: Uint8Array, offset: number
 ): {params?: KemParams; newOffset: number} {
@@ -180,15 +190,15 @@ function parseMaybeKemParams(
   const kemTag = data[offset]
   offset += 1
 
-  if (kemTag === 0x50) { // 'P' = Proposed: length-prefixed KEMPublicKey
-    const keyResult = readLengthPrefixed(data, offset)
+  if (kemTag === 0x50) { // 'P' = Proposed: Word16 BE length + KEMPublicKey
+    const keyResult = readWord16Prefixed(data, offset)
     console.log("[DIAG] KEM Proposed: key " + keyResult.value.length + " bytes")
     return {params: {type: "proposed", publicKey: keyResult.value}, newOffset: keyResult.newOffset}
   }
 
-  if (kemTag === 0x41) { // 'A' = Accepted: length-prefixed ciphertext + key
-    const ctResult = readLengthPrefixed(data, offset)
-    const keyResult = readLengthPrefixed(data, ctResult.newOffset)
+  if (kemTag === 0x41) { // 'A' = Accepted: Word16 BE ciphertext + Word16 BE publicKey
+    const ctResult = readWord16Prefixed(data, offset)
+    const keyResult = readWord16Prefixed(data, ctResult.newOffset)
     console.log("[DIAG] KEM Accepted: ct " + ctResult.value.length + "B, key " + keyResult.value.length + "B")
     return {
       params: {type: "accepted", publicKey: keyResult.value, ciphertext: ctResult.value},
