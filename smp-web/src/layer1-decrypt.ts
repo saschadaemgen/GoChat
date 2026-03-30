@@ -11,17 +11,14 @@ import nacl from "tweetnacl"
 // -- Parse smpEncConfirmation envelope
 
 export interface SmpEncConfirmation {
-  smpVersion: number
   aliceDhPublicKeyRaw: Uint8Array  // 32 bytes raw X25519
   nonce: Uint8Array                 // 24 bytes
   encryptedBody: Uint8Array         // rest (includes 16B Poly1305 tag)
 }
 
 export function parseSmpEncConfirmation(data: Uint8Array): SmpEncConfirmation {
+  // No version prefix - starts directly with Maybe DH key tag
   let offset = 0
-
-  const smpVersion = (data[offset] << 8) | data[offset + 1]
-  offset += 2
 
   const maybeTag = data[offset]
   offset += 1
@@ -42,7 +39,7 @@ export function parseSmpEncConfirmation(data: Uint8Array): SmpEncConfirmation {
 
   const encryptedBody = data.subarray(offset)
 
-  return {smpVersion, aliceDhPublicKeyRaw, nonce, encryptedBody}
+  return {aliceDhPublicKeyRaw, nonce, encryptedBody}
 }
 
 // -- Layer 1 NaCl decryption
