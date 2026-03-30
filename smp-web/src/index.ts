@@ -167,6 +167,10 @@ export {buildInvitation, buildInvitationConnInfo} from "./invitation.js"
 export type {ReceivedMessage} from "./msg-decrypt.js"
 export {decryptMsgBody, parseRcvMsgBody, extractRawX25519} from "./msg-decrypt.js"
 
+// Layer 1 NaCl decryption (Season 8)
+export type {SmpEncConfirmation, SmpConfirmation} from "./layer1-decrypt.js"
+export {parseSmpEncConfirmation, decryptLayer1, parseSmpConfirmation} from "./layer1-decrypt.js"
+
 // Browser client (Season 5 Phase 2)
 export type {BrowserClientConfig, BrowserClient, ClientStatus} from "./browser-client.js"
 export {createBrowserClient} from "./browser-client.js"
