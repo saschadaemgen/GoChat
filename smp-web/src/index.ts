@@ -181,7 +181,8 @@ export {x3dhReceiver} from "./x3dh-agreement.js"
 
 // Double Ratchet decrypt (Season 9)
 export type {RatchetState, DecryptResult} from "./ratchet-decrypt.js"
-export {initRcvRatchet, decryptEncConnInfo, rcDecrypt, rootKdf, chainKdf, unPad, parseEncRatchetMessage} from "./ratchet-decrypt.js"
+export {initRcvRatchet, decryptEncConnInfo, rcDecrypt, rcEncrypt, pad, rootKdf, chainKdf, unPad, parseEncRatchetMessage} from "./ratchet-decrypt.js"
+export type {EncryptResult} from "./ratchet-decrypt.js"
 
 // Reply queue parser (Season 9)
 export type {ReplyQueueInfo, AgentConnInfoReply} from "./reply-queue.js"

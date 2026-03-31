@@ -11,7 +11,7 @@ import {gcm} from "@noble/ciphers/aes"
 import {hkdf} from "@noble/hashes/hkdf"
 import {sha512} from "@noble/hashes/sha512"
 import {x448} from "@noble/curves/ed448"
-import {generateX448KeyPair} from "./crypto-utils.js"
+import {generateX448KeyPair, encodeX448PublicKey} from "./crypto-utils.js"
 import type {KeyPair} from "./crypto-utils.js"
 import type {RatchetInitParams, X448KeyPair} from "./x3dh-agreement.js"
 
@@ -423,4 +423,153 @@ export function rcDecrypt(state: RatchetState, encMessage: Uint8Array): DecryptR
   console.log("[DIAG] AgentMessage: " + agentMessage.length + "B, tag=0x" + agentMessage[0].toString(16))
 
   return {agentMessage, updatedState}
+}
+
+// --- Ratchet Encrypt ---
+
+export interface EncryptResult {
+  encrypted: Uint8Array
+  updatedState: RatchetState
+}
+
+// Header pad target: 88 bytes for v3 without KEM
+const HEADER_PAD_V3 = 88
+
+/**
+ * Pad data with Word16 BE length prefix + '#' padding.
+ * Reverse of unPad.
+ */
+export function pad(data: Uint8Array, targetSize: number): Uint8Array {
+  const padded = new Uint8Array(targetSize)
+  padded[0] = (data.length >> 8) & 0xFF
+  padded[1] = data.length & 0xFF
+  padded.set(data, 2)
+  for (let i = 2 + data.length; i < targetSize; i++) {
+    padded[i] = 0x23 // '#'
+  }
+  return padded
+}
+
+function writeWord32BE(arr: Uint8Array, offset: number, value: number): void {
+  arr[offset] = (value >>> 24) & 0xFF
+  arr[offset + 1] = (value >>> 16) & 0xFF
+  arr[offset + 2] = (value >>> 8) & 0xFF
+  arr[offset + 3] = value & 0xFF
+}
+
+/**
+ * Build a MsgHeader plaintext (before padding).
+ *
+ * Format: [Word16 version=3][1B dhKeyLen=68][68B X448 SPKI][1B KEM Nothing='0'][Word32 PN][Word32 Ns]
+ * Total: 80 bytes
+ */
+function buildMsgHeader(dhPublicKeySPKI: Uint8Array, pn: number, ns: number): Uint8Array {
+  const content = new Uint8Array(80)
+  let offset = 0
+
+  // msgVersion = 3 (Word16 BE)
+  content[offset] = 0; content[offset + 1] = 3
+  offset += 2
+
+  // dhKeyLen = 68
+  content[offset] = 68
+  offset += 1
+
+  // X448 SPKI public key (68 bytes)
+  content.set(dhPublicKeySPKI, offset)
+  offset += 68
+
+  // KEM = Nothing ('0' = 0x30)
+  content[offset] = 0x30
+  offset += 1
+
+  // PN (Word32 BE)
+  writeWord32BE(content, offset, pn)
+  offset += 4
+
+  // Ns (Word32 BE)
+  writeWord32BE(content, offset, ns)
+
+  return content
+}
+
+/**
+ * Ratchet encrypt a message using the sending side state.
+ *
+ * Uses cks (send chain key), hks (send header key), dhSelf (our DH keypair).
+ * Updates ns and cks in the returned state.
+ *
+ * @param state - Current ratchet state (must have valid cks, hks, dhSelf)
+ * @param plaintext - AgentMessage to encrypt (will be padded)
+ * @param bodyPadSize - Target body pad size (default 15696)
+ * @returns Encrypted EncRatchetMessage bytes + updated state
+ */
+export function rcEncrypt(state: RatchetState, plaintext: Uint8Array, bodyPadSize = 15696): EncryptResult {
+  // Step 1: chainKdf from cks
+  const [newCKs, messageKey, bodyIV, headerIV] = chainKdf(state.cks)
+  console.log("[DIAG] rcEncrypt: chainKdf mk=" + hex(messageKey) + ", bodyIV=" + hex(bodyIV) + ", headerIV=" + hex(headerIV))
+
+  // Step 2: Build MsgHeader
+  const dhPublicKeySPKI = encodeX448PublicKey(state.dhSelf.publicKey)
+  const headerContent = buildMsgHeader(dhPublicKeySPKI, state.pn, state.ns)
+  const paddedHeader = pad(headerContent, HEADER_PAD_V3)
+  console.log("[DIAG] rcEncrypt: MsgHeader " + headerContent.length + "B content, padded to " + paddedHeader.length + "B, PN=" + state.pn + ", Ns=" + state.ns)
+
+  // Step 3: AES-GCM encrypt header with hks
+  const headerCipher = gcm(state.hks, headerIV, state.assocData)
+  const encryptedHeaderWithTag = headerCipher.encrypt(paddedHeader) // ciphertext + 16B tag
+  const ehBody = encryptedHeaderWithTag.slice(0, encryptedHeaderWithTag.length - 16)
+  const ehAuthTag = encryptedHeaderWithTag.slice(encryptedHeaderWithTag.length - 16)
+
+  // Step 4: Build EncMessageHeader
+  // [Word16 ehVersion=3][16B headerIV][16B ehAuthTag][Word16 ehBodyLen][ehBody]
+  const emHeader = new Uint8Array(2 + 16 + 16 + 2 + ehBody.length)
+  let offset = 0
+  emHeader[offset] = 0; emHeader[offset + 1] = 3 // ehVersion = 3
+  offset += 2
+  emHeader.set(headerIV, offset)
+  offset += 16
+  emHeader.set(ehAuthTag, offset)
+  offset += 16
+  emHeader[offset] = (ehBody.length >> 8) & 0xFF
+  emHeader[offset + 1] = ehBody.length & 0xFF
+  offset += 2
+  emHeader.set(ehBody, offset)
+
+  console.log("[DIAG] rcEncrypt: emHeader=" + emHeader.length + "B")
+
+  // Step 5: Pad and encrypt body
+  const paddedBody = pad(plaintext, bodyPadSize)
+  const bodyAAD = concat(state.assocData, emHeader)
+  const bodyCipher = gcm(messageKey, bodyIV, bodyAAD)
+  const encryptedBodyWithTag = bodyCipher.encrypt(paddedBody)
+  const emBody = encryptedBodyWithTag.slice(0, encryptedBodyWithTag.length - 16)
+  const emAuthTag = encryptedBodyWithTag.slice(encryptedBodyWithTag.length - 16)
+
+  console.log("[DIAG] rcEncrypt: body padded=" + paddedBody.length + "B, encrypted=" + emBody.length + "B")
+
+  // Step 6: Assemble EncRatchetMessage
+  // [Word16 emHeaderLen][emHeader][16B bodyAuthTag][body]
+  const emHeaderLen = emHeader.length
+  const encrypted = new Uint8Array(2 + emHeaderLen + 16 + emBody.length)
+  offset = 0
+  encrypted[offset] = (emHeaderLen >> 8) & 0xFF
+  encrypted[offset + 1] = emHeaderLen & 0xFF
+  offset += 2
+  encrypted.set(emHeader, offset)
+  offset += emHeaderLen
+  encrypted.set(emAuthTag, offset)
+  offset += 16
+  encrypted.set(emBody, offset)
+
+  console.log("[DIAG] rcEncrypt: total EncRatchetMessage=" + encrypted.length + "B")
+
+  // Step 7: Update state
+  const updatedState: RatchetState = {
+    ...state,
+    cks: newCKs,
+    ns: state.ns + 1,
+  }
+
+  return {encrypted, updatedState}
 }

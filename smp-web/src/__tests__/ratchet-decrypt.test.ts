@@ -1,6 +1,10 @@
 import {describe, it, expect} from "vitest"
-import {rootKdf, chainKdf, unPad, parseEncRatchetMessage, rcDecrypt} from "../ratchet-decrypt.js"
+import {rootKdf, chainKdf, unPad, pad, parseEncRatchetMessage, rcDecrypt, rcEncrypt} from "../ratchet-decrypt.js"
 import type {RatchetState} from "../ratchet-decrypt.js"
+import {generateX448KeyPair} from "../crypto-utils.js"
+import {x448} from "@noble/curves/ed448"
+import {hkdf} from "@noble/hashes/hkdf"
+import {sha512} from "@noble/hashes/sha512"
 
 describe("rootKdf", () => {
   it("produces three 32-byte outputs", () => {
@@ -127,5 +131,108 @@ describe("parseEncRatchetMessage", () => {
     expect(result.emHeaderRaw.length).toBe(123)
     expect(result.emAuthTag.length).toBe(16)
     expect(result.emBody.length).toBe(100)
+  })
+})
+
+describe("pad / unPad roundtrip", () => {
+  it("pad then unPad recovers original data", () => {
+    const data = new Uint8Array([0x48, 0x65, 0x6C, 0x6C, 0x6F]) // "Hello"
+    const padded = pad(data, 100)
+    expect(padded.length).toBe(100)
+    expect(padded[0]).toBe(0) // high byte of length 5
+    expect(padded[1]).toBe(5) // low byte of length 5
+    expect(padded[7]).toBe(0x23) // padding starts after data
+
+    const recovered = unPad(padded)
+    expect(recovered).toEqual(data)
+  })
+})
+
+describe("rcEncrypt / rcDecrypt roundtrip", () => {
+  function makeTestRatchetState(): {senderState: RatchetState; receiverState: RatchetState} {
+    // Simulate post-X3DH state where sender has valid cks/hks
+    // and receiver has matching nhkr/rootKey
+    const senderDh = generateX448KeyPair()
+    const receiverDh = generateX448KeyPair()
+    const assocData = new Uint8Array(112).fill(0x42)
+
+    // Derive initial keys from a fake X3DH output
+    const fakeRatchetKey = new Uint8Array(32).fill(0x11)
+    const dhShared = x448.scalarMult(senderDh.privateKey, receiverDh.publicKey)
+    const [rk1, senderCKs, senderNHKs] = rootKdf(fakeRatchetKey, dhShared)
+
+    // Reverse direction for receiver
+    const dhSharedRev = x448.scalarMult(receiverDh.privateKey, senderDh.publicKey)
+    const [rk1r, receiverCKr, receiverNHKr] = rootKdf(fakeRatchetKey, dhSharedRev)
+
+    // Sender's header key = derive from rootKdf for sending
+    const senderHKs = hkdf(sha512, fakeRatchetKey, undefined, "TestSenderHK", 32)
+
+    const senderState: RatchetState = {
+      rootKey: rk1,
+      cks: senderCKs,
+      ckr: new Uint8Array(32),
+      hks: new Uint8Array(senderHKs),
+      hkr: new Uint8Array(32),
+      nhks: senderNHKs,
+      nhkr: new Uint8Array(32),
+      dhSelf: senderDh,
+      dhPeer: receiverDh.publicKey,
+      ns: 0,
+      nr: 0,
+      pn: 0,
+      assocData,
+    }
+
+    const receiverState: RatchetState = {
+      rootKey: fakeRatchetKey,
+      cks: new Uint8Array(32),
+      ckr: new Uint8Array(32),
+      hks: new Uint8Array(32),
+      hkr: new Uint8Array(32),
+      nhks: new Uint8Array(32),
+      nhkr: new Uint8Array(senderHKs), // receiver's nhkr = sender's hks
+      dhSelf: receiverDh,
+      dhPeer: new Uint8Array(56),
+      ns: 0,
+      nr: 0,
+      pn: 0,
+      assocData,
+    }
+
+    return {senderState, receiverState}
+  }
+
+  it("encrypts and decrypts a message", () => {
+    const {senderState, receiverState} = makeTestRatchetState()
+    const plaintext = new TextEncoder().encode("Hello from GoChat!")
+
+    // Encrypt
+    const {encrypted, updatedState: newSenderState} = rcEncrypt(senderState, plaintext)
+    expect(newSenderState.ns).toBe(1)
+    expect(encrypted.length).toBeGreaterThan(100)
+
+    // Decrypt (receiver uses AdvanceRatchet since nhkr matches sender's hks)
+    const {agentMessage, updatedState: newReceiverState} = rcDecrypt(receiverState, encrypted)
+    expect(new TextDecoder().decode(agentMessage)).toBe("Hello from GoChat!")
+    expect(newReceiverState.nr).toBe(1)
+  })
+
+  it("handles multiple messages in sequence", () => {
+    const {senderState, receiverState} = makeTestRatchetState()
+
+    // Send message 0
+    const {encrypted: enc0, updatedState: s1} = rcEncrypt(senderState, new TextEncoder().encode("msg0"))
+    const {agentMessage: dec0, updatedState: r1} = rcDecrypt(receiverState, enc0)
+    expect(new TextDecoder().decode(dec0)).toBe("msg0")
+
+    // Send message 1 (SameRatchet - same sender DH key)
+    const {encrypted: enc1, updatedState: s2} = rcEncrypt(s1, new TextEncoder().encode("msg1"))
+    expect(s2.ns).toBe(2)
+
+    // Decrypt message 1 - receiver should use hkr (promoted from nhkr after msg 0)
+    const {agentMessage: dec1, updatedState: r2} = rcDecrypt(r1, enc1)
+    expect(new TextDecoder().decode(dec1)).toBe("msg1")
+    expect(r2.nr).toBe(2)
   })
 })
