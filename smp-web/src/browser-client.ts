@@ -96,7 +96,7 @@ export function resolveServerUrl(): string | undefined {
 
 // -- Types
 
-export type ClientStatus = "offline" | "connecting" | "connected" | "error"
+export type ClientStatus = "offline" | "connecting" | "pending" | "connected" | "error"
 
 export interface QueuedMessage {
   id: string
@@ -115,14 +115,8 @@ export interface BrowserClientConfig {
    * host:port from the contact address (only works in non-browser envs).
    */
   serverUrl?: string
-  /** Display name shown to the support team. If set, skips the name input UI. */
+  /** Default display name shown to the support team (overridden by connect(name) parameter) */
   displayName?: string
-  /**
-   * DOM element to inject the name input UI into. If not provided and displayName
-   * is not set, the name input is injected into #gc-start (the chat widget's
-   * start view). Set to false to skip the name input entirely.
-   */
-  nameInputContainer?: HTMLElement | false
   /** Callback when a message is received */
   onMessage: (text: string) => void
   /** Callback when connection status changes */
@@ -138,8 +132,8 @@ export interface BrowserClientConfig {
 }
 
 export interface BrowserClient {
-  /** Establish connection to support team via SimpleX */
-  connect(): Promise<void>
+  /** Establish connection to support team via SimpleX. Pass displayName from external UI. */
+  connect(displayName?: string): Promise<void>
   /** Send a text message */
   send(text: string): Promise<void>
   /** Close the connection gracefully */
@@ -167,101 +161,17 @@ class BrowserClientImpl implements BrowserClient {
     return this.currentStatus
   }
 
-  async connect(): Promise<void> {
-    if (this.currentStatus === "connecting" || this.currentStatus === "connected") {
+  async connect(displayName?: string): Promise<void> {
+    if (this.currentStatus === "connecting" || this.currentStatus === "connected" || this.currentStatus === "pending") {
       return
     }
 
-    // If displayName is already set, name input is disabled, or no DOM (tests), connect directly.
-    // Otherwise, show the name input UI and wait for the user to choose a name.
-    const skipNameInput = this.config.displayName
-      || this.config.nameInputContainer === false
-      || this.config._agent
-      || typeof document === "undefined"
-    if (skipNameInput) {
-      return this.connectWithName(this.config.displayName || "Website Visitor")
-    }
-
-    // Show name input UI and wait for name selection
-    const name = await this.showNameInput()
+    const name = displayName || this.config.displayName || "Website Visitor"
     return this.connectWithName(name)
   }
 
   /**
-   * Show the name input UI and return a promise that resolves with the chosen name.
-   * Injects DOM elements into the nameInputContainer or #gc-start.
-   */
-  private showNameInput(): Promise<string> {
-    return new Promise<string>((resolve) => {
-      const container = this.config.nameInputContainer || document.getElementById("gc-start")
-      if (!container) {
-        // No container found, use random name
-        resolve(generateRandomVisitorName())
-        return
-      }
-
-      // Inject name input UI
-      container.innerHTML = ""
-
-      const icon = document.createElement("div")
-      icon.className = "gc-start-icon"
-      icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>'
-      container.appendChild(icon)
-
-      const label = document.createElement("div")
-      label.className = "gc-start-text"
-      label.textContent = "Enter your name to start chatting:"
-      container.appendChild(label)
-
-      const nameField = document.createElement("input")
-      nameField.type = "text"
-      nameField.className = "gc-name-input"
-      nameField.placeholder = "Your name"
-      nameField.autocomplete = "off"
-      nameField.maxLength = 40
-      // Inject minimal styles for the name input (self-contained widget)
-      nameField.style.cssText = "width:100%;max-width:240px;background:var(--bg-deep,#121212);border:1px solid var(--accent-border,#333);border-radius:8px;padding:0.5rem 0.65rem;color:var(--text-bright,#fff);font-family:inherit;font-size:0.72rem;outline:none;box-sizing:border-box;"
-      container.appendChild(nameField)
-
-      const btnRow = document.createElement("div")
-      btnRow.style.cssText = "display:flex;gap:0.5rem;flex-wrap:wrap;justify-content:center;margin-top:0.4rem;"
-
-      const startBtn = document.createElement("button")
-      startBtn.className = "gc-start-btn"
-      startBtn.textContent = "Start Chat"
-
-      const anonBtn = document.createElement("button")
-      anonBtn.className = "gc-start-btn"
-      anonBtn.style.cssText = "background:transparent;color:var(--text-dim,#888);border:1px solid var(--accent-border,#333);"
-      anonBtn.textContent = "Stay Anonymous"
-
-      btnRow.appendChild(startBtn)
-      btnRow.appendChild(anonBtn)
-      container.appendChild(btnRow)
-
-      // Focus the input
-      setTimeout(() => nameField.focus(), 100)
-
-      // Resolve with chosen name
-      const finish = (name: string) => {
-        const trimmed = name.trim()
-        resolve(trimmed || generateRandomVisitorName())
-      }
-
-      startBtn.addEventListener("click", () => finish(nameField.value))
-      anonBtn.addEventListener("click", () => resolve(generateRandomVisitorName()))
-      nameField.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-          e.preventDefault()
-          finish(nameField.value)
-        }
-      })
-    })
-  }
-
-  /**
    * Connect to the SMP server with the given display name.
-   * This is the actual connection logic, called after the name is chosen.
    */
   private async connectWithName(displayName: string): Promise<void> {
     this.setStatus("connecting")
@@ -310,8 +220,7 @@ class BrowserClientImpl implements BrowserClient {
           })
 
           this.conn.onChatMessage = (text: string) => {
-            console.log("[SMP] BrowserClient: chat message received: " + text.substring(0, 100))
-            this.config.onMessage(text)
+            this.handleChatPayload(text)
           }
         } catch (invErr) {
           const msg = invErr instanceof Error ? invErr.message : String(invErr)
@@ -319,7 +228,9 @@ class BrowserClientImpl implements BrowserClient {
         }
       }
 
-      this.setStatus("connected")
+      // Status is now "pending" - waiting for support agent to accept.
+      // "connected" will only fire from handleStateChange when HELLO is received.
+      this.setStatus("pending")
 
     } catch (err) {
       this.setStatus("error")
@@ -429,9 +340,42 @@ class BrowserClientImpl implements BrowserClient {
         }
         break
       case "PENDING":
+      case "CONFIRMED":
+        this.setStatus("pending")
+        break
       case "QUEUE_CREATED":
         this.setStatus("connecting")
         break
+    }
+  }
+
+  /**
+   * Parse incoming chat payload JSON and route to appropriate handler.
+   * Only x.msg.new text is forwarded to onMessage. Other events are
+   * handled internally or logged.
+   */
+  private handleChatPayload(jsonStr: string): void {
+    try {
+      const parsed = JSON.parse(jsonStr)
+      const event = parsed.event
+
+      if (event === "x.msg.new") {
+        const text = parsed.params?.content?.text
+        if (text) {
+          console.log("[SMP] BrowserClient: chat message: " + text.substring(0, 100))
+          this.config.onMessage(text)
+        }
+      } else if (event === "x.direct.del") {
+        console.log("[SMP] BrowserClient: contact deleted by support agent")
+        this.config.onMessage("[Connection ended by support agent]")
+        this.setStatus("offline")
+      } else {
+        console.log("[SMP] BrowserClient: unhandled event: " + event)
+      }
+    } catch (_) {
+      // Not valid JSON - pass raw text (shouldn't happen in normal flow)
+      console.log("[SMP] BrowserClient: non-JSON message: " + jsonStr.substring(0, 100))
+      this.config.onMessage(jsonStr)
     }
   }
 

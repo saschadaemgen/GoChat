@@ -145,8 +145,8 @@ describe("Scenario 1: Full lifecycle (connect -> send -> receive -> disconnect)"
 
     const calls = (config.onStatusChange as ReturnType<typeof vi.fn>).mock.calls
     expect(calls[0][0]).toBe("connecting")
-    expect(calls[calls.length - 1][0]).toBe("connected")
-    expect(client.status).toBe("connected")
+    expect(calls[calls.length - 1][0]).toBe("pending")
+    expect(client.status).toBe("pending")
 
     await client.disconnect()
     infra.server.stop()
@@ -163,7 +163,7 @@ describe("Scenario 1: Full lifecycle (connect -> send -> receive -> disconnect)"
 
     // Verify blocks were sent (NEW for bob's queue + SEND for contact queue)
     expect(infra.transport.sentBlocks.length).toBeGreaterThanOrEqual(2)
-    expect(client.status).toBe("connected")
+    expect(client.status).toBe("pending")
 
     await client.disconnect()
     infra.server.stop()
@@ -214,7 +214,7 @@ describe("Scenario 1: Full lifecycle (connect -> send -> receive -> disconnect)"
     const client = createBrowserClient(config)
 
     await client.connect()
-    expect(client.status).toBe("connected")
+    expect(client.status).toBe("pending")
 
     await client.send("test message")
     await tick()
@@ -226,7 +226,7 @@ describe("Scenario 1: Full lifecycle (connect -> send -> receive -> disconnect)"
       (c: [ClientStatus]) => c[0]
     )
     expect(statuses[0]).toBe("connecting")
-    expect(statuses).toContain("connected")
+    expect(statuses).toContain("pending")
     expect(statuses[statuses.length - 1]).toBe("offline")
 
     infra.server.stop()
@@ -242,7 +242,7 @@ describe("Scenario 2: Reconnect after disconnect", () => {
     const client = createBrowserClient(config)
 
     await client.connect()
-    expect(client.status).toBe("connected")
+    expect(client.status).toBe("pending")
 
     await client.disconnect()
     expect(client.status).toBe("offline")
@@ -252,7 +252,7 @@ describe("Scenario 2: Reconnect after disconnect", () => {
     ;(config as any)._agent = infra2.agent
 
     await client.connect()
-    expect(client.status).toBe("connected")
+    expect(client.status).toBe("pending")
 
     await client.disconnect()
     infra.server.stop()
@@ -279,9 +279,9 @@ describe("Scenario 2: Reconnect after disconnect", () => {
     )
     // Each cycle starts with connecting and ends with offline.
     // State machine transitions (QUEUE_CREATED, PENDING) may add extra
-    // "connecting" callbacks between the initial "connecting" and "connected".
+    // "connecting" callbacks between the initial "connecting" and "pending".
     expect(statuses[0]).toBe("connecting")
-    expect(statuses).toContain("connected")
+    expect(statuses).toContain("pending")
     expect(statuses).toContain("offline")
     // Final status should be offline
     expect(statuses[statuses.length - 1]).toBe("offline")
@@ -312,7 +312,7 @@ describe("Scenario 2: Reconnect after disconnect", () => {
     await client.send("after reconnect")
     await tick()
 
-    expect(client.status).toBe("connected")
+    expect(client.status).toBe("pending")
 
     await client.disconnect()
     infra.server.stop()
@@ -476,11 +476,11 @@ describe("Scenario 6: Double connect / double disconnect", () => {
     const client = createBrowserClient(config)
 
     await client.connect()
-    expect(client.status).toBe("connected")
+    expect(client.status).toBe("pending")
 
     // Second connect is a no-op
     await client.connect()
-    expect(client.status).toBe("connected")
+    expect(client.status).toBe("pending")
 
     const connectingCount = (config.onStatusChange as ReturnType<typeof vi.fn>).mock.calls
       .filter((c: [ClientStatus]) => c[0] === "connecting").length
