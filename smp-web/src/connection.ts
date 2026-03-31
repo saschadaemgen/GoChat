@@ -97,6 +97,8 @@ export interface ManagedConnection {
   handshakeSent: boolean
   /** X25519 keypair for per-queue E2E with reply queue (created in sendHandshake, reused) */
   replyE2eKeyPair: { publicKey: Uint8Array; secretKey: Uint8Array } | null
+  /** X25519 private key for signing SENDs to reply queue (from sender auth key in AgentConfirmation) */
+  replySenderAuthPrivKey: Uint8Array | null
   /** Callback for received chat messages (JSON text from x.msg.new) */
   onChatMessage: ((text: string) => void) | null
   /** Send message counter (starts at 1, increments per message) */
@@ -230,6 +232,7 @@ export class ConnectionManager {
       replyQueue: null,
       handshakeSent: false,
       replyE2eKeyPair: null,
+      replySenderAuthPrivKey: null,
       onChatMessage: null,
       sndMsgId: 1,
       prevMsgHash: new Uint8Array(0),
@@ -931,7 +934,8 @@ export class ConnectionManager {
    * Send bytes to the CLI's reply queue via SMP SEND.
    */
   private async sendToReplyQueue(conn: ManagedConnection, sendBody: Uint8Array): Promise<void> {
-    console.log("[SMP] sendToReplyQueue: SEND body=" + sendBody.length + "B")
+    const signed = conn.replySenderAuthPrivKey !== null
+    console.log("[SMP] sendToReplyQueue: SEND body=" + sendBody.length + "B, signed=" + signed)
 
     const targetServer = this.resolveTargetServer(conn.contactAddress)
     let serverForConnection = toSMPServerAddress(targetServer)
@@ -944,10 +948,15 @@ export class ConnectionManager {
     }
 
     const client = await this.agent.getClient(serverForConnection)
-    await client.sendMessage(conn.replyQueue!.senderId, {
-      notification: false,
-      encMessage: sendBody,
-    })
+    const params = {notification: false, encMessage: sendBody}
+
+    if (signed && conn.replySenderAuthPrivKey) {
+      // Queue is secured after CLI sends KEY - all SENDs must be signed
+      await client.sendMessageSigned(conn.replyQueue!.senderId, params, conn.replySenderAuthPrivKey)
+    } else {
+      // First SEND (handshake) before KEY - unsigned
+      await client.sendMessage(conn.replyQueue!.senderId, params)
+    }
     console.log("[SMP] sendToReplyQueue: SEND accepted (OK)")
   }
 
@@ -991,6 +1000,12 @@ export class ConnectionManager {
     agentMessage[0] = 0x49 // 'I' = AgentConnInfo
     agentMessage.set(connInfoBytes, 1)
 
+    // Generate sender auth key BEFORE sendEncrypted so we can store it.
+    // The CLI will use KEY to secure the reply queue with this public key.
+    // After that, all SENDs must be signed with this private key.
+    const senderAuthKeyPair = generateX25519KeyPair()
+    const senderAuthKeySPKI = encodeX25519PublicKey(senderAuthKeyPair.publicKey)
+
     await this.sendEncrypted(
       conn,
       agentMessage,
@@ -1000,8 +1015,6 @@ export class ConnectionManager {
       true,  // first message to reply queue -> e2ePubKey=Just, pad 15904
       (envelope) => {
         // PHConfirmation 'K' with sender auth key
-        const senderAuthKeyPair = generateX25519KeyPair()
-        const senderAuthKeySPKI = encodeX25519PublicKey(senderAuthKeyPair.publicKey)
         const smpConf = new Uint8Array(1 + 1 + senderAuthKeySPKI.length + envelope.length)
         smpConf[0] = 0x4B // 'K'
         smpConf[1] = senderAuthKeySPKI.length
@@ -1011,8 +1024,11 @@ export class ConnectionManager {
       }
     )
 
+    // Store sender auth private key for signing subsequent SENDs
+    // (after CLI sends KEY to secure the reply queue)
+    conn.replySenderAuthPrivKey = senderAuthKeyPair.privateKey
     conn.handshakeSent = true
-    console.log("[SMP] sendHandshake: complete!")
+    console.log("[SMP] sendHandshake: complete! (sender auth key stored for signed SENDs)")
   }
 
   /**

@@ -168,6 +168,9 @@ export interface SMPClient {
   // Send a message to a queue. Uses senderId as entityId.
   sendMessage(senderId: Uint8Array, params: SendParams): Promise<void>
 
+  // Send a signed message to a secured queue. Uses CbAuthenticator.
+  sendMessageSigned(senderId: Uint8Array, params: SendParams, senderPrivKey: Uint8Array): Promise<void>
+
   // Acknowledge message delivery.
   acknowledge(recipientId: Uint8Array, msgId: Uint8Array): Promise<void>
 
@@ -527,6 +530,13 @@ export class SMPClientImpl implements SMPClient {
 
   async sendMessage(senderId: Uint8Array, params: SendParams): Promise<void> {
     await this.expectOK(senderId, encodeSEND(params))
+  }
+
+  async sendMessageSigned(senderId: Uint8Array, params: SendParams, senderPrivKey: Uint8Array): Promise<void> {
+    const response = await this.sendTypedCommand(senderId, encodeSEND(params), senderPrivKey)
+    if (response.type === "OK") return
+    if (response.type === "ERR") throw new SMPCommandError(response.error)
+    throw new Error("Unexpected response to SEND: " + response.type)
   }
 
   async acknowledge(recipientId: Uint8Array, msgId: Uint8Array, authPrivKey?: Uint8Array): Promise<void> {
