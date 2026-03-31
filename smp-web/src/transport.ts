@@ -83,6 +83,7 @@ export class SMPWebSocketTransport implements ChatTransport {
       }
 
       try {
+        console.log("[WS-DEBUG] new WebSocket(" + url + ")")
         const ws = new WebSocket(url)
         ws.binaryType = "arraybuffer"
         this.ws = ws

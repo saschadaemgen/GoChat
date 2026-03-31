@@ -98,6 +98,8 @@ class SMPClientAgentImpl implements SMPClientAgent {
   private readonly onlineHandler: () => void
   private readonly visibilityHandler: () => void
   private destroyed = false
+  /** Track in-progress reconnections to prevent duplicate connections */
+  private readonly pendingReconnects: Map<string, Promise<SMPClient>> = new Map()
 
   // Injectable connect function for testing
   _connectFn: (server: SMPServerAddress, config?: Partial<SMPClientConfig>) => Promise<SMPClient>
@@ -129,8 +131,20 @@ class SMPClientAgentImpl implements SMPClientAgent {
   getClient(server: SMPServerAddress): Promise<SMPClient> {
     const key = serverKey(server)
     const existing = this.connections.get(key)
-    if (existing) return existing.client
+    if (existing) {
+      console.log("[WS-DEBUG] getClient: reusing existing connection for " + key)
+      return existing.client
+    }
 
+    // If a reconnection is already in progress for this server, wait for it
+    // instead of creating a duplicate connection
+    const pendingReconnect = this.pendingReconnects.get(key)
+    if (pendingReconnect) {
+      console.log("[WS-DEBUG] getClient: waiting for in-progress reconnect for " + key)
+      return pendingReconnect
+    }
+
+    console.log("[WS-DEBUG] getClient: creating NEW connection for " + key)
     return this.createConnection(server)
   }
 
@@ -184,6 +198,7 @@ class SMPClientAgentImpl implements SMPClientAgent {
     }
     this.connections.clear()
     this.servers.clear()
+    this.pendingReconnects.clear()
 
     if (typeof window !== "undefined") {
       window.removeEventListener("online", this.onlineHandler)
@@ -201,6 +216,7 @@ class SMPClientAgentImpl implements SMPClientAgent {
 
   private createConnection(server: SMPServerAddress): Promise<SMPClient> {
     const key = serverKey(server)
+    console.log("[WS-DEBUG] createConnection: " + key + " (new WebSocket will be opened)")
     const clientPromise = this._connectFn(server, this.cfg)
     const conn: ServerConnection = {client: clientPromise, queue: Promise.resolve()}
     this.connections.set(key, conn)
@@ -274,12 +290,18 @@ class SMPClientAgentImpl implements SMPClientAgent {
     // Only handle if this is still the current connection
     if (!cur || cur.client !== disconnectedPromise) return
 
+    console.log("[WS-DEBUG] handleDisconnect: " + key + " - " + reason)
     this.connections.delete(key)
     this.emitEvent(server, {type: "disconnected", reason})
 
-    // Trigger automatic reconnection
-    this.reconnectWithBackoff(server).catch(() => {
-      // reconnect_failed event already emitted inside reconnectWithBackoff
+    // Trigger automatic reconnection (tracked to prevent duplicates)
+    const key2 = serverKey(server)
+    const reconnectPromise = this.reconnectWithBackoff(server)
+    this.pendingReconnects.set(key2, reconnectPromise)
+    reconnectPromise.then(() => {
+      this.pendingReconnects.delete(key2)
+    }, () => {
+      this.pendingReconnects.delete(key2)
     })
   }
 
@@ -308,6 +330,7 @@ class SMPClientAgentImpl implements SMPClientAgent {
       await sleep(delayMs)
 
       try {
+        console.log("[WS-DEBUG] reconnectWithBackoff: attempting reconnect for " + serverKey(server) + " (attempt " + (attempt + 1) + ")")
         const client = await this._connectFn(server, this.cfg)
         const key = serverKey(server)
         const conn: ServerConnection = {client: Promise.resolve(client), queue: Promise.resolve()}
@@ -315,6 +338,7 @@ class SMPClientAgentImpl implements SMPClientAgent {
         this.servers.set(key, server)
         this.emitEvent(server, {type: "connected"})
         this.wireDisconnectHandler(server, client, conn.client)
+        console.log("[WS-DEBUG] reconnectWithBackoff: reconnected successfully for " + key)
         return client
       } catch (_e) {
         // Connection failed, try next attempt
