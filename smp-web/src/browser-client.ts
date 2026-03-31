@@ -115,8 +115,14 @@ export interface BrowserClientConfig {
    * host:port from the contact address (only works in non-browser envs).
    */
   serverUrl?: string
-  /** Display name shown to the support team */
+  /** Display name shown to the support team. If set, skips the name input UI. */
   displayName?: string
+  /**
+   * DOM element to inject the name input UI into. If not provided and displayName
+   * is not set, the name input is injected into #gc-start (the chat widget's
+   * start view). Set to false to skip the name input entirely.
+   */
+  nameInputContainer?: HTMLElement | false
   /** Callback when a message is received */
   onMessage: (text: string) => void
   /** Callback when connection status changes */
@@ -166,7 +172,100 @@ class BrowserClientImpl implements BrowserClient {
       return
     }
 
+    // If displayName is already set, name input is disabled, or no DOM (tests), connect directly.
+    // Otherwise, show the name input UI and wait for the user to choose a name.
+    const skipNameInput = this.config.displayName
+      || this.config.nameInputContainer === false
+      || this.config._agent
+      || typeof document === "undefined"
+    if (skipNameInput) {
+      return this.connectWithName(this.config.displayName || "Website Visitor")
+    }
+
+    // Show name input UI and wait for name selection
+    const name = await this.showNameInput()
+    return this.connectWithName(name)
+  }
+
+  /**
+   * Show the name input UI and return a promise that resolves with the chosen name.
+   * Injects DOM elements into the nameInputContainer or #gc-start.
+   */
+  private showNameInput(): Promise<string> {
+    return new Promise<string>((resolve) => {
+      const container = this.config.nameInputContainer || document.getElementById("gc-start")
+      if (!container) {
+        // No container found, use random name
+        resolve(generateRandomVisitorName())
+        return
+      }
+
+      // Inject name input UI
+      container.innerHTML = ""
+
+      const icon = document.createElement("div")
+      icon.className = "gc-start-icon"
+      icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>'
+      container.appendChild(icon)
+
+      const label = document.createElement("div")
+      label.className = "gc-start-text"
+      label.textContent = "Enter your name to start chatting:"
+      container.appendChild(label)
+
+      const nameField = document.createElement("input")
+      nameField.type = "text"
+      nameField.className = "gc-name-input"
+      nameField.placeholder = "Your name"
+      nameField.autocomplete = "off"
+      nameField.maxLength = 40
+      // Inject minimal styles for the name input (self-contained widget)
+      nameField.style.cssText = "width:100%;max-width:240px;background:var(--bg-deep,#121212);border:1px solid var(--accent-border,#333);border-radius:8px;padding:0.5rem 0.65rem;color:var(--text-bright,#fff);font-family:inherit;font-size:0.72rem;outline:none;box-sizing:border-box;"
+      container.appendChild(nameField)
+
+      const btnRow = document.createElement("div")
+      btnRow.style.cssText = "display:flex;gap:0.5rem;flex-wrap:wrap;justify-content:center;margin-top:0.4rem;"
+
+      const startBtn = document.createElement("button")
+      startBtn.className = "gc-start-btn"
+      startBtn.textContent = "Start Chat"
+
+      const anonBtn = document.createElement("button")
+      anonBtn.className = "gc-start-btn"
+      anonBtn.style.cssText = "background:transparent;color:var(--text-dim,#888);border:1px solid var(--accent-border,#333);"
+      anonBtn.textContent = "Stay Anonymous"
+
+      btnRow.appendChild(startBtn)
+      btnRow.appendChild(anonBtn)
+      container.appendChild(btnRow)
+
+      // Focus the input
+      setTimeout(() => nameField.focus(), 100)
+
+      // Resolve with chosen name
+      const finish = (name: string) => {
+        const trimmed = name.trim()
+        resolve(trimmed || generateRandomVisitorName())
+      }
+
+      startBtn.addEventListener("click", () => finish(nameField.value))
+      anonBtn.addEventListener("click", () => resolve(generateRandomVisitorName()))
+      nameField.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault()
+          finish(nameField.value)
+        }
+      })
+    })
+  }
+
+  /**
+   * Connect to the SMP server with the given display name.
+   * This is the actual connection logic, called after the name is chosen.
+   */
+  private async connectWithName(displayName: string): Promise<void> {
     this.setStatus("connecting")
+    console.log("[SMP] BrowserClient.connect: displayName='" + displayName + "'")
 
     try {
       // 1. Create agent and connection manager
@@ -177,7 +276,6 @@ class BrowserClientImpl implements BrowserClient {
       const queueServer = this.config.serverUrl
         ? parseServerUrl(this.config.serverUrl)
         : undefined
-      console.log("[SMP] BrowserClient.connect: queueServer=" + JSON.stringify(queueServer))
 
       this.connManager = new ConnectionManager(this.agent, {
         subscribeMode: "S",
@@ -186,13 +284,10 @@ class BrowserClientImpl implements BrowserClient {
       })
 
       // 2. Initiate connection (parse address, create queue)
-      console.log("[SMP] BrowserClient.connect: calling initiateConnection")
       try {
         this.conn = await this.connManager.initiateConnection(this.config.contactAddress)
-        console.log("[SMP] BrowserClient.connect: initiateConnection SUCCEEDED")
       } catch (initErr) {
         const msg = initErr instanceof Error ? initErr.message : String(initErr)
-        console.log("[SMP] BrowserClient.connect: initiateConnection FAILED: " + msg)
         throw new Error("initiateConnection failed: " + msg)
       }
 
@@ -201,43 +296,29 @@ class BrowserClientImpl implements BrowserClient {
         this.handleStateChange(event)
       })
 
-      // 4. Register message handler on the SMP client
-      // The agent's client for this server will have onMessage wired up
-      // via the connection manager. For the browser client, we listen
-      // to MSG pushes on our receiving queue.
+      // 4. Register message handler
       this.setupMessageHandler()
 
-      // 5. Send invitation to contact queue (Step 2 of connection flow).
-      // After queue creation (IDS), we SEND our connection invitation
-      // to Alice's contact queue. This uses NaCl Layer 1 encryption.
+      // 5. Send invitation with the chosen display name
       if (this.conn.contactQueue) {
-        console.log("[SMP] BrowserClient.connect: sending invitation to contact queue")
         try {
-          await this.connManager.sendInvitation(
-            this.conn.state.id,
-            this.config.displayName || "Website Visitor"
-          )
-          console.log("[SMP] BrowserClient.connect: invitation sent, state=PENDING")
+          await this.connManager.sendInvitation(this.conn.state.id, displayName)
+          console.log("[SMP] BrowserClient.connect: invitation sent as '" + displayName + "'")
 
-          // Set up MSG handler to receive the peer's confirmation
           await this.connManager.setupMsgHandler(this.conn.state.id, (msgBody) => {
             console.log("[SMP] BrowserClient: received MSG body " + msgBody.length + "B")
           })
 
-          // Wire up chat message callback for received messages
           this.conn.onChatMessage = (text: string) => {
             console.log("[SMP] BrowserClient: chat message received: " + text.substring(0, 100))
             this.config.onMessage(text)
           }
-          console.log("[SMP] BrowserClient.connect: MSG handler + chat callback set up")
         } catch (invErr) {
           const msg = invErr instanceof Error ? invErr.message : String(invErr)
           console.log("[SMP] BrowserClient.connect: invitation FAILED: " + msg)
         }
       }
 
-      // Mark as connected. In a full implementation, we would wait for
-      // the support team to accept the invitation before transitioning.
       this.setStatus("connected")
 
     } catch (err) {
