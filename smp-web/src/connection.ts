@@ -727,7 +727,13 @@ export class ConnectionManager {
         console.log("[SMP] HELLO received! Connection established.")
         console.log("[SMP] MSG #" + msgNum + " is HELLO - bidirectional ratchet confirmed")
       } else if (innerTag === 0x4D) { // 'M' = A_MSG (chat message)
-        console.log("[SMP] MSG #" + msgNum + ": chat message received")
+        const msgBody = agentMessage.slice(offset + 1)
+        try {
+          const msgText = new TextDecoder().decode(msgBody)
+          console.log("[SMP] MSG #" + msgNum + " chat: " + msgText)
+        } catch {
+          console.log("[SMP] MSG #" + msgNum + ": chat message received (" + msgBody.length + "B binary)")
+        }
       } else {
         console.log("[SMP] MSG #" + msgNum + ": AMessage tag '" + innerTagChar + "'")
       }
