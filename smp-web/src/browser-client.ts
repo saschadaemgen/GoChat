@@ -21,6 +21,10 @@ import {ConnectionManager} from "./connection.js"
 import type {ManagedConnection} from "./connection.js"
 import type {ConnectionStateEvent} from "./state.js"
 
+// -- Default contact address (SimpleX Desktop App on smp.simplego.dev)
+
+export const DEFAULT_CONTACT_ADDRESS = "https://simplex.chat/contact#/?v=2-7&smp=smp%3A%2F%2F7qw4hvuS-PvTHbotgtg_xiwrhFUk_s1q2upUQrGIWow%3D%40smp.simplego.dev%2FrvmTVkY_dMRMA9L4jlaQsDPZeyCUktxq%23%2F%3Fv%3D1-4%26dh%3DMCowBQYDK2VuAyEAnIg32wSmfYdGHlO7qthFkn2wZmwcF2cOJHbmVnkkZjI%253D%26q%3Dc"
+
 // -- Types
 
 export type ClientStatus = "offline" | "connecting" | "connected" | "error"
