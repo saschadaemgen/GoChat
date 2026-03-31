@@ -678,9 +678,9 @@ export async function connectSMP(
       )
     }
 
-    // 8. Return client with command dispatch
+    // 8. Return client with command dispatch + keepalive
     console.log("[SMP] connectSMP: HANDSHAKE COMPLETE, creating SMPClient v" + smpVersion + ", serverAuthKey=" + (serverHello.serverAuthPubKeyRaw ? serverHello.serverAuthPubKeyRaw.length + "B" : "null"))
-    return new SMPClientImpl(
+    const client = new SMPClientImpl(
       serverHello.sessionId,
       smpVersion,
       transport,
@@ -689,6 +689,14 @@ export async function connectSMP(
       debug ?? undefined,
       serverHello.serverAuthPubKeyRaw,
     )
+
+    // Start PING/PONG keepalive immediately after handshake.
+    // Without periodic PING, the SMP server silently drops the MSG
+    // subscription after an idle timeout (confirmed by SimpleX founder).
+    client.startKeepalive()
+    console.log("[SMP] connectSMP: keepalive started (interval=" + cfg.keepaliveIntervalMs + "ms)")
+
+    return client
   } catch (e) {
     transport.close()
     throw e
