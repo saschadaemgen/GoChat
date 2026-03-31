@@ -25,6 +25,13 @@ import type {ConnectionStateEvent} from "./state.js"
 
 export type ClientStatus = "offline" | "connecting" | "connected" | "error"
 
+export interface QueuedMessage {
+  id: string
+  text: string
+  timestamp: number
+  status: "queued" | "sending" | "sent" | "failed"
+}
+
 export interface BrowserClientConfig {
   /** SimpleX contact address URI of the support team */
   contactAddress: string
@@ -43,6 +50,10 @@ export interface BrowserClientConfig {
   onStatusChange: (status: ClientStatus) => void
   /** Callback for errors (optional) */
   onError?: (error: Error) => void
+  /** Callback when user sends a message (fired immediately, even if queued) */
+  onOwnMessage?: (msg: QueuedMessage) => void
+  /** Callback when a queued message status changes (queued -> sending -> sent/failed) */
+  onMessageStatusChange?: (id: string, status: string) => void
   /** @internal Injectable agent for testing - defaults to newSMPAgent() */
   _agent?: SMPClientAgent
 }
@@ -67,6 +78,7 @@ class BrowserClientImpl implements BrowserClient {
   private conn: ManagedConnection | null = null
   private currentStatus: ClientStatus = "offline"
   private unsubscribeState: (() => void) | null = null
+  private messageQueue: QueuedMessage[] = []
 
   constructor(config: BrowserClientConfig) {
     this.config = config
@@ -165,7 +177,7 @@ class BrowserClientImpl implements BrowserClient {
   }
 
   async send(text: string): Promise<void> {
-    if (this.currentStatus !== "connected") {
+    if (this.currentStatus === "offline" || this.currentStatus === "error") {
       throw new Error("Cannot send: not connected (status: " + this.currentStatus + ")")
     }
 
@@ -173,21 +185,44 @@ class BrowserClientImpl implements BrowserClient {
       throw new Error("Cannot send: connection not fully established")
     }
 
-    // Block sends until bidirectional connection is established (CONNECTED state)
-    if (this.conn.state.state !== "CONNECTED") {
-      console.log("[SMP] BrowserClient.send: blocked - state is " + this.conn.state.state + ", not CONNECTED")
-      return
+    // Create queued message and notify UI immediately
+    const msg: QueuedMessage = {
+      id: Date.now() + "-" + Math.random().toString(36).slice(2),
+      text,
+      timestamp: Date.now(),
+      status: "queued",
     }
 
-    try {
-      // Send through the full encrypted pipeline:
-      // JSON body -> AgentMessage -> rcEncrypt -> AgentMsgEnvelope(v=1) -> NaCl box -> SEND to reply queue
-      await this.connManager.sendChatMessage(this.conn.state.id, text)
-    } catch (err) {
-      if (this.config.onError && err instanceof Error) {
-        this.config.onError(err)
+    if (this.config.onOwnMessage) {
+      this.config.onOwnMessage(msg)
+    }
+
+    // If CONNECTED: send immediately through encrypted pipeline
+    if (this.conn.state.state === "CONNECTED") {
+      msg.status = "sending"
+      if (this.config.onMessageStatusChange) {
+        this.config.onMessageStatusChange(msg.id, "sending")
       }
-      throw err
+      try {
+        await this.connManager.sendChatMessage(this.conn.state.id, text)
+        msg.status = "sent"
+        if (this.config.onMessageStatusChange) {
+          this.config.onMessageStatusChange(msg.id, "sent")
+        }
+      } catch (err) {
+        msg.status = "failed"
+        if (this.config.onMessageStatusChange) {
+          this.config.onMessageStatusChange(msg.id, "failed")
+        }
+        if (this.config.onError && err instanceof Error) {
+          this.config.onError(err)
+        }
+        throw err
+      }
+    } else {
+      // Queue for later - will be sent when state transitions to CONNECTED
+      this.messageQueue.push(msg)
+      console.log("[SMP] BrowserClient.send: queued message (state=" + this.conn.state.state + ", queue=" + this.messageQueue.length + ")")
     }
   }
 
@@ -227,6 +262,8 @@ class BrowserClientImpl implements BrowserClient {
     switch (event.newState) {
       case "CONNECTED":
         this.setStatus("connected")
+        // Flush any messages queued during PENDING/CONFIRMED state
+        this.flushMessageQueue()
         break
       case "CLOSED":
         this.setStatus("offline")
@@ -242,6 +279,42 @@ class BrowserClientImpl implements BrowserClient {
         this.setStatus("connecting")
         break
     }
+  }
+
+  private flushMessageQueue(): void {
+    if (this.messageQueue.length === 0) return
+    if (!this.conn || !this.connManager) return
+
+    const connId = this.conn.state.id
+    const queue = [...this.messageQueue]
+    this.messageQueue = []
+    console.log("[SMP] BrowserClient: flushing " + queue.length + " queued message(s)")
+
+    // Send queued messages sequentially (async, fire-and-forget from state handler)
+    const sendNext = async (index: number) => {
+      if (index >= queue.length) return
+      const msg = queue[index]
+      msg.status = "sending"
+      if (this.config.onMessageStatusChange) {
+        this.config.onMessageStatusChange(msg.id, "sending")
+      }
+      try {
+        await this.connManager!.sendChatMessage(connId, msg.text)
+        msg.status = "sent"
+        if (this.config.onMessageStatusChange) {
+          this.config.onMessageStatusChange(msg.id, "sent")
+        }
+        console.log("[SMP] BrowserClient: queued message " + (index + 1) + "/" + queue.length + " sent")
+      } catch (err) {
+        msg.status = "failed"
+        if (this.config.onMessageStatusChange) {
+          this.config.onMessageStatusChange(msg.id, "failed")
+        }
+        console.log("[SMP] BrowserClient: queued message " + (index + 1) + " failed: " + (err instanceof Error ? err.message : String(err)))
+      }
+      await sendNext(index + 1)
+    }
+    sendNext(0).catch(() => {})
   }
 
   private setupMessageHandler(): void {

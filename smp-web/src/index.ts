@@ -189,5 +189,5 @@ export type {ReplyQueueInfo, AgentConnInfoReply} from "./reply-queue.js"
 export {parseAgentConnInfoReply} from "./reply-queue.js"
 
 // Browser client (Season 5 Phase 2)
-export type {BrowserClientConfig, BrowserClient, ClientStatus} from "./browser-client.js"
+export type {BrowserClientConfig, BrowserClient, ClientStatus, QueuedMessage} from "./browser-client.js"
 export {createBrowserClient} from "./browser-client.js"
