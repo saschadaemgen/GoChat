@@ -265,7 +265,54 @@ GoChat/
 
 ---
 
-## Getting started
+## Support agent setup
+
+GoChat visitors connect to your SimpleX contact address. You respond using the SimpleX Desktop App (or mobile app).
+
+### 1. Download SimpleX Desktop App
+
+Download from [simplex.chat/downloads](https://simplex.chat/downloads/):
+
+- **Windows**: [Download MSI](https://github.com/simplex-chat/simplex-chat/releases/latest/download/simplex-desktop-windows-x86_64.msi)
+- **Mac (Apple Silicon)**: [Download DMG](https://github.com/simplex-chat/simplex-chat/releases/latest/download/simplex-desktop-macos-aarch64.dmg)
+- **Mac (Intel)**: [Download DMG](https://github.com/simplex-chat/simplex-chat/releases/latest/download/simplex-desktop-macos-x86_64.dmg)
+- **Linux**: [Download AppImage](https://github.com/simplex-chat/simplex-chat/releases/latest/download/simplex-desktop-x86_64.AppImage) or [Flatpak](https://flathub.org/apps/chat.simplex.simplex)
+- **iOS**: [App Store](https://apps.apple.com/us/app/simplex-chat/id1605771084)
+- **Android**: [Play Store](https://play.google.com/store/apps/details?id=chat.simplex.app)
+
+### 2. Create your contact address
+
+1. Open SimpleX Desktop App
+2. Go to Settings > Your SimpleX Contact Address
+3. Create a new address
+4. Copy the full address link
+
+### 3. Configure GoChat widget
+
+Add your contact address to the GoChat widget on your website:
+
+```html
+<script src="gochat-client.js"></script>
+<script>
+  goChat.init({
+    contactAddress: 'YOUR_SIMPLEX_CONTACT_ADDRESS_HERE',
+    serverUrl: 'wss://your-smp-server:8444'
+  });
+</script>
+```
+
+### 4. Accept chats
+
+When a website visitor starts a chat:
+1. You receive a connection request in SimpleX Desktop App
+2. Accept the request
+3. Chat with the visitor - end-to-end encrypted
+
+Each visitor appears as a separate contact. You can chat with multiple visitors simultaneously.
+
+---
+
+## Getting started (developer)
 
 ```powershell
 git clone https://github.com/saschadaemgen/GoChat.git
