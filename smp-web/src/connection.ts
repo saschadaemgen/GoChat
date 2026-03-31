@@ -668,8 +668,8 @@ export class ConnectionManager {
     offset += 8    // skip sndMsgId (Int64 BE, 8 bytes)
 
     // APrivHeader: Word16 BE length prefix for prevMsgHash
-    const hashLen = (agentMessage[offset] << 8) | agentMessage[offset + 1]
-    offset += 2
+    const hashLen = agentMessage[offset]
+    offset += 1
     offset += hashLen // skip the hash bytes
     console.log("[DIAG] APrivHeader: prevMsgHash=" + hashLen + "B, remaining=" + (agentMessage.length - offset) + "B")
 
