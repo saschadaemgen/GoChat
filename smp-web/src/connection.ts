@@ -30,6 +30,8 @@ import {parseAgentConfirmation} from "./agent-confirmation.js"
 import {x3dhReceiver} from "./x3dh-agreement.js"
 import {initRcvRatchet, decryptEncConnInfo, rcDecrypt} from "./ratchet-decrypt.js"
 import type {RatchetState} from "./ratchet-decrypt.js"
+import {parseAgentConnInfoReply} from "./reply-queue.js"
+import type {ReplyQueueInfo} from "./reply-queue.js"
 
 // -- Types
 
@@ -87,6 +89,8 @@ export interface ManagedConnection {
   e2eDhPubKey: Uint8Array | null
   /** Count of received MSGs (0 = AgentConfirmation, 1+ = subsequent messages like HELLO) */
   msgCount: number
+  /** CLI's reply queue info (parsed from AgentConnInfoReply) */
+  replyQueue: ReplyQueueInfo | null
 }
 
 /**
@@ -211,6 +215,7 @@ export class ConnectionManager {
       ratchetState: null,
       e2eDhPubKey: null,
       msgCount: 0,
+      replyQueue: null,
     }
 
     // 7. Create receiving queue on the SMP server
@@ -572,15 +577,39 @@ export class ConnectionManager {
       conn.ratchetState = updatedState
       console.log("[SMP] Ratchet state saved (nr=" + updatedState.nr + ")")
 
-      // Try to find JSON in the agentMessage
-      try {
-        const text = new TextDecoder().decode(agentMessage)
-        const jsonStart = text.indexOf("{")
-        if (jsonStart >= 0) {
-          const jsonStr = text.substring(jsonStart)
-          console.log("[SMP] ConnInfo JSON found at offset " + jsonStart + ": " + jsonStr.substring(0, 200))
+      // Parse AgentConnInfoReply ('D' tag) to extract reply queue + connInfo
+      if (agentMessage[0] === 0x44) { // 'D' = AgentConnInfoReply
+        try {
+          const reply = parseAgentConnInfoReply(agentMessage)
+          if (reply.queues.length > 0) {
+            conn.replyQueue = reply.queues[0]
+            console.log("[SMP] Reply queue: " + reply.queues[0].serverHosts.join(",") + ":" + reply.queues[0].serverPort +
+                        ", senderId=" + reply.queues[0].senderId.length + "B" +
+                        ", dhKey=" + reply.queues[0].dhPublicKeyRaw.length + "B" +
+                        ", sndSecure=" + reply.queues[0].sndSecure)
+          }
+          // Log connInfo JSON
+          try {
+            const text = new TextDecoder().decode(reply.connInfo)
+            const jsonStart = text.indexOf("{")
+            if (jsonStart >= 0) {
+              console.log("[SMP] ConnInfo JSON: " + text.substring(jsonStart, jsonStart + 200))
+            }
+          } catch (_) {}
+        } catch (parseErr) {
+          console.log("[SMP] AgentConnInfoReply parse error: " + (parseErr instanceof Error ? parseErr.message : String(parseErr)))
+          // Fall back to raw JSON search
+          try {
+            const text = new TextDecoder().decode(agentMessage)
+            const jsonStart = text.indexOf("{")
+            if (jsonStart >= 0) {
+              console.log("[SMP] ConnInfo JSON (fallback): " + text.substring(jsonStart, jsonStart + 200))
+            }
+          } catch (_) {}
         }
-      } catch (_) {}
+      } else {
+        console.log("[SMP] AgentMessage tag=0x" + agentMessage[0].toString(16) + " (expected 'D'=0x44)")
+      }
 
       onMsgBody(rawMsgBody)
     } catch (err) {
