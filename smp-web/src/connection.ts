@@ -741,13 +741,13 @@ export class ConnectionManager {
   }
 
   /**
-   * Send our AgentConnInfo to the CLI's reply queue to complete the handshake.
+   * Send our AgentConfirmation to the CLI's reply queue to complete the handshake.
    *
    * Flow:
    * 1. Build AgentMessage: ['I'][connInfo JSON]
    * 2. Ratchet encrypt with stored state (cks, hks, dhSelf)
-   * 3. Wrap in AgentMsgEnvelope: [Word16 7]['M'][encRatchetMessage]
-   * 4. Wrap in smpConfirmation: ['_'][agentMsgEnvelope]
+   * 3. Wrap in AgentConfirmation: [Word16 7]['C'][Maybe e2eEncryption_='0'][Tail encConnInfo]
+   * 4. Wrap in smpConfirmation: ['K'][senderAuthKey SPKI][agentConfirmation]
    * 5. NaCl encrypt: nacl.box with our new X25519 keypair + CLI's queue DH key
    * 6. Build smpEncConfirmation: [Maybe '1'][keyLen=44][SPKI][nonce][encrypted]
    * 7. SEND to CLI's reply queue
@@ -794,16 +794,28 @@ export class ConnectionManager {
     conn.ratchetState = updatedState
     console.log("[SMP] sendHandshake: ratchet encrypted=" + encRatchetMessage.length + "B, ns=" + updatedState.ns)
 
-    // Step 3: Wrap in AgentMsgEnvelope = [Word16 agentVersion=7]['M'][Tail encRatchetMessage]
-    const agentMsgEnvelope = new Uint8Array(2 + 1 + encRatchetMessage.length)
-    agentMsgEnvelope[0] = 0x00; agentMsgEnvelope[1] = 0x07 // agentVersion = 7
-    agentMsgEnvelope[2] = 0x4D // 'M' = AgentMessage
-    agentMsgEnvelope.set(encRatchetMessage, 3)
+    // Step 3: Wrap in AgentConfirmation = [Word16 7]['C'][Maybe e2eEncryption_='0'][Tail encConnInfo]
+    // The CLI expects AgentConfirmation (tag 'C'), mirroring what it sent to us.
+    // e2eEncryption_ = Nothing ('0') because X448 keys were already in our invitation.
+    // encConnInfo = the ratchet-encrypted message (Tail = rest of bytes)
+    const agentConfirmation = new Uint8Array(2 + 1 + 1 + encRatchetMessage.length)
+    agentConfirmation[0] = 0x00; agentConfirmation[1] = 0x07 // agentVersion = 7
+    agentConfirmation[2] = 0x43 // 'C' = AgentConfirmation
+    agentConfirmation[3] = 0x30 // '0' = Maybe Nothing (no e2eEncryption_ - keys in invitation)
+    agentConfirmation.set(encRatchetMessage, 4)
+    console.log("[SMP] sendHandshake: AgentConfirmation=" + agentConfirmation.length + "B (tag='C', e2e=Nothing)")
 
-    // Step 4: Wrap in smpConfirmation = ['_'][agentMsgEnvelope]
-    const smpConfirmation = new Uint8Array(1 + agentMsgEnvelope.length)
-    smpConfirmation[0] = 0x5F // '_' = PHEmpty
-    smpConfirmation.set(agentMsgEnvelope, 1)
+    // Step 4: Wrap in smpConfirmation = ['K'][keyLen][senderAuthKey SPKI][agentConfirmation]
+    // PHConfirmation with sender public auth key (sndSecure=false, CLI needs this to secure the queue)
+    const senderAuthKeyPair = generateX25519KeyPair()
+    const senderAuthKeySPKI = encodeX25519PublicKey(senderAuthKeyPair.publicKey)
+    const smpConfirmation = new Uint8Array(1 + 1 + senderAuthKeySPKI.length + agentConfirmation.length)
+    let confOffset = 0
+    smpConfirmation[confOffset++] = 0x4B // 'K' = PHConfirmation (sender key follows)
+    smpConfirmation[confOffset++] = senderAuthKeySPKI.length // keyLen (44)
+    smpConfirmation.set(senderAuthKeySPKI, confOffset); confOffset += senderAuthKeySPKI.length
+    smpConfirmation.set(agentConfirmation, confOffset)
+    console.log("[SMP] sendHandshake: smpConfirmation=" + smpConfirmation.length + "B (PHConfirmation 'K', senderAuthKey=" + senderAuthKeySPKI.length + "B)")
 
     // Step 5: NaCl encrypt with per-queue E2E
     // Generate new X25519 keypair for this queue's E2E layer
