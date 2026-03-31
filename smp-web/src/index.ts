@@ -183,6 +183,10 @@ export {x3dhReceiver} from "./x3dh-agreement.js"
 export type {RatchetState, DecryptResult} from "./ratchet-decrypt.js"
 export {initRcvRatchet, decryptEncConnInfo, rcDecrypt, rootKdf, chainKdf, unPad, parseEncRatchetMessage} from "./ratchet-decrypt.js"
 
+// Reply queue parser (Season 9)
+export type {ReplyQueueInfo, AgentConnInfoReply} from "./reply-queue.js"
+export {parseAgentConnInfoReply} from "./reply-queue.js"
+
 // Browser client (Season 5 Phase 2)
 export type {BrowserClientConfig, BrowserClient, ClientStatus} from "./browser-client.js"
 export {createBrowserClient} from "./browser-client.js"
