@@ -169,45 +169,20 @@ class BrowserClientImpl implements BrowserClient {
       throw new Error("Cannot send: not connected (status: " + this.currentStatus + ")")
     }
 
-    if (!this.conn || !this.conn.contactQueue || !this.conn.receiveQueue) {
+    if (!this.conn || !this.connManager) {
       throw new Error("Cannot send: connection not fully established")
     }
 
-    // Do NOT send regular messages until the bidirectional connection is
-    // fully established. After the invitation (Step 2), we are in PENDING
-    // state waiting for the support team to accept. Regular messages would
-    // go to the contact queue and confuse the SimpleX app.
+    // Block sends until bidirectional connection is established (CONNECTED state)
     if (this.conn.state.state !== "CONNECTED") {
-      console.log("[SMP] BrowserClient.send: blocked - connection state is " + this.conn.state.state + ", not CONNECTED. Waiting for confirmation.")
-      return // Silently drop - the chat will work once connection is confirmed
+      console.log("[SMP] BrowserClient.send: blocked - state is " + this.conn.state.state + ", not CONNECTED")
+      return
     }
 
     try {
-      // Get the SMP client for the contact queue server.
-      // If serverUrl is configured, use its host:port for the WebSocket
-      // connection (the WSS proxy), not the SMP protocol port.
-      // The keyHash comes from the contact address server identity
-      // (needed for the SMP handshake even through a proxy).
-      const wssServer = this.config.serverUrl
-        ? parseServerUrl(this.config.serverUrl)
-        : null
-      const serverAddress = {
-        host: wssServer ? wssServer.hosts[0] : this.conn.contactQueue.server.hosts[0],
-        port: wssServer ? wssServer.port : this.conn.contactQueue.server.port,
-        keyHash: base64urlDecode(this.conn.contactQueue.server.serverIdentity),
-      }
-      const client = await this.agent!.getClient(serverAddress)
-
-      // Encode text as bytes for SEND command
-      const msgBytes = new TextEncoder().encode(text)
-
-      // Send via the contact queue's senderId
-      const senderIdBytes = base64urlDecode(this.conn.contactQueue.senderId)
-      await client.sendMessage(senderIdBytes, {
-        notification: true,
-        encMessage: msgBytes,
-      })
-
+      // Send through the full encrypted pipeline:
+      // JSON body -> AgentMessage -> rcEncrypt -> AgentMsgEnvelope(v=1) -> NaCl box -> SEND to reply queue
+      await this.connManager.sendChatMessage(this.conn.state.id, text)
     } catch (err) {
       if (this.config.onError && err instanceof Error) {
         this.config.onError(err)
