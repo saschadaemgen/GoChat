@@ -344,9 +344,17 @@ export class SMPClientImpl implements SMPClient {
             pending.reject(parseErr instanceof Error ? parseErr : new Error(String(parseErr)))
           }
         } else {
-          console.log("[SMP] dispatch: NO MATCH for corrId " + key.substring(0, 16) + "... (unmatched response)")
-          if (this.responseHandler !== null) {
-            this.responseHandler(corrId, entityId, command)
+          // Check if this is a PONG response (from keepalive PING)
+          // PING sends via transport.send directly, not sendTypedCommand,
+          // so the corrId is not in pendingCommands.
+          if (command.length >= 4 && command[0] === 0x50 && command[1] === 0x4F && command[2] === 0x4E && command[3] === 0x47) {
+            // PONG = 0x50 0x4F 0x4E 0x47
+            console.log("[SMP] PONG received (keepalive)")
+          } else {
+            console.log("[SMP] dispatch: NO MATCH for corrId " + key.substring(0, 16) + "... (unmatched response)")
+            if (this.responseHandler !== null) {
+              this.responseHandler(corrId, entityId, command)
+            }
           }
         }
       } else {
