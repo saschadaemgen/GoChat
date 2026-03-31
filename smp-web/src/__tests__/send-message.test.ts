@@ -35,19 +35,22 @@ describe("chat message JSON body", () => {
 })
 
 describe("HELLO AgentMessage format", () => {
-  it("builds correct wire format: M + APrivHeader + H", () => {
+  it("builds correct wire format: M + APrivHeader(Word64) + H", () => {
     // Simulate buildAPrivHeader for sndMsgId=1, empty prevMsgHash
+    // sndMsgId is Word64 BE (Int64 BE) = 8 bytes
     const sndMsgId = 1
     const prevMsgHash = new Uint8Array(0)
     const hashLen = prevMsgHash.length
 
-    // APrivHeader: [Word32 sndMsgId][1B hashLen][hash]
-    const privHeader = new Uint8Array(4 + 1 + hashLen)
-    privHeader[0] = (sndMsgId >>> 24) & 0xFF
-    privHeader[1] = (sndMsgId >>> 16) & 0xFF
-    privHeader[2] = (sndMsgId >>> 8) & 0xFF
-    privHeader[3] = sndMsgId & 0xFF
-    privHeader[4] = hashLen
+    // APrivHeader: [Word64 sndMsgId][1B hashLen][hash]
+    const privHeader = new Uint8Array(8 + 1 + hashLen)
+    // Word64 BE: high 4 bytes = 0, low 4 bytes = sndMsgId
+    privHeader[0] = 0; privHeader[1] = 0; privHeader[2] = 0; privHeader[3] = 0
+    privHeader[4] = (sndMsgId >>> 24) & 0xFF
+    privHeader[5] = (sndMsgId >>> 16) & 0xFF
+    privHeader[6] = (sndMsgId >>> 8) & 0xFF
+    privHeader[7] = sndMsgId & 0xFF
+    privHeader[8] = hashLen
 
     // AgentMessage: ['M'][APrivHeader]['H']
     const agentMessage = new Uint8Array(1 + privHeader.length + 1)
@@ -55,44 +58,45 @@ describe("HELLO AgentMessage format", () => {
     agentMessage.set(privHeader, 1)
     agentMessage[1 + privHeader.length] = 0x48 // 'H'
 
+    // Expected: 4D 00 00 00 00 00 00 00 01 00 48
     expect(agentMessage[0]).toBe(0x4D) // outer A_MSG tag
-    expect(agentMessage[1]).toBe(0x00) // sndMsgId high byte
-    expect(agentMessage[4]).toBe(0x01) // sndMsgId low byte
-    expect(agentMessage[5]).toBe(0x00) // prevMsgHash length = 0
-    expect(agentMessage[6]).toBe(0x48) // 'H' = HELLO tag
-    expect(agentMessage.length).toBe(7) // M(1) + sndMsgId(4) + hashLen(1) + H(1) = 7
+    expect(agentMessage[1]).toBe(0x00) // sndMsgId high bytes
+    expect(agentMessage[7]).toBe(0x00)
+    expect(agentMessage[8]).toBe(0x01) // sndMsgId low byte = 1
+    expect(agentMessage[9]).toBe(0x00) // prevMsgHash length = 0
+    expect(agentMessage[10]).toBe(0x48) // 'H' = HELLO tag
+    expect(agentMessage.length).toBe(11) // M(1) + sndMsgId(8) + hashLen(1) + H(1) = 11
   })
 
-  it("builds APrivHeader with prevMsgHash", () => {
+  it("builds APrivHeader with prevMsgHash (Word64 sndMsgId)", () => {
     const sndMsgId = 2
     const prevMsgHash = new Uint8Array(32).fill(0xAA)
 
-    const privHeader = new Uint8Array(4 + 1 + 32)
-    privHeader[0] = (sndMsgId >>> 24) & 0xFF
-    privHeader[1] = (sndMsgId >>> 16) & 0xFF
-    privHeader[2] = (sndMsgId >>> 8) & 0xFF
-    privHeader[3] = sndMsgId & 0xFF
-    privHeader[4] = 32
-    privHeader.set(prevMsgHash, 5)
+    const privHeader = new Uint8Array(8 + 1 + 32)
+    privHeader[0] = 0; privHeader[1] = 0; privHeader[2] = 0; privHeader[3] = 0
+    privHeader[4] = 0; privHeader[5] = 0; privHeader[6] = 0; privHeader[7] = 2
+    privHeader[8] = 32
+    privHeader.set(prevMsgHash, 9)
 
-    expect(privHeader[3]).toBe(2) // sndMsgId = 2
-    expect(privHeader[4]).toBe(32) // hashLen = 32
-    expect(privHeader[5]).toBe(0xAA) // first byte of hash
-    expect(privHeader.length).toBe(37) // 4 + 1 + 32
+    expect(privHeader[7]).toBe(2) // sndMsgId low byte = 2
+    expect(privHeader[8]).toBe(32) // hashLen = 32
+    expect(privHeader[9]).toBe(0xAA) // first byte of hash
+    expect(privHeader.length).toBe(41) // 8 + 1 + 32
   })
 })
 
 describe("chat message AgentMessage format", () => {
-  it("builds correct wire format: M + APrivHeader + M + JSON", () => {
+  it("builds correct wire format: M + APrivHeader(Word64) + M + JSON", () => {
     const sndMsgId = 2
     const prevMsgHash = new Uint8Array(32).fill(0xBB)
     const jsonBody = new TextEncoder().encode('{"event":"x.msg.new","params":{"content":{"text":"hi","type":"text"}}}')
 
-    // APrivHeader
-    const privHeader = new Uint8Array(4 + 1 + 32)
-    privHeader[0] = 0; privHeader[1] = 0; privHeader[2] = 0; privHeader[3] = 2
-    privHeader[4] = 32
-    privHeader.set(prevMsgHash, 5)
+    // APrivHeader with Word64 sndMsgId
+    const privHeader = new Uint8Array(8 + 1 + 32)
+    privHeader[0] = 0; privHeader[1] = 0; privHeader[2] = 0; privHeader[3] = 0
+    privHeader[4] = 0; privHeader[5] = 0; privHeader[6] = 0; privHeader[7] = 2
+    privHeader[8] = 32
+    privHeader.set(prevMsgHash, 9)
 
     // AgentMessage: ['M'][APrivHeader]['M'][jsonBody]
     const agentMessage = new Uint8Array(1 + privHeader.length + 1 + jsonBody.length)
@@ -103,7 +107,7 @@ describe("chat message AgentMessage format", () => {
 
     expect(agentMessage[0]).toBe(0x4D) // outer A_MSG
     expect(agentMessage[1 + privHeader.length]).toBe(0x4D) // inner A_MSG content
-    // Extract JSON from the right offset
+    expect(privHeader.length).toBe(41) // 8 + 1 + 32
     const extractedJson = agentMessage.slice(2 + privHeader.length)
     expect(new TextDecoder().decode(extractedJson)).toContain('"x.msg.new"')
   })
