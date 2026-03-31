@@ -809,9 +809,13 @@ export class ConnectionManager {
    */
   private buildAPrivHeader(conn: ManagedConnection): Uint8Array {
     const hashLen = conn.prevMsgHash.length
-    const header = new Uint8Array(4 + 1 + hashLen)
+    const header = new Uint8Array(8 + 1 + hashLen)
     let offset = 0
-    // sndMsgId (Word32 BE)
+    // sndMsgId (Int64 BE = Word64 BE) - high 32 bits = 0, low 32 bits = counter
+    header[offset++] = 0
+    header[offset++] = 0
+    header[offset++] = 0
+    header[offset++] = 0
     header[offset++] = (conn.sndMsgId >>> 24) & 0xFF
     header[offset++] = (conn.sndMsgId >>> 16) & 0xFF
     header[offset++] = (conn.sndMsgId >>> 8) & 0xFF
