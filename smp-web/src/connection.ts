@@ -28,8 +28,9 @@ import {decryptMsgBody, parseRcvMsgBody, extractRawX25519} from "./msg-decrypt.j
 import {parseSmpEncConfirmation, decryptLayer1, parseSmpConfirmation} from "./layer1-decrypt.js"
 import {parseAgentConfirmation} from "./agent-confirmation.js"
 import {x3dhReceiver} from "./x3dh-agreement.js"
-import {initRcvRatchet, decryptEncConnInfo, rcDecrypt} from "./ratchet-decrypt.js"
+import {initRcvRatchet, decryptEncConnInfo, rcDecrypt, rcEncrypt, pad} from "./ratchet-decrypt.js"
 import type {RatchetState} from "./ratchet-decrypt.js"
+import nacl from "tweetnacl"
 import {parseAgentConnInfoReply} from "./reply-queue.js"
 import type {ReplyQueueInfo} from "./reply-queue.js"
 
@@ -91,6 +92,8 @@ export interface ManagedConnection {
   msgCount: number
   /** CLI's reply queue info (parsed from AgentConnInfoReply) */
   replyQueue: ReplyQueueInfo | null
+  /** Whether handshake reply has been sent to CLI's reply queue */
+  handshakeSent: boolean
 }
 
 /**
@@ -216,6 +219,7 @@ export class ConnectionManager {
       e2eDhPubKey: null,
       msgCount: 0,
       replyQueue: null,
+      handshakeSent: false,
     }
 
     // 7. Create receiving queue on the SMP server
@@ -611,6 +615,17 @@ export class ConnectionManager {
         console.log("[SMP] AgentMessage tag=0x" + agentMessage[0].toString(16) + " (expected 'D'=0x44)")
       }
 
+      // Auto-send handshake reply if reply queue is available
+      if (conn.replyQueue && !conn.handshakeSent) {
+        const connId = conn.state.id
+        console.log("[SMP] Auto-sending handshake reply to CLI's reply queue...")
+        this.sendHandshake(connId, "GoChat User").then(() => {
+          console.log("[SMP] Handshake reply sent successfully!")
+        }).catch((err: Error) => {
+          console.log("[SMP] Handshake reply FAILED: " + err.message)
+        })
+      }
+
       onMsgBody(rawMsgBody)
     } catch (err) {
       console.log("[SMP] AgentConfirmation parse/X3DH/Ratchet error: " + (err instanceof Error ? err.message : String(err)))
@@ -717,6 +732,122 @@ export class ConnectionManager {
         console.log("[SMP] MSG #" + msgNum + ": AMessage tag '" + innerTagChar + "'")
       }
     }
+  }
+
+  /**
+   * Send our AgentConnInfo to the CLI's reply queue to complete the handshake.
+   *
+   * Flow:
+   * 1. Build AgentMessage: ['I'][connInfo JSON]
+   * 2. Ratchet encrypt with stored state (cks, hks, dhSelf)
+   * 3. Wrap in AgentMsgEnvelope: [Word16 7]['M'][encRatchetMessage]
+   * 4. Wrap in smpConfirmation: ['_'][agentMsgEnvelope]
+   * 5. NaCl encrypt: nacl.box with our new X25519 keypair + CLI's queue DH key
+   * 6. Build smpEncConfirmation: [Maybe '1'][keyLen=44][SPKI][nonce][encrypted]
+   * 7. SEND to CLI's reply queue
+   */
+  async sendHandshake(connectionId: string, displayName: string): Promise<void> {
+    const conn = this.connections.get(connectionId)
+    if (!conn) throw new Error("Connection not found: " + connectionId)
+    if (!conn.replyQueue) throw new Error("No reply queue available (AgentConfirmation not processed)")
+    if (!conn.ratchetState) throw new Error("No ratchet state available")
+    if (conn.handshakeSent) {
+      console.log("[SMP] sendHandshake: already sent, skipping")
+      return
+    }
+
+    console.log("[SMP] sendHandshake: starting for '" + displayName + "'")
+
+    // Step 1: Build AgentMessage = ['I'][connInfo JSON]
+    const connInfoJson = JSON.stringify({
+      v: "1-16",
+      event: "x.info",
+      params: {
+        profile: {
+          displayName,
+          fullName: "",
+          preferences: {
+            calls: {allow: "no"},
+            files: {allow: "no"},
+            voice: {allow: "no"},
+            reactions: {allow: "yes"},
+            fullDelete: {allow: "no"},
+            timedMessages: {allow: "yes"},
+          },
+        },
+      },
+    })
+    const connInfoBytes = new TextEncoder().encode(connInfoJson)
+    const agentMessage = new Uint8Array(1 + connInfoBytes.length)
+    agentMessage[0] = 0x49 // 'I' = AgentConnInfo
+    agentMessage.set(connInfoBytes, 1)
+    console.log("[SMP] sendHandshake: AgentMessage=" + agentMessage.length + "B (tag='I')")
+
+    // Step 2: Ratchet encrypt
+    const {encrypted: encRatchetMessage, updatedState} = rcEncrypt(conn.ratchetState, agentMessage)
+    conn.ratchetState = updatedState
+    console.log("[SMP] sendHandshake: ratchet encrypted=" + encRatchetMessage.length + "B, ns=" + updatedState.ns)
+
+    // Step 3: Wrap in AgentMsgEnvelope = [Word16 agentVersion=7]['M'][Tail encRatchetMessage]
+    const agentMsgEnvelope = new Uint8Array(2 + 1 + encRatchetMessage.length)
+    agentMsgEnvelope[0] = 0x00; agentMsgEnvelope[1] = 0x07 // agentVersion = 7
+    agentMsgEnvelope[2] = 0x4D // 'M' = AgentMessage
+    agentMsgEnvelope.set(encRatchetMessage, 3)
+
+    // Step 4: Wrap in smpConfirmation = ['_'][agentMsgEnvelope]
+    const smpConfirmation = new Uint8Array(1 + agentMsgEnvelope.length)
+    smpConfirmation[0] = 0x5F // '_' = PHEmpty
+    smpConfirmation.set(agentMsgEnvelope, 1)
+
+    // Step 5: NaCl encrypt with per-queue E2E
+    // Generate new X25519 keypair for this queue's E2E layer
+    const senderE2eKeyPair = nacl.box.keyPair()
+    const replyDhPubRaw = conn.replyQueue.dhPublicKeyRaw
+
+    // Pad smpConfirmation: [Word16 BE len][content][padding '#']
+    const padTarget = 15840
+    const paddedSmpConf = pad(smpConfirmation, padTarget)
+
+    const nonce = nacl.randomBytes(24)
+    const encryptedBody = nacl.box(paddedSmpConf, nonce, replyDhPubRaw, senderE2eKeyPair.secretKey)
+    console.log("[SMP] sendHandshake: NaCl encrypted=" + encryptedBody.length + "B, nonce=" + nonce.length + "B")
+
+    // Step 6: Build smpEncConfirmation = [Maybe '1'][keyLen=44][X25519 SPKI][nonce][encrypted]
+    const X25519_SPKI_PREFIX = new Uint8Array([0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x03, 0x21, 0x00])
+    const senderDhSpki = new Uint8Array(44)
+    senderDhSpki.set(X25519_SPKI_PREFIX)
+    senderDhSpki.set(senderE2eKeyPair.publicKey, 12)
+
+    const sendBody = new Uint8Array(1 + 1 + 44 + 24 + encryptedBody.length)
+    let offset = 0
+    sendBody[offset++] = 0x31 // '1' = Just (e2ePubKey follows)
+    sendBody[offset++] = 44   // keyLen
+    sendBody.set(senderDhSpki, offset); offset += 44
+    sendBody.set(nonce, offset); offset += 24
+    sendBody.set(encryptedBody, offset)
+
+    console.log("[SMP] sendHandshake: SEND body=" + sendBody.length + "B")
+
+    // Step 7: Get client and SEND to reply queue
+    const targetServer = this.resolveTargetServer(conn.contactAddress)
+    let serverForConnection = toSMPServerAddress(targetServer)
+    if (this.config.queueServer) {
+      serverForConnection = toSMPServerAddress({
+        hosts: this.config.queueServer.hosts,
+        port: this.config.queueServer.port,
+        serverIdentity: targetServer.serverIdentity,
+      })
+    }
+
+    const client = await this.agent.getClient(serverForConnection)
+    await client.sendMessage(conn.replyQueue.senderId, {
+      notification: false,
+      encMessage: sendBody,
+    })
+
+    conn.handshakeSent = true
+    console.log("[SMP] sendHandshake: SEND accepted by server (OK)")
+    console.log("[SMP] Handshake complete! Waiting for CLI to confirm connection.")
   }
 
   async closeConnection(connectionId: string): Promise<void> {
