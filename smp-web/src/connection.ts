@@ -838,9 +838,10 @@ export class ConnectionManager {
     senderDhSpki.set(X25519_SPKI_PREFIX)
     senderDhSpki.set(senderE2eKeyPair.publicKey, 12)
 
-    const sendBody = new Uint8Array(1 + 1 + 44 + 24 + encryptedBody.length)
+    const sendBody = new Uint8Array(2 + 1 + 1 + 44 + 24 + encryptedBody.length)
     let offset = 0
-    sendBody[offset++] = 0x31 // '1' = Just (e2ePubKey follows)
+    sendBody[offset++] = 0x00; sendBody[offset++] = 0x04  // smpClientVersion=4 (Word16 BE)
+    sendBody[offset++] = 0x31 // '1' = Just
     sendBody[offset++] = 44   // keyLen
     sendBody.set(senderDhSpki, offset); offset += 44
     sendBody.set(nonce, offset); offset += 24
