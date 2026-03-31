@@ -190,4 +190,4 @@ export {parseAgentConnInfoReply} from "./reply-queue.js"
 
 // Browser client (Season 5 Phase 2)
 export type {BrowserClientConfig, BrowserClient, ClientStatus, QueuedMessage} from "./browser-client.js"
-export {createBrowserClient, DEFAULT_CONTACT_ADDRESS} from "./browser-client.js"
+export {createBrowserClient, DEFAULT_CONTACT_ADDRESS, generateRandomVisitorName, resolveContactAddress, resolveServerUrl} from "./browser-client.js"

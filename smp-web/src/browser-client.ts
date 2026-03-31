@@ -25,6 +25,75 @@ import type {ConnectionStateEvent} from "./state.js"
 
 export const DEFAULT_CONTACT_ADDRESS = "https://simplex.chat/contact#/?v=2-7&smp=smp%3A%2F%2F7qw4hvuS-PvTHbotgtg_xiwrhFUk_s1q2upUQrGIWow%3D%40smp.simplego.dev%2FrvmTVkY_dMRMA9L4jlaQsDPZeyCUktxq%23%2F%3Fv%3D1-4%26dh%3DMCowBQYDK2VuAyEAnIg32wSmfYdGHlO7qthFkn2wZmwcF2cOJHbmVnkkZjI%253D%26q%3Dc"
 
+// -- Visitor name helpers
+
+/**
+ * Generate a random visitor name like "Visitor-k7m3".
+ * Uses alphanumerics without ambiguous characters (no l, i, o, 0, 1).
+ */
+export function generateRandomVisitorName(): string {
+  const chars = "abcdefghjkmnpqrstuvwxyz23456789"
+  let suffix = ""
+  for (let i = 0; i < 4; i++) {
+    suffix += chars[Math.floor(Math.random() * chars.length)]
+  }
+  return "Visitor-" + suffix
+}
+
+// -- Config resolution
+
+declare const window: Window & {
+  GOCHAT_CONFIG?: {
+    contactAddress?: string
+    displayName?: string
+    welcomeMessage?: string
+    widgetPosition?: string
+    accentColor?: string
+    serverUrl?: string
+  }
+}
+
+/**
+ * Resolve contact address with priority chain:
+ * 1. window.GOCHAT_CONFIG.contactAddress (from admin-generated gochat-config.js)
+ * 2. HTML data-contact-address attribute on #gc-panel-dock
+ * 3. DEFAULT_CONTACT_ADDRESS (bundle fallback)
+ */
+export function resolveContactAddress(): string {
+  // 1. Admin panel config (highest priority)
+  if (typeof window !== "undefined" && window.GOCHAT_CONFIG?.contactAddress) {
+    return window.GOCHAT_CONFIG.contactAddress
+  }
+  // 2. HTML data attribute
+  if (typeof document !== "undefined") {
+    const dock = document.getElementById("gc-panel-dock")
+    if (dock?.dataset?.contactAddress) {
+      return dock.dataset.contactAddress
+    }
+  }
+  // 3. Bundle default
+  return DEFAULT_CONTACT_ADDRESS
+}
+
+/**
+ * Resolve server URL with priority chain:
+ * 1. window.GOCHAT_CONFIG.serverUrl
+ * 2. HTML data-server-url attribute on #gc-panel-dock
+ * 3. undefined (no override, use address from contact URI)
+ */
+export function resolveServerUrl(): string | undefined {
+  if (typeof window !== "undefined" && window.GOCHAT_CONFIG?.serverUrl) {
+    return window.GOCHAT_CONFIG.serverUrl
+  }
+  if (typeof document !== "undefined") {
+    const dock = document.getElementById("gc-panel-dock")
+    if (dock?.dataset?.serverUrl) {
+      return dock.dataset.serverUrl
+    }
+  }
+  return undefined
+}
+
 // -- Types
 
 export type ClientStatus = "offline" | "connecting" | "connected" | "error"
