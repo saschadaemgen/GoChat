@@ -665,6 +665,7 @@ export class ConnectionManager {
    */
   private parseAgentMessageContent(agentMessage: Uint8Array, msgNum: number): void {
     let offset = 1 // skip outer 'M' tag
+    offset += 8    // skip sndMsgId (Int64 BE, 8 bytes)
 
     // APrivHeader: Word16 BE length prefix for prevMsgHash
     const hashLen = (agentMessage[offset] << 8) | agentMessage[offset + 1]
