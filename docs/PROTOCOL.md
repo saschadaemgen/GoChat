@@ -16,7 +16,7 @@
 **Ecosystem:** SimpleGo (hardware) / GoRelay (relay server) / GoChat (browser client)
 **Date:** 2026-03-28
 **Branch analyzed:** `ep/smp-web-spike` on `simplex-chat/simplexmq`
-**Status:** Season 8 complete, Season 9 (X3DH + Double Ratchet + CON) next
+**Status:** Season 9 complete, Season 10 (Chat Messages + UI) next
 
 ---
 
@@ -350,6 +350,32 @@ Season 8 implemented SMP v9 command authorization (CbAuthenticator), rebuilt the
 - [x] **S8-13:** Layer 1 NaCl decryption of smpEncConfirmation
 - [x] **S8-14:** Parse smpConfirmation (sender key + AgentConfirmation body)
 
+### 5.1f X3DH + Double Ratchet + HELLO + CON (Season 9)
+
+**Priority:** Completed in Season 9.
+
+Season 9 implemented the full end-to-end encryption pipeline: parsing AgentConfirmation with PQ KEM (SNTRUP761) support, X3DH key agreement (receiver side, 3x X448 DH + HKDF-SHA512), Double Ratchet encrypt and decrypt (AES-256-GCM with 16-byte IVs), reply queue parsing from AgentConnInfoReply, and the duplex handshake (sending AgentConfirmation back to CLI). HELLO received and CONNECTION ESTABLISHED. Chat messages decrypted.
+
+**Tasks:**
+
+- [x] **S9-1:** Parse AgentConfirmation with E2ERatchetParams + PQ KEM (PR #67, #70, #71)
+- [x] **S9-2:** X3DH key agreement - receiver side (PR #68)
+- [x] **S9-3:** Double Ratchet decrypt for encConnInfo (PR #69)
+- [x] **S9-4:** Fix MsgHeader KEM skip + HELLO handler (PR #72, #73, #74)
+- [x] **S9-5:** Parse reply queue from AgentConnInfoReply tag 'D' (PR #75)
+- [x] **S9-6:** Ratchet encrypt + send handshake to reply queue (PR #76)
+- [x] **S9-7:** Fix handshake format: tag 'C', PHConfirmation 'K', e2eEncryption_=Nothing (PR #77)
+- [x] **S9-8:** Fix smpClientVersion in ClientMsgEnvelope PubHeader (direct)
+
+**Code Map (Season 9 additions):**
+
+| File | Purpose |
+|:-----|:--------|
+| agent-confirmation.ts | Parse AgentConfirmation with E2ERatchetParams + PQ KEM |
+| x3dh-agreement.ts | X3DH receiver-side (3x X448 DH + HKDF-SHA512) |
+| ratchet-decrypt.ts | Double Ratchet init + encrypt (rcEncrypt) + decrypt (rcDecrypt) |
+| reply-queue.ts | Parse SMPQueueInfo from AgentConnInfoReply tag 'D' |
+
 ### 5.2 Layer 2: SMP command implementation
 
 **Priority:** Completed in Season 3.
@@ -371,11 +397,11 @@ Season 8 implemented SMP v9 command authorization (CbAuthenticator), rebuilt the
 
 ### 5.4 Layer 4: End-to-end encryption
 
-**Priority:** High - Season 8.
+**Priority:** Completed in Season 9.
 
-- [ ] **E2E-1:** Ratchet receive side (decrypt incoming messages)
-- [ ] **E2E-2:** Symmetric ratchet step (advance chain on each message)
-- [ ] **E2E-3:** DH ratchet step (re-key on send/receive transitions)
+- [x] **E2E-1:** Ratchet receive side (decrypt incoming messages)
+- [x] **E2E-2:** Symmetric ratchet step (advance chain on each message)
+- [x] **E2E-3:** DH ratchet step (re-key on send/receive transitions)
 - [ ] **E2E-4:** Out-of-order message handling (skipped message keys)
 - [ ] **E2E-5:** Header decryption with current + next header key
 - [ ] **E2E-6:** Key storage (IndexedDB + AES-256-GCM encryption at rest)
@@ -828,3 +854,4 @@ GoChat is one component of the SimpleGo ecosystem for encrypted communication ac
 | 2026-03-28 | Season 6 complete. Connection request to SimpleX App. 12 protocol fixes. 493 tests. |
 | 2026-03-28 | Season 7 complete. Server upgrade to PR #1738 build. ALPN fix enables v6-18 over WebSocket. Nginx eliminated, Docker direct port mapping. 4096-bit RSA cert. sndSecure confirmed as v9+ only (v6 parser limitation). v7+ command auth identified as Season 8 prerequisite. Added Section 5.1d, Phase 3c/3d, Section 7.6, S7 and S8 task IDs. Season numbers shifted: S8 = v7+ auth + bidirectional messaging, S9 = polish, S10 = security, S11 = library, S12+ = GRP. |
 | 2026-03-30 | Season 8 complete. Implemented v9 CbAuthenticator (nacl.box over SHA-512), server rebuilt on Debian 13 (Nginx + Certbot + Docker), MSG processing with server-to-recipient decryption (nacl.box.open), Layer 1 NaCl decryption of smpEncConfirmation, RcvMsgBody parsing (SystemTime=12B), ACK with CbAuth. Key discoveries: HSalsa20 in nacl.box (not nacl.secretbox), Maybe encoding = ASCII '0'/'1' (not binary), four DH keypairs per connection, asymmetric smpEncConfirmation format. 494 tests. 14 S8 task IDs (all DONE). E2E tasks renumbered for S9 (X3DH + Double Ratchet + CON). Added Section 5.1e, Phase 3d/3e. |
+| 2026-03-31 | Season 9 complete. AgentConfirmation parsing with SNTRUP761 PQ KEM support. X3DH key agreement (receiver side). Double Ratchet encrypt/decrypt (AES-256-GCM with 16-byte IV). Reply queue parsing from AgentConnInfoReply. Full duplex handshake (send AgentConfirmation to CLI). HELLO received - CONNECTION ESTABLISHED. Chat messages received and decrypted. 11 PRs (#67-#77), 537 tests. Added Section 5.1f with 8 S9 task IDs (all DONE). |

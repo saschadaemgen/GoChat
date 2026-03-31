@@ -638,6 +638,15 @@ The chat panel was implemented in Season 5 with the following architecture:
 - **Four DH keypairs per connection:** recipientAuth (CbAuth), recipientDh (server MSG encryption), queueDh (peer Layer 1 encryption), e2eDh (future X3DH). Confusing any two causes decryption failure.
 - **Clean server (Debian 13):** Plesk caused port conflicts and cert issues. Clean Debian with manual Nginx + Certbot + Docker is more reliable and debuggable.
 
+### From Season 9 (X3DH + Double Ratchet + CON)
+- **PQ KEM in AgentConfirmation:** CLI sends SNTRUP761 Proposed (1158 bytes public key) with Word16 BE length prefix. MsgHeader also contains KEM Proposed that must be skipped before PN/Ns fields. Using 1-byte or 0xFF+Word16 variable encoding reads only 4 bytes of the 1158-byte key.
+- **AES-256-GCM 16-byte IV:** SimpleX Double Ratchet uses 16-byte IVs (not standard 12-byte). Haskell's initAEAD transforms via GHASH. @noble/ciphers handles this correctly.
+- **chainKdf output order:** Correct order is [newCK, mk, bodyIV, headerIV]. SimpleGo CRYPTO.md has mk and newCK swapped - this was the most dangerous trap in Season 9.
+- **AgentVersion difference:** AgentConfirmation uses agentVersion=7. AgentMsgEnvelope for HELLO/messages uses agentVersion=1. Using 7 for messages causes A_VERSION (SimpleGo Bug #21).
+- **Handshake response format:** Must use tag 'C' (AgentConfirmation, not 'M' AgentMsgEnvelope), PHConfirmation 'K' with sender auth key (not PHEmpty '_'), e2eEncryption_=Nothing ('0'), and smpClientVersion in ClientMsgEnvelope PubHeader (omitting it causes A_VERSION).
+- **First message to queue pads to 15904:** Haskell e2eEncConfirmationLength. Only subsequent messages (e2ePubKey=Nothing) use 15840.
+- **Encoding rules confirmed:** SPKI keys use 1-byte length prefix. KEM keys use Word16 BE length prefix. prevMsgHash uses 1-byte length prefix (not Word16 BE). APrivHeader has sndMsgId (Int64 8B) before prevMsgHash.
+
 ---
 
 ## 10. References
@@ -674,3 +683,4 @@ The chat panel was implemented in Season 5 with the following architecture:
 | 2026-03-28 | Season 6 findings. Added Section 2.8 (NaCl crypto_box) and 2.9 (AgentInvitation). |
 | 2026-03-28 | Season 7 findings. Added Section 2.10 (ALPN and protocol version negotiation), Section 2.11 (v6 vs v7+ command authorization), Section 6 (SKEY, sndSecure, Fast Duplex). Updated Section 3.3 (TLS cert challenge resolved with PR #1738, Nginx eliminated). Updated Section 4.4 (WebSocket proxy architecture evolution). Updated Section 5.1 (v7+ auth differences). Added Season 7 architectural decisions. Added PR #1738 and PR #982 to references. |
 | 2026-03-30 | Season 8 findings. Added Season 8 architectural decisions: nacl.box for all crypto_box (HSalsa20 discovery), ASCII encoding for Maybe/Bool, SystemTime = 12 bytes, preserve queueDhKeyPair, four DH keypairs per connection, clean server (Debian 13). |
+| 2026-03-31 | Season 9 findings. PQ KEM Word16 BE length prefix, AES-256-GCM 16-byte IV, chainKdf output order trap (CRYPTO.md wrong), agentVersion 7 vs 1, handshake response format (tag 'C', PHConfirmation 'K', e2eEncryption_=Nothing), first-message pad 15904. |
