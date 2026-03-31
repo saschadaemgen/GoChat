@@ -97,6 +97,8 @@ export interface ManagedConnection {
   handshakeSent: boolean
   /** X25519 keypair for per-queue E2E with reply queue (created in sendHandshake, reused) */
   replyE2eKeyPair: { publicKey: Uint8Array; secretKey: Uint8Array } | null
+  /** Callback for received chat messages (JSON text from x.msg.new) */
+  onChatMessage: ((text: string) => void) | null
   /** Send message counter (starts at 1, increments per message) */
   sndMsgId: number
   /** SHA256 of last sent AgentMessage (empty for first message) */
@@ -228,6 +230,7 @@ export class ConnectionManager {
       replyQueue: null,
       handshakeSent: false,
       replyE2eKeyPair: null,
+      onChatMessage: null,
       sndMsgId: 1,
       prevMsgHash: new Uint8Array(0),
     }
@@ -735,16 +738,29 @@ export class ConnectionManager {
 
       if (innerTag === 0x48) { // 'H' = HELLO
         console.log("[SMP] HELLO received! Connection established.")
-        console.log("[SMP] MSG #" + msgNum + " is HELLO - bidirectional ratchet confirmed")
 
-        // Send our HELLO back to CLI
+        // Transition to CONNECTED on HELLO receive.
+        // State machine: PENDING -> receiveConfirmation -> CONFIRMED -> acknowledgeConfirmation -> CONNECTED
+        try {
+          if (conn.state.state === "PENDING") {
+            conn.state.transition("receiveConfirmation")
+          }
+          if (conn.state.state === "CONFIRMED") {
+            conn.state.transition("acknowledgeConfirmation")
+          }
+          console.log("[SMP] State -> " + conn.state.state)
+        } catch (_) {
+          console.log("[SMP] State transition skipped (state=" + conn.state.state + ")")
+        }
+
+        // Send our HELLO back to CLI (best effort, non-blocking)
         if (conn.replyQueue && conn.handshakeSent) {
           const connId = conn.state.id
           console.log("[SMP] Auto-sending HELLO to CLI...")
           this.sendHello(connId).then(() => {
             console.log("[SMP] HELLO sent to CLI!")
           }).catch((err: Error) => {
-            console.log("[SMP] HELLO send FAILED: " + err.message)
+            console.log("[SMP] HELLO send failed (non-fatal): " + err.message)
           })
         }
       } else if (innerTag === 0x4D) { // 'M' = A_MSG (chat message)
@@ -752,6 +768,26 @@ export class ConnectionManager {
         try {
           const msgText = new TextDecoder().decode(msgBody)
           console.log("[SMP] MSG #" + msgNum + " chat: " + msgText)
+
+          // Parse x.msg.new JSON and extract text for UI callback
+          try {
+            const parsed = JSON.parse(msgText)
+            if (parsed.event === "x.msg.new" && parsed.params?.content?.text) {
+              const chatText = parsed.params.content.text
+              console.log("[SMP] Chat message text: " + chatText)
+              if (conn.onChatMessage) {
+                conn.onChatMessage(chatText)
+              }
+            } else if (conn.onChatMessage) {
+              // Pass raw JSON for non-standard events
+              conn.onChatMessage(msgText)
+            }
+          } catch {
+            // Not valid JSON, pass raw text
+            if (conn.onChatMessage) {
+              conn.onChatMessage(msgText)
+            }
+          }
         } catch {
           console.log("[SMP] MSG #" + msgNum + ": chat message received (" + msgBody.length + "B binary)")
         }
@@ -808,12 +844,26 @@ export class ConnectionManager {
     if (!conn.replyQueue) throw new Error("No reply queue available")
     if (!conn.ratchetState) throw new Error("No ratchet state available")
 
-    // Step 1: Ratchet encrypt
-    const {encrypted: encRatchetMessage, updatedState} = rcEncrypt(conn.ratchetState, plaintext)
+    // Step 1: Calculate the correct ratchet body pad size.
+    // Working backwards from the NaCl pad target:
+    //   padTarget - 2 (Word16 prefix) - smpConfOverhead - envelopeOverhead - encRatchetOverhead
+    // encRatchetOverhead = 2 (headerLen field) + 124 (emHeader v3 no KEM) + 16 (bodyAuthTag) = 142
+    // The smpConfBuilder overhead depends on the caller (PHEmpty '_' = 1B, PHConfirmation 'K' = 46B)
+    // We estimate using a test call, then compute the exact body pad.
+    const envelopeOverhead = 2 + 1 + (extraEnvelopeBytes ? extraEnvelopeBytes.length : 0) // version + tag + extra
+    const dummySmpConf = smpConfBuilder(new Uint8Array(0))
+    const smpConfOverhead = dummySmpConf.length // overhead from builder (tag + key etc)
+    const naclPadTarget = isFirstMessage ? 15904 : 15840
+    const encRatchetOverhead = 142 // 2 + 124 + 16
+    const bodyPadSize = naclPadTarget - 2 - smpConfOverhead - envelopeOverhead - encRatchetOverhead
+    console.log("[SMP] sendEncrypted: bodyPadSize=" + bodyPadSize + " (naclPad=" + naclPadTarget + ", smpConfOH=" + smpConfOverhead + ", envOH=" + envelopeOverhead + ")")
+
+    // Step 2: Ratchet encrypt with calculated body pad
+    const {encrypted: encRatchetMessage, updatedState} = rcEncrypt(conn.ratchetState, plaintext, bodyPadSize)
     conn.ratchetState = updatedState
     console.log("[SMP] sendEncrypted: ratchet encrypted=" + encRatchetMessage.length + "B, ns=" + updatedState.ns)
 
-    // Step 2: Wrap in envelope [Word16 agentVersion][tag][extraBytes][Tail encRatchetMessage]
+    // Step 3: Wrap in envelope [Word16 agentVersion][tag][extraBytes][Tail encRatchetMessage]
     const extraLen = extraEnvelopeBytes ? extraEnvelopeBytes.length : 0
     const envelope = new Uint8Array(2 + 1 + extraLen + encRatchetMessage.length)
     envelope[0] = (agentVersion >> 8) & 0xFF

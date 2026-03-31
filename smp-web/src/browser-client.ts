@@ -136,11 +136,15 @@ class BrowserClientImpl implements BrowserClient {
 
           // Set up MSG handler to receive the peer's confirmation
           await this.connManager.setupMsgHandler(this.conn.state.id, (msgBody) => {
-            console.log("[SMP] BrowserClient: received MSG body " + msgBody.length + "B (peer's smpEncConfirmation)")
-            // msgBody is the peer's smpEncConfirmation - Phase 3 will decrypt this
-            // For now, just log that we received it
+            console.log("[SMP] BrowserClient: received MSG body " + msgBody.length + "B")
           })
-          console.log("[SMP] BrowserClient.connect: MSG handler set up, waiting for peer confirmation")
+
+          // Wire up chat message callback for received messages
+          this.conn.onChatMessage = (text: string) => {
+            console.log("[SMP] BrowserClient: chat message received: " + text.substring(0, 100))
+            this.config.onMessage(text)
+          }
+          console.log("[SMP] BrowserClient.connect: MSG handler + chat callback set up")
         } catch (invErr) {
           const msg = invErr instanceof Error ? invErr.message : String(invErr)
           console.log("[SMP] BrowserClient.connect: invitation FAILED: " + msg)
