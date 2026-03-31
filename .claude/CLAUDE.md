@@ -104,14 +104,18 @@ smp-web/src/
   browser-client.ts     # High-level browser API for chat integration
   msg-decrypt.ts        # Server-to-recipient MSG decryption (nacl.box.open)
   layer1-decrypt.ts     # Layer 1 NaCl smpEncConfirmation decryption
-  __tests__/            # 494 tests across 19 files
+  agent-confirmation.ts # Parse AgentConfirmation with E2ERatchetParams + PQ KEM
+  x3dh-agreement.ts     # X3DH receiver-side (3x X448 DH + HKDF-SHA512)
+  ratchet-decrypt.ts    # Double Ratchet init + encrypt (rcEncrypt) + decrypt (rcDecrypt)
+  reply-queue.ts        # Parse SMPQueueInfo from AgentConnInfoReply tag 'D'
+  __tests__/            # 537 tests across 23 files
 ```
 
 ## Current State
 
-Season 8 is COMPLETE. v9 CbAuthenticator works, server rebuilt on Debian 13, MSG + Layer 1 decrypted.
+Season 9 is COMPLETE. Full E2E pipeline working: X3DH, Double Ratchet, HELLO received, CONNECTION ESTABLISHED. 537 tests, 23 files.
 
-### What works (Seasons 1-8)
+### What works (Seasons 1-9)
 - WebSocket transport with SMP handshake (v6-18 offered, v9 negotiated)
 - 14 SMP command encoders with full response decoder
 - Contact address parser (simplex:/ and https:// formats)
@@ -128,15 +132,20 @@ Season 8 is COMPLETE. v9 CbAuthenticator works, server rebuilt on Debian 13, MSG
 - Layer 1 NaCl decryption of smpEncConfirmation (AgentConfirmation extracted)
 - ACK with CbAuthenticator
 - queueDhKeyPair preserved for Layer 1 decryption
-- 494 tests across 19 files
+- AgentConfirmation parsing with PQ KEM (SNTRUP761) support
+- X3DH key agreement (receiver side, 3x X448 DH + HKDF-SHA512)
+- Double Ratchet encrypt + decrypt (AES-256-GCM with 16-byte IV)
+- Reply queue parsing from AgentConnInfoReply tag 'D'
+- Duplex handshake (send AgentConfirmation to CLI's reply queue)
+- HELLO received - CONNECTION ESTABLISHED
+- Chat messages received and decrypted
+- 537 tests across 23 files
 
 ### What does NOT work yet
-- AgentConfirmation parsing (e2e params, X448 keys, connInfo)
-- X3DH key agreement with real peer X448 keys (only mock keys used so far)
-- Double Ratchet initialization from X3DH output
-- HELLO exchange (both directions)
-- CON state (bidirectional encrypted messaging)
-- Remove debug console.log statements
+- WebSocket subscription disrupted after HELLO (new connections opened)
+- No chat message sending from browser
+- No HELLO send (only receive)
+- No chat UI integration
 
 ## Development Roadmap
 
@@ -148,28 +157,30 @@ Season 8 is COMPLETE. v9 CbAuthenticator works, server rebuilt on Debian 13, MSG
 - Season 6: Connection Request to SimpleX App (493 tests) - COMPLETE
 - Season 7: Server Upgrade, ALPN Fix, v6-18 over WebSocket - COMPLETE
 - Season 8: v9 Command Auth, Server Rebuild, MSG + Layer 1 (494 tests) - COMPLETE
-- Season 9: X3DH + Double Ratchet + HELLO + CON - NEXT
-- Season 10: Production Polish (animations, SharedWorker, IndexedDB)
+- Season 9: X3DH + Double Ratchet + HELLO + CON (537 tests) - COMPLETE
+- Season 10: Chat Messages + UI - NEXT
 - Season 11: Security Hardening (CSP, SRI, Web Worker crypto)
 - Season 12: simplex-js npm Library
 - Season 13+: GRP Profile (Noise, ML-KEM-768, Two-hop Routing)
 
-## Season 9 Context
+## Season 9 Context (COMPLETE)
 
-### Starting point
-Server offers v6-18 over WebSocket. Browser negotiates v9. CbAuthenticator works.
-NEW/IDS/SEND/OK/MSG/ACK all work. CLI accepts invitation. AgentConfirmation received
-and decrypted through Layer 1 NaCl. Next: parse AgentConfirmation, perform X3DH with
-real X448 keys, initialize Double Ratchet, exchange HELLO messages, achieve CON state.
+Season 9 is COMPLETE. Full E2E pipeline working. 11 PRs (#67-#77), 537 tests.
 
-### Season 8 plan (in order)
-1. Implement v7+ command authorization (X25519 DH crypto_box instead of Ed25519 signatures)
-2. Increase maxSMPClientVersion to 9+ (unlocks sndSecure in server parser)
-3. Enable sndSecure "S T" in NEW (97 bytes) + &k=s in connReq URI
-4. CLI SKEY succeeds, AgentConfirmation arrives
-5. SUB on own queue to receive AgentConfirmation
-6. Decrypt AgentConfirmation (NaCl Layer 1 + Ratchet)
-7. X3DH with CLI's X448 keys, initialize Double Ratchet
+### What was achieved
+1. AgentConfirmation parsing with PQ KEM SNTRUP761 (Word16 BE length prefix)
+2. X3DH key agreement (receiver side, 3x X448 DH + HKDF-SHA512)
+3. Double Ratchet encrypt (rcEncrypt) + decrypt (rcDecrypt) with AES-256-GCM 16B IV
+4. Reply queue parsing from AgentConnInfoReply tag 'D'
+5. Duplex handshake: send AgentConfirmation (tag 'C', PHConfirmation 'K') to CLI
+6. HELLO received - CONNECTION ESTABLISHED
+7. Chat messages received and decrypted
+
+### Season 10 plan
+1. Fix WebSocket subscription after HELLO (new connections disrupted)
+2. Send chat messages (agentVersion=1, not 7!)
+3. Send HELLO
+4. Basic chat UI integration
 8. HELLO exchange, achieve CON state
 9. Bidirectional encrypted messaging
 
@@ -269,6 +280,14 @@ docker run -d --name simplego-smp --restart always \
 20. smpEncConfirmation format is ASYMMETRIC: outgoing has version prefix, incoming does NOT
 21. Four X25519 keypairs per connection - confusing any two causes decryption failure
 22. nacl.box.keyPair() generates X25519 keys compatible with both nacl.box and nacl.scalarMult
+23. chainKdf output order: [newCK, mk, bodyIV, headerIV] - CRYPTO.md has mk and newCK SWAPPED
+24. AgentConfirmation uses agentVersion=7, AgentMsgEnvelope uses agentVersion=1 - wrong version causes A_VERSION
+25. KEM keys use Word16 BE length prefix (not 1-byte or 0xFF+Word16 variable encoding)
+26. prevMsgHash uses 1-byte length prefix (not Word16 BE)
+27. smpClientVersion MUST be in ClientMsgEnvelope PubHeader - omitting causes A_VERSION
+28. First message to a queue (e2ePubKey=Just) pads to 15904, not 15840 (Haskell e2eEncConfirmationLength)
+29. APrivHeader: skip 8 bytes sndMsgId (Int64 BE) before prevMsgHash
+30. Handshake reply: tag 'C' (AgentConfirmation), PHConfirmation 'K' with sender auth key, e2eEncryption_=Nothing '0'
 
 ## Upstream Files (READ ONLY - never modify)
 

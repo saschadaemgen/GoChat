@@ -175,18 +175,19 @@ GoChat can be used standalone (without GoShop) as a simple encrypted support cha
 | Server infrastructure overhaul | S7 | Debian 13 clean server, Nginx + Certbot, Docker rebuild |
 | SMP v9 command authorization | S8 | CbAuthenticator (X25519 DH + HSalsa20 + XSalsa20-Poly1305), 494 tests |
 | sndSecure + SKEY | S8 | Fast Duplex sender queue securing, CLI accepts connection |
+| MSG processing + Layer 1 decrypt | S8 | Server-to-recipient decryption, NaCl Layer 1, ACK with CbAuth |
+| Full E2E pipeline | S9 | X3DH + Double Ratchet, HELLO received, CONNECTION ESTABLISHED, 537 tests |
+| PQ KEM support | S9 | SNTRUP761 parsing in AgentConfirmation and MsgHeader |
+| Duplex handshake | S9 | Send AgentConfirmation to CLI's reply queue, bidirectional message exchange |
 
 ### To do
 
 | Component | Season | Description |
 |:----------|:-------|:------------|
-| MSG processing + ACK | S8 | Decrypt server-to-recipient messages, send acknowledgments |
-| AgentConfirmation decryption | S8 | Layer 1 NaCl, X3DH with real keys, Double Ratchet |
-| HELLO + CON | S8 | Complete bidirectional connection, real message exchange |
-| Production polish | S9 | Animations, SharedWorker, IndexedDB persistence, accessibility |
-| Security hardening | S10 | CSP, SRI, Web Worker isolation, security review |
-| GoShop integration | S11 | Structured e-commerce messaging, product catalog, order flow |
-| simplex-js library | S12 | Standalone npm package for SMP browser client |
+| Chat messages + UI | S10 | Send messages, subscription fix, chat UI integration |
+| Security hardening | S11 | CSP, SRI, Web Worker isolation, security review |
+| GoShop integration | S12 | Structured e-commerce messaging, product catalog, order flow |
+| simplex-js library | S13 | Standalone npm package for SMP browser client |
 
 Full task breakdown: [docs/PROTOCOL.md](docs/PROTOCOL.md)
 
@@ -205,13 +206,14 @@ We develop in seasons - each with a clear goal, defined scope, and a protocol do
 | **S5** | Chat UI + browser client + real server (485 tests) | Complete |
 | **S6** | Connection request to SimpleX App (493 tests) | Complete |
 | **S7** | Server infrastructure overhaul (Docker, TLS, WebSocket) | Complete |
-| **S8** | v9 command authorization + bidirectional messaging (494 tests) | Active |
-| **S9** | Production polish (animations, persistence, accessibility) | Planned |
-| **S10** | Security hardening + review | Planned |
-| **S11** | GoShop integration | Planned |
-| **S12** | simplex-js npm library | Planned |
+| **S8** | v9 command authorization + MSG processing (494 tests) | Complete |
+| **S9** | E2E pipeline: X3DH, Ratchet, HELLO, CON (537 tests) | Complete |
+| **S10** | Chat messages + UI | Next |
+| **S11** | Security hardening + review | Planned |
+| **S12** | GoShop integration | Planned |
+| **S13** | simplex-js npm library | Planned |
 
-**Critical path:** S1-S7 DONE - S8 (active) - S9 - S10 - S11
+**Critical path:** S1-S9 DONE - S10 (next) - S11 - S12
 
 Full season plan: [docs/seasons/SEASON-PLAN.md](docs/seasons/SEASON-PLAN.md)
 
@@ -245,7 +247,11 @@ GoChat/
 |       +-- browser-client.ts       # High-level browser API for chat integration
 |       +-- msg-decrypt.ts          # Server-to-recipient MSG decryption (nacl.box.open)
 |       +-- layer1-decrypt.ts      # Layer 1 NaCl smpEncConfirmation decryption
-|       +-- __tests__/              # 494 tests across 19 files
+|       +-- agent-confirmation.ts   # AgentConfirmation parser with PQ KEM (S9)
+|       +-- x3dh-agreement.ts       # X3DH receiver-side key agreement (S9)
+|       +-- ratchet-decrypt.ts      # Double Ratchet encrypt + decrypt (S9)
+|       +-- reply-queue.ts          # Reply queue parser from AgentConnInfoReply (S9)
+|       +-- __tests__/              # 537 tests across 23 files
 |   +-- esbuild.config.mjs         # Browser bundle config (IIFE format)
 +-- xftp-web/                       # Shared infrastructure (upstream)
 +-- docs/
@@ -266,7 +272,7 @@ git clone https://github.com/saschadaemgen/GoChat.git
 cd GoChat
 git checkout feat/simplego-support-chat
 cd smp-web
-npx vitest run                    # Run all 493 tests
+npx vitest run                    # Run all 537 tests
 npm run build:browser             # Build browser bundle -> dist/gochat-client.js
 ```
 
@@ -287,7 +293,7 @@ GoChat is one component of a larger ecosystem for encrypted communication across
 
 ## Status
 
-Seasons 1 through 7 are complete. Season 8 (v9 authorization + bidirectional messaging) is active.
+Seasons 1 through 9 are complete. Season 10 (Chat Messages + UI) is next.
 
 | Component | Status |
 |:----------|:-------|
@@ -304,10 +310,14 @@ Seasons 1 through 7 are complete. Season 8 (v9 authorization + bidirectional mes
 | Server infrastructure overhaul (Debian 13) | Done |
 | SMP v9 CbAuthenticator command authorization | Done |
 | sndSecure + SKEY (Fast Duplex) | Done |
-| MSG processing + bidirectional messaging | Season 8 |
-| Production polish | Season 9 |
-| Security hardening | Season 10 |
-| GoShop integration | Season 11 |
+| MSG processing + Layer 1 NaCl decrypt | Done |
+| Full E2E pipeline (X3DH + Double Ratchet) | Done |
+| HELLO handshake - CONNECTION ESTABLISHED | Done |
+| PQ KEM (SNTRUP761) parsing support | Done |
+| Bidirectional message exchange with SimpleX CLI | Done |
+| Chat messages + UI | Season 10 |
+| Security hardening | Season 11 |
+| GoShop integration | Season 12 |
 
 ---
 
