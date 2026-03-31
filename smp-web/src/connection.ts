@@ -805,7 +805,9 @@ export class ConnectionManager {
     const replyDhPubRaw = conn.replyQueue.dhPublicKeyRaw
 
     // Pad smpConfirmation: [Word16 BE len][content][padding '#']
-    const padTarget = 15840
+    // First message to a queue (e2ePubKey=Just) uses e2eEncConfirmationLength = 15904
+    // Subsequent messages (e2ePubKey=Nothing) use 15840
+    const padTarget = 15904
     const paddedSmpConf = pad(smpConfirmation, padTarget)
 
     const nonce = nacl.randomBytes(24)
