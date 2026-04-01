@@ -103,6 +103,8 @@ export interface ManagedConnection {
   onChatMessage: ((text: string) => void) | null
   /** Callback when a delivery receipt is received for a sent message */
   onDeliveryReceipt: ((agentMsgId: number) => void) | null
+  /** Callback when the connection is ended by the peer (queue deleted) */
+  onConnectionEnded: (() => void) | null
   /** Send message counter (starts at 1, increments per message) */
   sndMsgId: number
   /** SHA256 of last sent AgentMessage (empty for first message) */
@@ -237,6 +239,7 @@ export class ConnectionManager {
       replySenderAuthPrivKey: null,
       onChatMessage: null,
       onDeliveryReceipt: null,
+      onConnectionEnded: null,
       sndMsgId: 1,
       prevMsgHash: new Uint8Array(0),
     }
@@ -553,6 +556,14 @@ export class ConnectionManager {
       }).catch((err: Error) => {
         console.log("[SMP] ACK failed: " + err.message)
       })
+    })
+
+    // Wire END detection - fires when the agent deletes the queue
+    client.onSubscriptionEnd((_entityId) => {
+      console.log("[SMP] Queue subscription ended (agent deleted contact)")
+      if (conn.onConnectionEnded) {
+        conn.onConnectionEnded()
+      }
     })
   }
 
