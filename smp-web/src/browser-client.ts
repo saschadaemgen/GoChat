@@ -154,6 +154,7 @@ class BrowserClientImpl implements BrowserClient {
   private currentStatus: ClientStatus = "offline"
   private unsubscribeState: (() => void) | null = null
   private messageQueue: QueuedMessage[] = []
+  private connectionTimeout: ReturnType<typeof setTimeout> | null = null
 
   constructor(config: BrowserClientConfig) {
     this.config = config
@@ -232,6 +233,24 @@ class BrowserClientImpl implements BrowserClient {
               this.config.onDeliveryReceipt!(agentMsgId)
             }
           }
+
+          // Wire connection end callback (agent deletes contact / queue END)
+          this.conn.onConnectionEnded = () => {
+            if (this.currentStatus === "offline") return // already handled by x.direct.del
+            console.log("[SMP] BrowserClient: connection ended by peer")
+            this.config.onMessage("[Connection ended by support agent]")
+            this.setStatus("offline")
+          }
+
+          // Start connection timeout (2 minutes)
+          // If no response from agent, show timeout message
+          this.connectionTimeout = setTimeout(() => {
+            if (this.currentStatus === "pending") {
+              console.log("[SMP] Connection timeout - no response from agent")
+              this.config.onMessage("[No response from support. Please try again later.]")
+              this.setStatus("offline")
+            }
+          }, 120000)
         } catch (invErr) {
           const msg = invErr instanceof Error ? invErr.message : String(invErr)
           console.log("[SMP] BrowserClient.connect: invitation FAILED: " + msg)
@@ -302,6 +321,12 @@ class BrowserClientImpl implements BrowserClient {
   }
 
   async disconnect(): Promise<void> {
+    // Clear connection timeout
+    if (this.connectionTimeout) {
+      clearTimeout(this.connectionTimeout)
+      this.connectionTimeout = null
+    }
+
     if (this.conn && this.connManager) {
       try {
         await this.connManager.closeConnection(this.conn.state.id)
@@ -336,6 +361,11 @@ class BrowserClientImpl implements BrowserClient {
   private handleStateChange(event: ConnectionStateEvent): void {
     switch (event.newState) {
       case "CONNECTED":
+        // Clear connection timeout - agent accepted
+        if (this.connectionTimeout) {
+          clearTimeout(this.connectionTimeout)
+          this.connectionTimeout = null
+        }
         this.setStatus("connected")
         // Flush any messages queued during PENDING/CONFIRMED state
         this.flushMessageQueue()
