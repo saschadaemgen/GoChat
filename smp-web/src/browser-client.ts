@@ -127,6 +127,8 @@ export interface BrowserClientConfig {
   onOwnMessage?: (msg: QueuedMessage) => void
   /** Callback when a queued message status changes (queued -> sending -> sent/failed) */
   onMessageStatusChange?: (id: string, status: string) => void
+  /** Callback when a delivery receipt is received for a sent message (agentMsgId from server) */
+  onDeliveryReceipt?: (agentMsgId: number) => void
   /** @internal Injectable agent for testing - defaults to newSMPAgent() */
   _agent?: SMPClientAgent
 }
@@ -221,6 +223,14 @@ class BrowserClientImpl implements BrowserClient {
 
           this.conn.onChatMessage = (text: string) => {
             this.handleChatPayload(text)
+          }
+
+          // Wire delivery receipt callback
+          if (this.config.onDeliveryReceipt) {
+            this.conn.onDeliveryReceipt = (agentMsgId: number) => {
+              console.log("[SMP] BrowserClient: delivery receipt for msgId=" + agentMsgId)
+              this.config.onDeliveryReceipt!(agentMsgId)
+            }
           }
         } catch (invErr) {
           const msg = invErr instanceof Error ? invErr.message : String(invErr)
