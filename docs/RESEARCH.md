@@ -647,6 +647,21 @@ The chat panel was implemented in Season 5 with the following architecture:
 - **First message to queue pads to 15904:** Haskell e2eEncConfirmationLength. Only subsequent messages (e2ePubKey=Nothing) use 15840.
 - **Encoding rules confirmed:** SPKI keys use 1-byte length prefix. KEM keys use Word16 BE length prefix. prevMsgHash uses 1-byte length prefix (not Word16 BE). APrivHeader has sndMsgId (Int64 8B) before prevMsgHash.
 
+### From Season 10 (bidirectional chat + UX)
+- **Pure API widget:** gochat-client.js must NEVER create DOM elements. connect(displayName?) accepts name directly. All UI in chat.js.
+- **Status from state machine only:** "connected" fires only after HELLO, not after invitation send. "pending" for intermediate states.
+- **Event parsing in widget:** handleChatPayload() filters x.msg.new (display), x.direct.del (connection ended), unknown (silent log).
+- **Desktop App replaces CLI:** Support agent uses SimpleX Desktop App. Contact address created in Desktop App settings.
+- **Admin via .env (now) and GoBot (future):** No runtime admin panel. Config at build time via .env, future runtime config via SimpleX bot commands.
+
+### 2.12 Widget architecture: API-only pattern (Season 10)
+
+Season 10 discovered a critical architectural requirement: the GoChat widget (gochat-client.js) must be a pure API library with zero DOM manipulation. The widget's showNameInput() method used container.innerHTML="" to inject its own name input UI, which destroyed the external multi-step flow built in chat.js and base.njk.
+
+The correct pattern: gochat-client.js exports connect(displayName?), send(text), disconnect(), and status callbacks. All UI rendering lives in the website's own chat.js. This separation ensures the website owner controls their own UI completely, avoids CSS conflicts, prevents DOM race conditions, and allows the widget to be embedded in any framework.
+
+Additionally, setStatus("connected") was firing immediately after invitation send, skipping the waiting screen. The fix: "connected" only fires from the state machine after HELLO is received. JSON event handling (x.msg.new, x.direct.del) must happen inside the widget via handleChatPayload(), filtering unknown events before they reach the UI callback.
+
 ---
 
 ## 10. References
@@ -684,3 +699,4 @@ The chat panel was implemented in Season 5 with the following architecture:
 | 2026-03-28 | Season 7 findings. Added Section 2.10 (ALPN and protocol version negotiation), Section 2.11 (v6 vs v7+ command authorization), Section 6 (SKEY, sndSecure, Fast Duplex). Updated Section 3.3 (TLS cert challenge resolved with PR #1738, Nginx eliminated). Updated Section 4.4 (WebSocket proxy architecture evolution). Updated Section 5.1 (v7+ auth differences). Added Season 7 architectural decisions. Added PR #1738 and PR #982 to references. |
 | 2026-03-30 | Season 8 findings. Added Season 8 architectural decisions: nacl.box for all crypto_box (HSalsa20 discovery), ASCII encoding for Maybe/Bool, SystemTime = 12 bytes, preserve queueDhKeyPair, four DH keypairs per connection, clean server (Debian 13). |
 | 2026-03-31 | Season 9 findings. PQ KEM Word16 BE length prefix, AES-256-GCM 16-byte IV, chainKdf output order trap (CRYPTO.md wrong), agentVersion 7 vs 1, handshake response format (tag 'C', PHConfirmation 'K', e2eEncryption_=Nothing), first-message pad 15904. |
+| 2026-04-01 | Season 10 findings. Added Section 2.12 (widget API-only pattern, DOM injection trap, status from state machine, event handling). Added Season 10 architectural decisions. |

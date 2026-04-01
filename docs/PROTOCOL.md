@@ -16,7 +16,7 @@
 **Ecosystem:** SimpleGo (hardware) / GoRelay (relay server) / GoChat (browser client)
 **Date:** 2026-03-28
 **Branch analyzed:** `ep/smp-web-spike` on `simplex-chat/simplexmq`
-**Status:** Season 9 complete, Season 10 (Chat Messages + UI) next
+**Status:** Season 10 complete, Season 11 (GoBot + .env + Polish) next
 
 ---
 
@@ -375,6 +375,25 @@ Season 9 implemented the full end-to-end encryption pipeline: parsing AgentConfi
 | x3dh-agreement.ts | X3DH receiver-side (3x X448 DH + HKDF-SHA512) |
 | ratchet-decrypt.ts | Double Ratchet init + encrypt (rcEncrypt) + decrypt (rcDecrypt) |
 | reply-queue.ts | Parse SMPQueueInfo from AgentConnInfoReply tag 'D' |
+
+### 5.1g Chat messages + Desktop App + UX (Season 10)
+
+**Priority:** Completed in Season 10.
+
+Season 10 delivered bidirectional E2E encrypted chat between browser and SimpleX Desktop App, a multi-step UX flow with visitor name support, offline messaging, and delete confirmation. 11 PRs merged (#79-#89). Critical discoveries: gochat-client.js must never inject DOM elements (showNameInput destroyed external UI), setStatus must only fire from state machine after HELLO (not from connectWithName), and incoming JSON events must be parsed before display.
+
+**Tasks:**
+
+- [x] **S10-1:** Fix WebSocket subscription after HELLO (PR #79)
+- [x] **S10-2:** Send HELLO and chat messages (agentVersion=1) (PR #80)
+- [x] **S10-3:** PING/PONG keep-alive 30s interval (PR #81)
+- [x] **S10-4:** Fix sendHello crash + state transition (PR #82)
+- [x] **S10-5:** Wire sendChatMessage through encrypted pipeline (PR #83)
+- [x] **S10-6:** Encode sndMsgId as Word64 BE (PR #84)
+- [x] **S10-7:** Message buffer + Desktop App docs (PR #85)
+- [x] **S10-8:** Visitor name + .env config + admin config (PR #86, #87)
+- [x] **S10-9:** Visitor name input in widget (PR #88)
+- [x] **S10-10:** Remove DOM injection + fix status + event handling (PR #89)
 
 ### 5.2 Layer 2: SMP command implementation
 
@@ -855,3 +874,4 @@ GoChat is one component of the SimpleGo ecosystem for encrypted communication ac
 | 2026-03-28 | Season 7 complete. Server upgrade to PR #1738 build. ALPN fix enables v6-18 over WebSocket. Nginx eliminated, Docker direct port mapping. 4096-bit RSA cert. sndSecure confirmed as v9+ only (v6 parser limitation). v7+ command auth identified as Season 8 prerequisite. Added Section 5.1d, Phase 3c/3d, Section 7.6, S7 and S8 task IDs. Season numbers shifted: S8 = v7+ auth + bidirectional messaging, S9 = polish, S10 = security, S11 = library, S12+ = GRP. |
 | 2026-03-30 | Season 8 complete. Implemented v9 CbAuthenticator (nacl.box over SHA-512), server rebuilt on Debian 13 (Nginx + Certbot + Docker), MSG processing with server-to-recipient decryption (nacl.box.open), Layer 1 NaCl decryption of smpEncConfirmation, RcvMsgBody parsing (SystemTime=12B), ACK with CbAuth. Key discoveries: HSalsa20 in nacl.box (not nacl.secretbox), Maybe encoding = ASCII '0'/'1' (not binary), four DH keypairs per connection, asymmetric smpEncConfirmation format. 494 tests. 14 S8 task IDs (all DONE). E2E tasks renumbered for S9 (X3DH + Double Ratchet + CON). Added Section 5.1e, Phase 3d/3e. |
 | 2026-03-31 | Season 9 complete. AgentConfirmation parsing with SNTRUP761 PQ KEM support. X3DH key agreement (receiver side). Double Ratchet encrypt/decrypt (AES-256-GCM with 16-byte IV). Reply queue parsing from AgentConnInfoReply. Full duplex handshake (send AgentConfirmation to CLI). HELLO received - CONNECTION ESTABLISHED. Chat messages received and decrypted. 11 PRs (#67-#77), 537 tests. Added Section 5.1f with 8 S9 task IDs (all DONE). |
+| 2026-04-01 | Season 10 complete. Bidirectional E2E chat with Desktop App. 11 PRs (#79-#89), 544+ tests. Visitor name, multi-step UX, offline messaging, delete confirmation. Critical: widget must never inject DOM, status only from state machine, parse JSON events. Added Section 5.1g with 10 S10 task IDs (all DONE). |

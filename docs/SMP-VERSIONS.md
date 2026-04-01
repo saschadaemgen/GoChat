@@ -1,6 +1,9 @@
 # SMP Version Reference
 # GoChat - SimpleX Messaging Protocol Version Guide
 
+*SMP-VERSIONS.md - GoChat Protocol Documentation*
+*Season 10, 2026-04-01*
+
 ---
 
 ## Overview

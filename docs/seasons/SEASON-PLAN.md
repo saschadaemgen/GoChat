@@ -357,8 +357,9 @@ CLI sends SKEY -> AUTH (queue has no sndSecure)
 
 ## Season 9: AgentConfirmation, X3DH, Double Ratchet, HELLO, CON
 
-**Status:** Next  
+**Status:** Complete
 **Goal:** Parse the decrypted AgentConfirmation, perform X3DH key agreement with real keys, initialize the Double Ratchet, exchange HELLO messages, and reach CON (connected) state for bidirectional encrypted messaging.
+**Result:** 11 PRs (#67-#77), 537 tests. Full E2E pipeline: X3DH + Double Ratchet + HELLO + CON.
 
 ### Starting point
 
@@ -402,28 +403,60 @@ After this season, a website visitor can click "Start Encrypted Chat", connect t
 
 ---
 
-## Season 10: Production polish and website integration
+## Season 10: Chat messages + Desktop App + UX
 
-**Status:** Planned  
-**Goal:** Polish the chat experience to Intercom-level quality and fully integrate into the SimpleGo website.
+**Status:** Complete
+**Goal:** Bidirectional E2E encrypted chat between browser and SimpleX Desktop App with production-quality UX.
+**Result:** 11 PRs (#79-#89), 544+ tests. Full bidirectional chat, multi-step UX, visitor name, offline messaging, Hollywood destruction sequence.
 
-### Scope
+### Deliverables
 
-- Intercom-level animation system (message appear, panel open, typing indicator, launcher morph)
-- SharedWorker for tab persistence (WS-4)
-- Message persistence in IndexedDB (chat history survives page reload)
-- SPA router integration (chat survives page navigation)
-- Mobile responsive polish (full-screen panel, touch targets)
-- Encryption badge with SMP/GRP profile indicator
-- Accessibility audit (WCAG 2.1 AA)
-- Chat + Player coexistence refinement
-- Debug logging cleanup (remove all DIAG logs from invitation.ts)
+- [x] Fix WebSocket subscription after HELLO (single WS per queue)
+- [x] Send HELLO and chat messages from browser (agentVersion=1, not 7!)
+- [x] PING/PONG keep-alive (30s interval)
+- [x] Fix sendHello crash (bodyPadSize 15696->15692)
+- [x] Wire sendChatMessage through encrypted pipeline to reply queue
+- [x] Encode sndMsgId as Word64 BE in APrivHeader
+- [x] Message buffer for pre-connection queuing
+- [x] Desktop App integration (replaces CLI)
+- [x] Visitor name support (custom or Visitor-xxxx guest)
+- [x] .env config approach (replaces admin panel)
+- [x] Remove DOM injection from gochat-client.js (pure API)
+- [x] Fix premature "connected" status
+- [x] Handle x.direct.del event ("Connection ended")
+- [x] Multi-step UX flow (Start -> Name -> Waiting -> Chat)
+- [x] Offline messaging with single-message limit
+- [x] Delete confirmation with header slide animation
+- [x] Hollywood destruction sequence (glitch, explode, sparks, shockwaves)
+
+### Key discoveries
+
+1. **gochat-client.js must never inject DOM** - showNameInput() destroyed external UI
+2. **setStatus("connected") only from state machine** - not from connectWithName()
+3. **agentVersion=1 for messages** - not 7 (that is for AgentConfirmation only)
+4. **sndMsgId is Word64 BE** - 4 missing zero bytes caused A_MESSAGE on CLI
+5. **Chrome WSS cert issue** - visit https://smp.simplego.dev:8444 to re-accept
 
 ---
 
-## Season 11: Production hardening + security review
+## Season 11: GoBot + .env + Polish
 
-**Status:** Planned  
+**Status:** Next
+**Goal:** .env integration for website config, GoBot SimpleX configuration bot, connection rejection handling, delivery receipts.
+
+### Scope
+
+1. .env integration for SimpleGo website (dotenv + eleventy.js)
+2. GoBot - SimpleX bot for runtime config via chat commands
+3. Connection rejection handling in widget
+4. Delivery receipts (double checkmarks)
+5. Begin simplex-js library extraction
+
+---
+
+## Season 12: Security hardening + review
+
+**Status:** Planned
 **Goal:** Battle-tested, deployable encrypted support chat with complete security hardening.
 
 ### Scope
@@ -535,17 +568,18 @@ After Season 11, GoChat's SMP profile is production-ready. The GRP profile devel
 | S6 | Connection request | AgentInvitation, connReq URI, NaCl crypto_box, 12 fixes, 493 tests | Complete |
 | S7 | Server upgrade + ALPN | PR #1738 build, v6-18 over WebSocket, Nginx eliminated, 4096-bit cert | Complete |
 | S8 | v9 auth + MSG + Layer 1 | CbAuthenticator, server rebuild, MSG decrypt, AgentConfirmation, 494 tests | Complete |
-| **S9** | **X3DH + Ratchet + CON** | **Parse AgentConf, X3DH, Double Ratchet, HELLO, real chat** | **Next** |
-| S10 | Production polish | Animations, SharedWorker, IndexedDB, accessibility | Planned |
-| S11 | Security hardening | CSP, SRI, Web Worker crypto, security review | Planned |
-| S12 | simplex-js library | Standalone npm package for SMP browser client | Planned |
-| S13 | GRP: Noise transport | `grp/transport.ts`, Noise IK/XX | Future |
-| S14 | GRP: Post-quantum | ML-KEM-768 hybrid key exchange | Future |
-| S15 | GRP: Two-hop routing | PFWD/RFWD/RRES/PRES, cover traffic | Future |
-| S16+ | GRP: Triple Shield | ZKP, Shamir, steganographic transport | Future |
+| S9 | X3DH + Ratchet + CON | AgentConf, X3DH, Ratchet, HELLO, CON, 537 tests | Complete |
+| S10 | Chat + Desktop App + UX | Bidirectional chat, visitor name, offline msg, destruction, 544+ tests | Complete |
+| **S11** | **GoBot + .env + Polish** | **.env config, GoBot, rejection handling, delivery receipts** | **Next** |
+| S12 | Security hardening | CSP, SRI, Web Worker crypto, security review | Planned |
+| S13 | simplex-js library | Standalone npm package for SMP browser client | Planned |
+| S14 | GRP: Noise transport | `grp/transport.ts`, Noise IK/XX | Future |
+| S15 | GRP: Post-quantum | ML-KEM-768 hybrid key exchange | Future |
+| S16 | GRP: Two-hop routing | PFWD/RFWD/RRES/PRES, cover traffic | Future |
+| S17+ | GRP: Triple Shield | ZKP, Shamir, steganographic transport | Future |
 
-**SMP critical path:** S1 -> S2 -> S3 -> S4 -> S5 -> S6 -> S7 -> S8 -> S9 -> S10 -> S11
-**Library track:** S12 after S11
+**SMP critical path:** S1 -> S2 -> ... -> S10 -> S11 -> S12 -> S13
+**Library track:** S13 after S12
 **GRP track:** S13 -> S14 -> S15 -> S16+ (begins after SMP profile is production-ready)
 **GRP dependency:** GoRelay must complete its corresponding phases first
 
@@ -563,3 +597,4 @@ After Season 11, GoChat's SMP profile is production-ready. The GRP profile devel
 | 2026-03-28 | Season 6 complete. 4 PRs (#39, #42, #44, #45) plus ~10 direct pushes. 12 protocol fixes (2x A_CRYPTO, 8+ A_MESSAGE). Key discovery: joining party sends AgentInvitation ('I'), not AgentConfirmation ('C'). First browser-native SMP connection request accepted by SimpleX App. 493 tests. Security hardening roadmap created. |
 | 2026-03-28 | Season 7 complete. Server upgrade to PR #1738 build. ALPN fix enables v6-18 over WebSocket. Nginx eliminated, Docker direct port mapping (8444->443). 4096-bit RSA Let's Encrypt cert. Three-layer root cause chain resolved (SKEY -> sndSecure -> ALPN). sndSecure confirmed as v9+ only. v7+ command auth identified as Season 8 prerequisite. Season numbers shifted: S8 = v7+ auth + bidirectional messaging, S9 = polish, S10 = security, S11 = library, S12-S15+ = GRP. Added document update rule to workflow section. |
 | 2026-03-30 | Season 8 complete. 13 PRs (#52-#65). v9 CbAuthenticator implemented (nacl.box fix for HSalsa20). Server rebuilt on Debian 13 (Plesk removed). MSG processing with server-to-recipient decryption. Layer 1 NaCl decryption of AgentConfirmation (14,777B). 494 tests. Season numbers shifted: S9 = X3DH + Ratchet + CON, S10 = polish, S11 = security, S12 = library, S13+ = GRP. Added CLAUDE.md to document update list. |
+| 2026-04-01 | Season 10 complete. 11 PRs (#79-#89), 544+ tests. Bidirectional E2E chat with Desktop App. Visitor name, multi-step UX, offline messaging, delete confirmation with destruction sequence. Season numbers shifted: S11 = GoBot + .env, S12 = security, S13 = library, S14+ = GRP. |
