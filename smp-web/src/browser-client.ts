@@ -328,6 +328,12 @@ class BrowserClientImpl implements BrowserClient {
     }
 
     if (this.conn && this.connManager) {
+      // Send x.direct.del to notify agent before disconnecting (best effort)
+      try {
+        await this.connManager.sendDeleteNotification(this.conn.state.id)
+      } catch (_e) {
+        // Non-fatal: connection might not be in CONNECTED state or queue already gone
+      }
       try {
         await this.connManager.closeConnection(this.conn.state.id)
       } catch (_e) {
