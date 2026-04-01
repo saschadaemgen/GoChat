@@ -101,6 +101,8 @@ export interface ManagedConnection {
   replySenderAuthPrivKey: Uint8Array | null
   /** Callback for received chat messages (JSON text from x.msg.new) */
   onChatMessage: ((text: string) => void) | null
+  /** Callback when a delivery receipt is received for a sent message */
+  onDeliveryReceipt: ((agentMsgId: number) => void) | null
   /** Send message counter (starts at 1, increments per message) */
   sndMsgId: number
   /** SHA256 of last sent AgentMessage (empty for first message) */
@@ -234,6 +236,7 @@ export class ConnectionManager {
       replyE2eKeyPair: null,
       replySenderAuthPrivKey: null,
       onChatMessage: null,
+      onDeliveryReceipt: null,
       sndMsgId: 1,
       prevMsgHash: new Uint8Array(0),
     }
@@ -725,13 +728,16 @@ export class ConnectionManager {
    */
   private parseAgentMessageContent(conn: ManagedConnection, agentMessage: Uint8Array, msgNum: number): void {
     let offset = 1 // skip outer 'M' tag
-    offset += 8    // skip sndMsgId (Int64 BE, 8 bytes)
+
+    // Read sndMsgId (Int64 BE, 8 bytes) - needed for receipt reference
+    const incomingSndMsgId = this.readInt64BE(agentMessage, offset)
+    offset += 8
 
     // APrivHeader: 1-byte length prefix for prevMsgHash
     const hashLen = agentMessage[offset]
     offset += 1
     offset += hashLen // skip the hash bytes
-    console.log("[DIAG] APrivHeader: prevMsgHash=" + hashLen + "B, remaining=" + (agentMessage.length - offset) + "B")
+    console.log("[DIAG] APrivHeader: sndMsgId=" + incomingSndMsgId + ", prevMsgHash=" + hashLen + "B, remaining=" + (agentMessage.length - offset) + "B")
 
     // AMessage tag
     if (offset < agentMessage.length) {
@@ -781,6 +787,15 @@ export class ConnectionManager {
               if (conn.onChatMessage) {
                 conn.onChatMessage(chatText)
               }
+
+              // Send delivery receipt back (best effort, non-blocking)
+              // Do NOT send receipt for non-chat events (only x.msg.new)
+              if (conn.replyQueue && conn.handshakeSent && conn.state.state === "CONNECTED") {
+                const msgHash = new Uint8Array(sha256(msgBody))
+                this.sendReceipt(conn.state.id, incomingSndMsgId, msgHash).catch((err: Error) => {
+                  console.log("[SMP] Receipt send failed (non-fatal): " + err.message)
+                })
+              }
             } else if (conn.onChatMessage) {
               // Pass raw JSON for non-standard events
               conn.onChatMessage(msgText)
@@ -794,10 +809,123 @@ export class ConnectionManager {
         } catch {
           console.log("[SMP] MSG #" + msgNum + ": chat message received (" + msgBody.length + "B binary)")
         }
+      } else if (innerTag === 0x56) { // 'V' = A_RCVD (delivery receipt)
+        this.parseDeliveryReceipt(conn, agentMessage, offset + 1, msgNum)
       } else {
         console.log("[SMP] MSG #" + msgNum + ": AMessage tag '" + innerTagChar + "'")
       }
     }
+  }
+
+  // --- Delivery receipts ---
+
+  /**
+   * Read an Int64 BE value from a Uint8Array. Returns as Number (safe for sndMsgId counters).
+   */
+  private readInt64BE(data: Uint8Array, offset: number): number {
+    // High 32 bits (usually 0 for small counters)
+    const hi = ((data[offset] << 24) | (data[offset + 1] << 16) | (data[offset + 2] << 8) | data[offset + 3]) >>> 0
+    const lo = ((data[offset + 4] << 24) | (data[offset + 5] << 16) | (data[offset + 6] << 8) | data[offset + 7]) >>> 0
+    return hi * 0x100000000 + lo
+  }
+
+  /**
+   * Parse incoming A_RCVD delivery receipts (inner_tag 'V').
+   * Each receipt references the agentMsgId of a message we sent.
+   */
+  private parseDeliveryReceipt(conn: ManagedConnection, data: Uint8Array, offset: number, msgNum: number): void {
+    // count: Word8 (1 byte, NOT Word16!)
+    const count = data[offset]
+    offset += 1
+    console.log("[SMP] MSG #" + msgNum + " delivery receipt: " + count + " receipt(s)")
+
+    for (let i = 0; i < count; i++) {
+      if (offset + 8 > data.length) break
+
+      // agentMsgId: Int64 BE (8 bytes) - the sndMsgId of OUR sent message
+      const agentMsgId = this.readInt64BE(data, offset)
+      offset += 8
+
+      // hashLen + hash: skip
+      const rcptHashLen = data[offset]
+      offset += 1 + rcptHashLen
+
+      // rcptInfo: Word16 Large (2 bytes, NOT Word32!)
+      offset += 2
+
+      console.log("[SMP] Receipt " + (i + 1) + "/" + count + ": agentMsgId=" + agentMsgId)
+
+      // Notify UI callback
+      if (conn.onDeliveryReceipt) {
+        conn.onDeliveryReceipt(agentMsgId)
+      }
+    }
+  }
+
+  /**
+   * Send a delivery receipt (A_RCVD) for a received chat message.
+   * Uses the same sendEncrypted pipeline as chat messages.
+   *
+   * @param connectionId - Connection ID
+   * @param receivedMsgId - sndMsgId from the received message's APrivHeader
+   * @param msgHash - SHA256 of the received message body
+   */
+  async sendReceipt(connectionId: string, receivedMsgId: number, msgHash: Uint8Array): Promise<void> {
+    const conn = this.connections.get(connectionId)
+    if (!conn) return
+
+    console.log("[SMP] sendReceipt: receipt for msgId=" + receivedMsgId)
+
+    // Build AgentMessage: ['M'][APrivHeader]['V'][count=1][agentMsgId][hashLen][hash][rcptInfo]
+    const privHeader = this.buildAPrivHeader(conn)
+
+    // Receipt payload: count(1B) + agentMsgId(8B) + hashLen(1B) + hash(32B) + rcptInfo(2B) = 44B
+    const receiptPayload = new Uint8Array(1 + 8 + 1 + msgHash.length + 2)
+    let rOffset = 0
+    receiptPayload[rOffset++] = 1 // count = 1 (Word8!)
+
+    // agentMsgId (Int64 BE)
+    receiptPayload[rOffset++] = 0
+    receiptPayload[rOffset++] = 0
+    receiptPayload[rOffset++] = 0
+    receiptPayload[rOffset++] = 0
+    receiptPayload[rOffset++] = (receivedMsgId >>> 24) & 0xFF
+    receiptPayload[rOffset++] = (receivedMsgId >>> 16) & 0xFF
+    receiptPayload[rOffset++] = (receivedMsgId >>> 8) & 0xFF
+    receiptPayload[rOffset++] = receivedMsgId & 0xFF
+
+    // hashLen + hash
+    receiptPayload[rOffset++] = msgHash.length
+    receiptPayload.set(msgHash, rOffset)
+    rOffset += msgHash.length
+
+    // rcptInfo (Word16 Large = 2 bytes, NOT Word32!)
+    receiptPayload[rOffset++] = 0
+    receiptPayload[rOffset++] = 0
+
+    // Full AgentMessage: ['M'][APrivHeader]['V'][receiptPayload]
+    const agentMessage = new Uint8Array(1 + privHeader.length + 1 + receiptPayload.length)
+    agentMessage[0] = 0x4D // 'M' = A_MSG outer tag
+    agentMessage.set(privHeader, 1)
+    agentMessage[1 + privHeader.length] = 0x56 // 'V' = A_RCVD inner tag
+    agentMessage.set(receiptPayload, 2 + privHeader.length)
+
+    await this.sendEncrypted(
+      conn,
+      agentMessage,
+      1,     // agentVersion = 1 (NOT 7!)
+      0x4D,  // 'M' = AgentMsgEnvelope
+      null,
+      false, // subsequent message
+      (envelope) => {
+        const smpConf = new Uint8Array(1 + envelope.length)
+        smpConf[0] = 0x5F // '_' = PHEmpty
+        smpConf.set(envelope, 1)
+        return smpConf
+      }
+    )
+
+    console.log("[SMP] sendReceipt: sent for msgId=" + receivedMsgId)
   }
 
   // --- Shared send infrastructure ---
