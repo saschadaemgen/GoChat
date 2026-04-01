@@ -1,6 +1,9 @@
 # SMP Handshake Reference
 # GoChat - Complete Connection Handshake Flow
 
+*SMP-HANDSHAKE.md - GoChat Protocol Documentation*
+*Season 10, 2026-04-01*
+
 ---
 
 ## Overview
@@ -309,5 +312,31 @@ body = JSON:
 
 ---
 
+## Phase 8: Chat Messages (Season 10)
+
+### Browser -> CLI (Chat Message)
+
+After HELLO, browser sends chat messages through the encrypted pipeline:
+
+1. JSON payload: `{"v":"1-16","event":"x.msg.new","params":{"content":{"text":"...","type":"text"}}}`
+2. Wrap in AgentMessage: `['M'][APrivHeader: Word64 sndMsgId + 1B hashLen + hash]['M'][Tail body]`
+3. Ratchet encrypt (rcEncrypt) with current send chain key
+4. Wrap in AgentMsgEnvelope: `[Word16 agentVersion=1]['M'][Tail encRatchetMessage]`
+   CRITICAL: agentVersion=1, NOT 7!
+5. ClientMessage: `['_' PHEmpty][envelope bytes]`
+6. Pad to 15840 (subsequent messages, not 15904)
+7. NaCl encrypt: nacl.box with reply queue DH keys
+8. ClientMsgEnvelope: PubHeader(v=4, e2ePubKey=Nothing '0') + nonce + encrypted
+9. SEND to reply queue senderId
+
+### Event Handling (incoming)
+
+Browser parses incoming JSON before passing to onMessage:
+- `x.msg.new`: extract params.content.text, display in chat
+- `x.direct.del`: show "Connection ended", set status offline
+- Unknown events: log silently, do not display
+
+---
+
 *SMP-HANDSHAKE.md - GoChat Protocol Documentation*
-*Season 9, 2026-03-31*
+*Season 10, 2026-04-01*

@@ -111,11 +111,26 @@ smp-web/src/
   __tests__/            # 537 tests across 23 files
 ```
 
-## Current State
+## Current State (Post-Season 10)
 
-Season 9 is COMPLETE. Full E2E pipeline working: X3DH, Double Ratchet, HELLO received, CONNECTION ESTABLISHED. 537 tests, 23 files.
+Full E2E bidirectional chat working in the browser:
+- WebSocket -> SMP v9 handshake -> NaCl Layer 1
+- X3DH (X448) -> Double Ratchet (AES-256-GCM, 16B IV)
+- SNTRUP761 KEM -> HELLO -> CONNECTION ESTABLISHED
+- Bidirectional messaging with SimpleX Desktop App
+- PING/PONG keepalive (30s interval)
+- Visitor name support (custom or Visitor-xxxx guest)
+- Multi-step UX flow (Start -> Name -> Waiting -> Chat)
+- Offline messaging with single-message limit
+- Delete confirmation with Hollywood destruction sequence
+- x.direct.del event handling ("Connection ended")
+- 544+ tests passing
 
-### What works (Seasons 1-9)
+The widget (gochat-client.js) is a pure API library.
+All UI is handled externally by chat.js on the SimpleGo website.
+gochat-client.js must NEVER create DOM elements or manipulate HTML.
+
+### What works (Seasons 1-10)
 - WebSocket transport with SMP handshake (v6-18 offered, v9 negotiated)
 - 14 SMP command encoders with full response decoder
 - Contact address parser (simplex:/ and https:// formats)
@@ -139,13 +154,22 @@ Season 9 is COMPLETE. Full E2E pipeline working: X3DH, Double Ratchet, HELLO rec
 - Duplex handshake (send AgentConfirmation to CLI's reply queue)
 - HELLO received - CONNECTION ESTABLISHED
 - Chat messages received and decrypted
-- 537 tests across 23 files
+- WebSocket subscription fix after HELLO (single WS per queue)
+- Send HELLO and chat messages from browser (agentVersion=1)
+- PING/PONG keep-alive (30s interval)
+- Visitor name in AgentInvitation profile JSON
+- handleChatPayload() for x.msg.new and x.direct.del events
+- connect(displayName?) accepts name from external UI
+- Status "pending" after invitation (not premature "connected")
+- 544+ tests across 23+ files
 
 ### What does NOT work yet
-- WebSocket subscription disrupted after HELLO (new connections opened)
-- No chat message sending from browser
-- No HELLO send (only receive)
-- No chat UI integration
+- .env integration for SimpleGo website config
+- GoBot (SimpleX configuration bot)
+- Connection rejection handling (agent rejects instead of accepts)
+- Delivery receipts (double checkmarks)
+- simplex-js npm library extraction
+- Security hardening (CSP, SRI, Web Worker)
 
 ## Development Roadmap
 
@@ -158,10 +182,11 @@ Season 9 is COMPLETE. Full E2E pipeline working: X3DH, Double Ratchet, HELLO rec
 - Season 7: Server Upgrade, ALPN Fix, v6-18 over WebSocket - COMPLETE
 - Season 8: v9 Command Auth, Server Rebuild, MSG + Layer 1 (494 tests) - COMPLETE
 - Season 9: X3DH + Double Ratchet + HELLO + CON (537 tests) - COMPLETE
-- Season 10: Chat Messages + UI - NEXT
-- Season 11: Security Hardening (CSP, SRI, Web Worker crypto)
-- Season 12: simplex-js npm Library
-- Season 13+: GRP Profile (Noise, ML-KEM-768, Two-hop Routing)
+- Season 10: Chat Messages + Desktop App + UX (544+ tests) - COMPLETE
+- Season 11: GoBot + .env + Polish - NEXT
+- Season 12: Security Hardening (CSP, SRI, Web Worker crypto)
+- Season 13: simplex-js npm Library
+- Season 14+: GRP Profile (Noise, ML-KEM-768, Two-hop Routing)
 
 ## Season 9 Context (COMPLETE)
 
@@ -288,6 +313,12 @@ docker run -d --name simplego-smp --restart always \
 28. First message to a queue (e2ePubKey=Just) pads to 15904, not 15840 (Haskell e2eEncConfirmationLength)
 29. APrivHeader: skip 8 bytes sndMsgId (Int64 BE) before prevMsgHash
 30. Handshake reply: tag 'C' (AgentConfirmation), PHConfirmation 'K' with sender auth key, e2eEncryption_=Nothing '0'
+31. gochat-client.js must NEVER inject DOM elements - pure API only, chat.js controls UI
+32. setStatus("connected") must ONLY come from state machine after HELLO, not from connectWithName()
+33. x.direct.del arrives as raw JSON - must be parsed by handleChatPayload()
+34. Chrome rejects WSS after crash - visit https://smp.simplego.dev:8444 in new tab to fix
+35. base.njk lives in _includes/ NOT src/_includes/ in the SimpleGo www project
+36. SimpleGo www is NOT a git repo - never run git commands there
 
 ## Upstream Files (READ ONLY - never modify)
 
@@ -312,3 +343,7 @@ protocol/simplex-messaging.md  # SMP specification (upstream reference)
 5. docs/PROTOCOL.md - Main technical protocol
 6. docs/RESEARCH.md - Security and design research
 7. docs/SECURITY-HARDENING-ROADMAP.md - Six-phase browser security hardening plan
+8. docs/seasons/SEASON-10-closing.md - Season 10 closing protocol
+9. docs/seasons/SEASON-11-handover.md - Season 11 handover
+10. docs/SMP-HANDSHAKE.md - Complete handshake reference
+11. docs/SMP-VERSIONS.md - SMP version fields reference

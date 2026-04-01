@@ -179,14 +179,18 @@ GoChat can be used standalone (without GoShop) as a simple encrypted support cha
 | Full E2E pipeline | S9 | X3DH + Double Ratchet, HELLO received, CONNECTION ESTABLISHED, 537 tests |
 | PQ KEM support | S9 | SNTRUP761 parsing in AgentConfirmation and MsgHeader |
 | Duplex handshake | S9 | Send AgentConfirmation to CLI's reply queue, bidirectional message exchange |
+| Bidirectional chat messaging | S10 | Send + receive E2E encrypted messages via Desktop App, PING/PONG keepalive |
+| Visitor name support | S10 | Custom name or random guest (Visitor-xxxx), sent in AgentInvitation profile |
+| Multi-step UX flow | S10 | Start -> Name -> Waiting -> Chat, offline messaging, delete confirmation |
+| Desktop App integration | S10 | Support agent uses SimpleX Desktop App instead of CLI |
+| Event handling | S10 | x.direct.del, x.msg.new parsed, unknown events filtered |
 
 ### To do
 
 | Component | Season | Description |
 |:----------|:-------|:------------|
-| Chat messages + UI | S10 | Send messages, subscription fix, chat UI integration |
-| Security hardening | S11 | CSP, SRI, Web Worker isolation, security review |
-| GoShop integration | S12 | Structured e-commerce messaging, product catalog, order flow |
+| GoBot + .env config | S11 | SimpleX bot for runtime config, .env for build-time config |
+| Security hardening | S12 | CSP, SRI, Web Worker isolation, security review |
 | simplex-js library | S13 | Standalone npm package for SMP browser client |
 
 Full task breakdown: [docs/PROTOCOL.md](docs/PROTOCOL.md)
@@ -208,12 +212,12 @@ We develop in seasons - each with a clear goal, defined scope, and a protocol do
 | **S7** | Server infrastructure overhaul (Docker, TLS, WebSocket) | Complete |
 | **S8** | v9 command authorization + MSG processing (494 tests) | Complete |
 | **S9** | E2E pipeline: X3DH, Ratchet, HELLO, CON (537 tests) | Complete |
-| **S10** | Chat messages + UI | Next |
-| **S11** | Security hardening + review | Planned |
-| **S12** | GoShop integration | Planned |
+| **S10** | Chat messages + Desktop App + UX (544+ tests) | Complete |
+| **S11** | GoBot + .env + polish | Next |
+| **S12** | Security hardening + review | Planned |
 | **S13** | simplex-js npm library | Planned |
 
-**Critical path:** S1-S9 DONE - S10 (next) - S11 - S12
+**Critical path:** S1-S10 DONE - S11 (next) - S12 - S13
 
 Full season plan: [docs/seasons/SEASON-PLAN.md](docs/seasons/SEASON-PLAN.md)
 
@@ -319,7 +323,7 @@ git clone https://github.com/saschadaemgen/GoChat.git
 cd GoChat
 git checkout feat/simplego-support-chat
 cd smp-web
-npx vitest run                    # Run all 537 tests
+npx vitest run                    # Run all 544+ tests
 npm run build:browser             # Build browser bundle -> dist/gochat-client.js
 ```
 
@@ -340,7 +344,7 @@ GoChat is one component of a larger ecosystem for encrypted communication across
 
 ## Status
 
-Seasons 1 through 9 are complete. Season 10 (Chat Messages + UI) is next.
+Seasons 1 through 10 are complete. Season 11 (GoBot + .env + Polish) is next.
 
 | Component | Status |
 |:----------|:-------|
@@ -362,9 +366,14 @@ Seasons 1 through 9 are complete. Season 10 (Chat Messages + UI) is next.
 | HELLO handshake - CONNECTION ESTABLISHED | Done |
 | PQ KEM (SNTRUP761) parsing support | Done |
 | Bidirectional message exchange with SimpleX CLI | Done |
-| Chat messages + UI | Season 10 |
-| Security hardening | Season 11 |
-| GoShop integration | Season 12 |
+| Bidirectional chat messaging (Desktop App) | Done |
+| Visitor name support | Done |
+| Multi-step UX flow | Done |
+| Offline messaging | Done |
+| Delete confirmation + destruction sequence | Done |
+| Event handling (x.direct.del, x.msg.new) | Done |
+| GoBot + .env config | Season 11 |
+| Security hardening | Season 12 |
 
 ---
 
