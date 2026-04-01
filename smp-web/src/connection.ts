@@ -1260,6 +1260,48 @@ export class ConnectionManager {
     console.log("[SMP] sendChatMessage: message sent!")
   }
 
+  /**
+   * Send x.direct.del notification to the agent before disconnecting.
+   * Best effort - silently fails if connection is not CONNECTED or queue is gone.
+   */
+  async sendDeleteNotification(connectionId: string): Promise<void> {
+    const conn = this.connections.get(connectionId)
+    if (!conn) return
+    if (conn.state.state !== "CONNECTED") return
+    if (!conn.replyQueue || !conn.handshakeSent) return
+
+    console.log("[SMP] sendDeleteNotification: notifying agent")
+
+    const jsonBody = new TextEncoder().encode(JSON.stringify({
+      event: "x.direct.del",
+      params: {},
+    }))
+
+    const privHeader = this.buildAPrivHeader(conn)
+    const agentMessage = new Uint8Array(1 + privHeader.length + 1 + jsonBody.length)
+    agentMessage[0] = 0x4D // 'M' = A_MSG
+    agentMessage.set(privHeader, 1)
+    agentMessage[1 + privHeader.length] = 0x4D // 'M' = A_MSG content
+    agentMessage.set(jsonBody, 2 + privHeader.length)
+
+    await this.sendEncrypted(
+      conn,
+      agentMessage,
+      1,     // agentVersion = 1 (NOT 7!)
+      0x4D,  // 'M' = AgentMsgEnvelope
+      null,
+      false,
+      (envelope) => {
+        const smpConf = new Uint8Array(1 + envelope.length)
+        smpConf[0] = 0x5F // '_'
+        smpConf.set(envelope, 1)
+        return smpConf
+      }
+    )
+
+    console.log("[SMP] sendDeleteNotification: agent notified")
+  }
+
   async closeConnection(connectionId: string): Promise<void> {
     const conn = this.connections.get(connectionId)
     if (!conn) return
