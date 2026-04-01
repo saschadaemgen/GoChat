@@ -791,7 +791,7 @@ export class ConnectionManager {
               // Send delivery receipt back (best effort, non-blocking)
               // Do NOT send receipt for non-chat events (only x.msg.new)
               if (conn.replyQueue && conn.handshakeSent && conn.state.state === "CONNECTED") {
-                const msgHash = new Uint8Array(sha256(msgBody))
+                const msgHash = new Uint8Array(sha256(agentMessage.slice(offset)))
                 this.sendReceipt(conn.state.id, incomingSndMsgId, msgHash).catch((err: Error) => {
                   console.log("[SMP] Receipt send failed (non-fatal): " + err.message)
                 })
