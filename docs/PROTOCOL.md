@@ -14,9 +14,9 @@
 **Project:** GoChat - Browser-Native Encrypted Messenger
 **Parent project:** [SimpleGo](https://github.com/saschadaemgen/SimpleGo)
 **Ecosystem:** SimpleGo (hardware) / GoRelay (relay server) / GoChat (browser client)
-**Date:** 2026-03-28
+**Date:** 2026-04-02
 **Branch analyzed:** `ep/smp-web-spike` on `simplex-chat/simplexmq`
-**Status:** Season 10 complete, Season 11 (GoBot + .env + Polish) next
+**Status:** Season 11 complete, Season 12 (Security Hardening) next
 
 ---
 
@@ -395,6 +395,23 @@ Season 10 delivered bidirectional E2E encrypted chat between browser and SimpleX
 - [x] **S10-9:** Visitor name input in widget (PR #88)
 - [x] **S10-10:** Remove DOM injection + fix status + event handling (PR #89)
 
+### 5.1h Delivery receipts + connection lifecycle + .env (Season 11)
+
+**Priority:** Completed in Season 11.
+
+Season 11 delivered bidirectional delivery receipts (double checkmarks), connection lifecycle management (END detection, timeout, x.direct.del send), and .env integration for the SimpleGo website. The receipt msgHash bug required three attempts to resolve: the full agentMessage buffer must be hashed, not a subset. The onSubscriptionEnd handler existed in the transport layer but was never wired - one line of code activated END detection.
+
+**Tasks:**
+
+- [x] **S11-1:** Parse incoming delivery receipts - A_RCVD inner_tag 'V' (PR #91)
+- [x] **S11-2:** Send delivery receipts for received chat messages (PR #91)
+- [x] **S11-3:** Fix receipt msgHash scope - full agentMessage buffer (PR #92, #93)
+- [x] **S11-4:** Wire onSubscriptionEnd for queue END detection (PR #94)
+- [x] **S11-5:** Add connection timeout for unresponsive agents (PR #94)
+- [x] **S11-6:** Send x.direct.del notification before disconnect (PR #95)
+- [x] **S11-7:** chat.js receipt UI - onDeliveryReceipt callback, pendingChecks, upgradeCheck()
+- [x] **S11-8:** .env integration - dotenv in 11ty, template variables in base.njk
+
 ### 5.2 Layer 2: SMP command implementation
 
 **Priority:** Completed in Season 3.
@@ -436,7 +453,7 @@ Season 10 delivered bidirectional E2E encrypted chat between browser and SimpleX
 
 ### 5.6 Layer 6: Browser security hardening
 
-**Priority:** High - Season 10.
+**Priority:** High - Season 12.
 
 - [ ] **SEC-1:** Content Security Policy implementation
 - [ ] **SEC-2:** Subresource Integrity for all external scripts
@@ -450,7 +467,7 @@ Season 10 delivered bidirectional E2E encrypted chat between browser and SimpleX
 - [x] **OPS-2:** Contact address setup (S5)
 - [ ] **OPS-3:** Monitoring
 
-### 5.8 Layer 8: GRP transport (future - Season 12+)
+### 5.8 Layer 8: GRP transport (future - Season 14+)
 
 - [ ] **GRP-1:** Noise Protocol transport
 - [ ] **GRP-2:** Mandatory post-quantum key exchange
@@ -519,17 +536,46 @@ Season 10 delivered bidirectional E2E encrypted chat between browser and SimpleX
 7. Bidirectional encrypted messaging via Double Ratchet
 8. Document SMP-VERSIONS.md and SMP-HANDSHAKE.md
 
-### Phase 4: Hardening (Season 10-11)
+### Phase 3f: Bidirectional chat + UX (Season 10)
 
-**Goal:** Production-ready encrypted support chat.
+**Goal:** Production-quality bidirectional E2E chat with Desktop App.
+
+**Status: COMPLETE (Season 10)**
+
+1. Bidirectional E2E encrypted messaging with SimpleX Desktop App
+2. Multi-step UX flow (Start -> Name -> Waiting -> Chat)
+3. Visitor name support (custom or random guest)
+4. Offline messaging with single-message limit
+5. Delete confirmation + Hollywood destruction sequence
+6. Event handling (x.direct.del, x.msg.new)
+7. 544+ tests, 11 PRs (#79-#89)
+
+### Phase 3g: Delivery receipts + connection lifecycle + .env (Season 11)
+
+**Goal:** Delivery confirmations, connection end handling, build-time configuration.
+
+**Status: COMPLETE (Season 11)**
+
+1. Bidirectional delivery receipts (A_RCVD, tag 'V', double checkmarks)
+2. Receipt msgHash fix (full agentMessage buffer, 3 attempts)
+3. chat.js receipt UI (onDeliveryReceipt, pendingChecks, upgradeCheck)
+4. Connection END detection (onSubscriptionEnd wired)
+5. Connection timeout for unresponsive agents (2 minutes)
+6. x.direct.del send before disconnect
+7. .env integration (dotenv + 11ty + base.njk template variables)
+8. 551+ tests, 5 PRs (#91-#95)
+
+### Phase 4: Hardening (Season 12)
+
+**Goal:** Production-ready encrypted support chat with security hardening.
 
 1. Browser security hardening: CSP, SRI, Web Worker isolation (SEC-1 to SEC-5)
-2. Production polish: animations, SharedWorker, IndexedDB persistence
+2. Dependency vendoring (@noble libraries into repo)
 3. Error handling and user-facing error states
 4. Performance optimization and bundle size
 5. Security review and documentation (SEC-4)
 
-### Phase 5: GRP profile (Season 12+)
+### Phase 5: GRP profile (Season 14+)
 
 **Goal:** High-security communication via GoRelay.
 
@@ -569,7 +615,7 @@ GoChat/
       connection-request.ts         # Connection request builder + zstd (S4)
       browser-client.ts             # High-level browser API (S5)
       invitation.ts                 # AgentInvitation builder (S6)
-      __tests__/                    # 493 tests across 19 files
+      __tests__/                    # 551+ tests across 23 files
 
 +-- src/assets/css/chat.css         # Chat panel styles (S5, lives in SimpleGo www)
 +-- src/assets/js/chat.js           # Chat panel logic (S5, lives in SimpleGo www)
@@ -596,6 +642,7 @@ GoChat/
       SEASON-PLAN.md                # Season overview and workflow
       SEASON-01 through 06          # Season closing protocols
       SEASON-07-server-upgrade.md   # Season 7 closing protocol
+      SEASON-11-receipts-lifecycle.md # Season 11 closing protocol
 ```
 
 ### 7.3 Dependencies
@@ -627,6 +674,7 @@ GoChat/
 | `PONG` | Server -> Client | `PONG` | Keepalive response |
 | `OK` | Server -> Client | `OK` | Success |
 | `ERR` | Server -> Client | `ERR <errorType>` | Error |
+| `END` | Server -> Client | `END` | Queue subscription ended (S11) |
 
 ### 7.5 SMP v6 wire format reference (Season 5)
 
@@ -691,6 +739,22 @@ ClientMessage:
   [4-5]    XX XX              connReq URI length (uint16 BE, Large encoding)
   [6-N]    UTF-8 bytes        connReq URI string
   [N+1+]   UTF-8 bytes        connInfo JSON (Tail, no length prefix)
+```
+
+**Delivery Receipt wire format (Season 11):**
+
+```
+A_RCVD (inner_tag 'V'):
+  ['M'][APrivHeader]['V'][count 1B Word8][AMessageReceipt...]
+
+AMessageReceipt:
+  [8B agentMsgId Int64 BE]
+  [1B hashLen][32B msgHash SHA256]
+  [2B rcptInfo Word16]
+
+CRITICAL: count is Word8 (NOT Word16), rcptInfo is Word16 (NOT Word32)
+CRITICAL: msgHash = sha256(full agentMessage buffer), not just JSON body
+CRITICAL: agentVersion=1 for outgoing receipts (NOT 7)
 ```
 
 ### 7.6 ALPN and protocol version negotiation (Season 7)
@@ -784,7 +848,7 @@ GoChat is one component of the SimpleGo ecosystem for encrypted communication ac
 |:--------|:-------------|:---------|:-------|
 | **[SimpleGo](https://github.com/saschadaemgen/SimpleGo)** | First native C implementation of SimpleX protocol on ESP32-S3. | C (21,863 lines) | Alpha, 7 contacts verified |
 | **GoRelay** | Dual-protocol relay server. SMP + GRP. | Go (~5,000 lines) | Alpha, SimpleX test passing |
-| **GoChat** | Browser-native encrypted messenger. (This project) | TypeScript | Season 7 complete |
+| **GoChat** | Browser-native encrypted messenger. (This project) | TypeScript | Season 11 complete |
 
 ---
 
@@ -839,25 +903,26 @@ GoChat is one component of the SimpleGo ecosystem for encrypted communication ac
 | S8-12 | Protocol | ACK with CbAuthenticator | S8 DONE |
 | S8-13 | Crypto | Layer 1 NaCl decryption of smpEncConfirmation | S8 DONE |
 | S8-14 | Crypto | Parse smpConfirmation (sender key + AgentConfirmation) | S8 DONE |
-| E2E-1 | Encryption | Parse AgentConfirmation (e2e params, X448 keys) | S9 |
-| E2E-2 | Encryption | X3DH with real peer X448 keys | S9 |
-| E2E-3 | Encryption | Double Ratchet initialization from X3DH | S9 |
-| E2E-4 | Encryption | Decrypt HELLO from peer | S9 |
-| E2E-5 | Encryption | Send HELLO to peer | S9 |
-| E2E-6 | Encryption | Achieve CON state | S9 |
-| E2E-7 | Encryption | Symmetric ratchet step | S9 |
-| E2E-8 | Encryption | DH ratchet step (re-key) | S9 |
-| E2E-9 | Encryption | Key storage (IndexedDB + AES-256-GCM) | S10 |
-| SEC-1 | Security | Content Security Policy | S11 |
-| SEC-2 | Security | Subresource Integrity | S11 |
-| SEC-3 | Security | Web Worker crypto isolation | S10 |
-| SEC-4 | Security | Trust boundary documentation | S11 |
+| S9-1:8 | Encryption | AgentConfirmation, X3DH, Ratchet, HELLO, CON | S9 DONE |
+| S10-1:10 | Chat + UX | Bidirectional chat, visitor name, multi-step UX, destruction | S10 DONE |
+| S11-1 | Protocol | Parse incoming delivery receipts (A_RCVD tag 'V') | S11 DONE |
+| S11-2 | Protocol | Send delivery receipts for received chat messages | S11 DONE |
+| S11-3 | Protocol | Fix receipt msgHash scope (full agentMessage buffer) | S11 DONE |
+| S11-4 | Protocol | Wire onSubscriptionEnd for queue END detection | S11 DONE |
+| S11-5 | Client | Add connection timeout for unresponsive agents | S11 DONE |
+| S11-6 | Protocol | Send x.direct.del notification before disconnect | S11 DONE |
+| S11-7 | UI | chat.js receipt UI (onDeliveryReceipt, pendingChecks) | S11 DONE |
+| S11-8 | Config | .env integration (dotenv + 11ty + base.njk) | S11 DONE |
+| SEC-1 | Security | Content Security Policy | S12 |
+| SEC-2 | Security | Subresource Integrity | S12 |
+| SEC-3 | Security | Web Worker crypto isolation | S12 |
+| SEC-4 | Security | Trust boundary documentation | S12 |
 | SEC-5 | Security | TLS certificate strategy | S5/S7 DONE |
-| LIB-1:5 | Library | simplex-js npm library | S12 |
-| GRP-1 | GRP Transport | Noise Protocol transport | S13 |
-| GRP-2 | GRP Transport | ML-KEM-768 post-quantum | S13 |
-| GRP-3 | GRP Transport | Two-hop relay routing | S13+ |
-| GRP-4 | GRP Transport | Triple Shield (ZKP, Shamir, Stego) | S13+ |
+| LIB-1:5 | Library | simplex-js npm library | S13 |
+| GRP-1 | GRP Transport | Noise Protocol transport | S14 |
+| GRP-2 | GRP Transport | ML-KEM-768 post-quantum | S14 |
+| GRP-3 | GRP Transport | Two-hop relay routing | S15+ |
+| GRP-4 | GRP Transport | Triple Shield (ZKP, Shamir, Stego) | S16+ |
 
 ---
 
@@ -875,3 +940,4 @@ GoChat is one component of the SimpleGo ecosystem for encrypted communication ac
 | 2026-03-30 | Season 8 complete. Implemented v9 CbAuthenticator (nacl.box over SHA-512), server rebuilt on Debian 13 (Nginx + Certbot + Docker), MSG processing with server-to-recipient decryption (nacl.box.open), Layer 1 NaCl decryption of smpEncConfirmation, RcvMsgBody parsing (SystemTime=12B), ACK with CbAuth. Key discoveries: HSalsa20 in nacl.box (not nacl.secretbox), Maybe encoding = ASCII '0'/'1' (not binary), four DH keypairs per connection, asymmetric smpEncConfirmation format. 494 tests. 14 S8 task IDs (all DONE). E2E tasks renumbered for S9 (X3DH + Double Ratchet + CON). Added Section 5.1e, Phase 3d/3e. |
 | 2026-03-31 | Season 9 complete. AgentConfirmation parsing with SNTRUP761 PQ KEM support. X3DH key agreement (receiver side). Double Ratchet encrypt/decrypt (AES-256-GCM with 16-byte IV). Reply queue parsing from AgentConnInfoReply. Full duplex handshake (send AgentConfirmation to CLI). HELLO received - CONNECTION ESTABLISHED. Chat messages received and decrypted. 11 PRs (#67-#77), 537 tests. Added Section 5.1f with 8 S9 task IDs (all DONE). |
 | 2026-04-01 | Season 10 complete. Bidirectional E2E chat with Desktop App. 11 PRs (#79-#89), 544+ tests. Visitor name, multi-step UX, offline messaging, delete confirmation. Critical: widget must never inject DOM, status only from state machine, parse JSON events. Added Section 5.1g with 10 S10 task IDs (all DONE). |
+| 2026-04-02 | Season 11 complete. Delivery receipts (bidirectional, A_RCVD tag 'V', double checkmarks). Receipt msgHash fix (3 attempts, full agentMessage buffer). Connection lifecycle (END detection, timeout, x.direct.del send). .env integration (dotenv + 11ty). chat.js receipt UI. 5 PRs (#91-#95), 551+ tests. Key discoveries: msgHash = sha256(full agentMessage), dotenv # comment trap, onSubscriptionEnd was dead code. Added Section 5.1h, Phase 3g, delivery receipt wire format in 7.5, END in 7.4, 8 S11 task IDs (all DONE). |

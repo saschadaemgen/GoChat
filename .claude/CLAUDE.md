@@ -108,10 +108,10 @@ smp-web/src/
   x3dh-agreement.ts     # X3DH receiver-side (3x X448 DH + HKDF-SHA512)
   ratchet-decrypt.ts    # Double Ratchet init + encrypt (rcEncrypt) + decrypt (rcDecrypt)
   reply-queue.ts        # Parse SMPQueueInfo from AgentConnInfoReply tag 'D'
-  __tests__/            # 537 tests across 23 files
+  __tests__/            # 551+ tests across 23 files
 ```
 
-## Current State (Post-Season 10)
+## Current State (Post-Season 11)
 
 Full E2E bidirectional chat working in the browser:
 - WebSocket -> SMP v9 handshake -> NaCl Layer 1
@@ -124,13 +124,16 @@ Full E2E bidirectional chat working in the browser:
 - Offline messaging with single-message limit
 - Delete confirmation with Hollywood destruction sequence
 - x.direct.del event handling ("Connection ended")
-- 544+ tests passing
+- Delivery receipts bidirectional (A_RCVD tag 'V', double checkmarks)
+- Connection lifecycle (END detection, timeout, x.direct.del send)
+- .env integration for website config (dotenv + 11ty)
+- 551+ tests passing
 
 The widget (gochat-client.js) is a pure API library.
 All UI is handled externally by chat.js on the SimpleGo website.
 gochat-client.js must NEVER create DOM elements or manipulate HTML.
 
-### What works (Seasons 1-10)
+### What works (Seasons 1-11)
 - WebSocket transport with SMP handshake (v6-18 offered, v9 negotiated)
 - 14 SMP command encoders with full response decoder
 - Contact address parser (simplex:/ and https:// formats)
@@ -161,15 +164,19 @@ gochat-client.js must NEVER create DOM elements or manipulate HTML.
 - handleChatPayload() for x.msg.new and x.direct.del events
 - connect(displayName?) accepts name from external UI
 - Status "pending" after invitation (not premature "connected")
-- 544+ tests across 23+ files
+- Delivery receipts: parse incoming A_RCVD (tag 'V'), send A_RCVD for received messages
+- Receipt msgHash = sha256(full agentMessage buffer), not partial
+- Connection END detection via onSubscriptionEnd (wired in S11)
+- Connection timeout for unresponsive agents (2 minutes)
+- Send x.direct.del notification before disconnect
+- .env integration (dotenv + 11ty + base.njk template variables)
+- 551+ tests across 23+ files
 
 ### What does NOT work yet
-- .env integration for SimpleGo website config
-- GoBot (SimpleX configuration bot)
-- Connection rejection handling (agent rejects instead of accepts)
-- Delivery receipts (double checkmarks)
+- Instant connection rejection detection (protocol limit, timeout only)
 - simplex-js npm library extraction
 - Security hardening (CSP, SRI, Web Worker)
+- GoChat Configurator admin tool
 
 ## Development Roadmap
 
@@ -183,8 +190,8 @@ gochat-client.js must NEVER create DOM elements or manipulate HTML.
 - Season 8: v9 Command Auth, Server Rebuild, MSG + Layer 1 (494 tests) - COMPLETE
 - Season 9: X3DH + Double Ratchet + HELLO + CON (537 tests) - COMPLETE
 - Season 10: Chat Messages + Desktop App + UX (544+ tests) - COMPLETE
-- Season 11: GoBot + .env + Polish - NEXT
-- Season 12: Security Hardening (CSP, SRI, Web Worker crypto)
+- Season 11: Delivery Receipts + Connection Lifecycle + .env (551+ tests) - COMPLETE
+- Season 12: Security Hardening (CSP, SRI, Dependency Vendoring) - NEXT
 - Season 13: simplex-js npm Library
 - Season 14+: GRP Profile (Noise, ML-KEM-768, Two-hop Routing)
 
@@ -319,6 +326,14 @@ docker run -d --name simplego-smp --restart always \
 34. Chrome rejects WSS after crash - visit https://smp.simplego.dev:8444 in new tab to fix
 35. base.njk lives in _includes/ NOT src/_includes/ in the SimpleGo www project
 36. SimpleGo www is NOT a git repo - never run git commands there
+37. Receipt count is Word8 (1 byte), NOT Word16 - using Word16 shifts everything by 1 byte and Desktop App reads count=0
+38. Receipt rcptInfo is Word16 (2 bytes), NOT Word32 - using Word32 adds 2 extra bytes, receipt rejected
+39. Receipt msgHash must be sha256 of the FULL agentMessage buffer (outer tag + APrivHeader + inner tag + body) - NOT just the JSON body or inner tag + JSON
+40. agentVersion=1 for outgoing receipts (A_RCVD) - same as all outgoing agent messages, NOT 7
+41. Do NOT send a receipt for a received receipt (tag 'V') - only for x.msg.new chat messages
+42. onSubscriptionEnd must be wired during connection setup - the handler exists but is null by default
+43. Connection rejection produces no SMP signal - timeout is the only detection mechanism
+44. dotenv treats # as inline comment - SimpleX URLs with contact#/ get silently truncated, wrap in double quotes
 
 ## Upstream Files (READ ONLY - never modify)
 
@@ -337,13 +352,13 @@ protocol/simplex-messaging.md  # SMP specification (upstream reference)
 
 1. docs/seasons/SEASON-08-v9-auth.md - Season 8 closing protocol
 2. docs/seasons/SEASON-07-server-upgrade.md - Season 7 closing protocol
-2. docs/seasons/SEASON-06-connection-request.md - Season 6 closing protocol
-3. docs/seasons/SEASON-05-real-server.md - Season 5 closing protocol
-4. docs/seasons/SEASON-PLAN.md - Full roadmap
-5. docs/PROTOCOL.md - Main technical protocol
-6. docs/RESEARCH.md - Security and design research
-7. docs/SECURITY-HARDENING-ROADMAP.md - Six-phase browser security hardening plan
-8. docs/seasons/SEASON-10-closing.md - Season 10 closing protocol
-9. docs/seasons/SEASON-11-handover.md - Season 11 handover
-10. docs/SMP-HANDSHAKE.md - Complete handshake reference
-11. docs/SMP-VERSIONS.md - SMP version fields reference
+3. docs/seasons/SEASON-06-connection-request.md - Season 6 closing protocol
+4. docs/seasons/SEASON-05-real-server.md - Season 5 closing protocol
+5. docs/seasons/SEASON-PLAN.md - Full roadmap
+6. docs/PROTOCOL.md - Main technical protocol
+7. docs/RESEARCH.md - Security and design research
+8. docs/SECURITY-HARDENING-ROADMAP.md - Six-phase browser security hardening plan
+9. docs/seasons/SEASON-10-bidirectional-chat.md - Season 10 closing protocol
+10. docs/seasons/SEASON-11-receipts-lifecycle.md - Season 11 closing protocol
+11. docs/SMP-HANDSHAKE.md - Complete handshake reference
+12. docs/SMP-VERSIONS.md - SMP version fields reference

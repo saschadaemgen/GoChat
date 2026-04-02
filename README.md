@@ -184,13 +184,15 @@ GoChat can be used standalone (without GoShop) as a simple encrypted support cha
 | Multi-step UX flow | S10 | Start -> Name -> Waiting -> Chat, offline messaging, delete confirmation |
 | Desktop App integration | S10 | Support agent uses SimpleX Desktop App instead of CLI |
 | Event handling | S10 | x.direct.del, x.msg.new parsed, unknown events filtered |
+| Delivery receipts | S11 | Bidirectional A_RCVD (tag 'V'), double checkmarks in UI, 551+ tests |
+| Connection lifecycle | S11 | END detection, 2-min timeout, x.direct.del send before disconnect |
+| .env configuration | S11 | dotenv in 11ty, template variables in base.njk, build-time config |
 
 ### To do
 
 | Component | Season | Description |
 |:----------|:-------|:------------|
-| GoBot + .env config | S11 | SimpleX bot for runtime config, .env for build-time config |
-| Security hardening | S12 | CSP, SRI, Web Worker isolation, security review |
+| Security hardening | S12 | CSP, SRI, Web Worker isolation, dependency vendoring, security review |
 | simplex-js library | S13 | Standalone npm package for SMP browser client |
 
 Full task breakdown: [docs/PROTOCOL.md](docs/PROTOCOL.md)
@@ -213,11 +215,11 @@ We develop in seasons - each with a clear goal, defined scope, and a protocol do
 | **S8** | v9 command authorization + MSG processing (494 tests) | Complete |
 | **S9** | E2E pipeline: X3DH, Ratchet, HELLO, CON (537 tests) | Complete |
 | **S10** | Chat messages + Desktop App + UX (544+ tests) | Complete |
-| **S11** | GoBot + .env + polish | Next |
-| **S12** | Security hardening + review | Planned |
+| **S11** | Delivery receipts + connection lifecycle + .env (551+ tests) | Complete |
+| **S12** | Security hardening + review | Next |
 | **S13** | simplex-js npm library | Planned |
 
-**Critical path:** S1-S10 DONE - S11 (next) - S12 - S13
+**Critical path:** S1-S11 DONE - S12 (next) - S13
 
 Full season plan: [docs/seasons/SEASON-PLAN.md](docs/seasons/SEASON-PLAN.md)
 
@@ -255,7 +257,7 @@ GoChat/
 |       +-- x3dh-agreement.ts       # X3DH receiver-side key agreement (S9)
 |       +-- ratchet-decrypt.ts      # Double Ratchet encrypt + decrypt (S9)
 |       +-- reply-queue.ts          # Reply queue parser from AgentConnInfoReply (S9)
-|       +-- __tests__/              # 537 tests across 23 files
+|       +-- __tests__/              # 551+ tests across 23 files
 |   +-- esbuild.config.mjs         # Browser bundle config (IIFE format)
 +-- xftp-web/                       # Shared infrastructure (upstream)
 +-- docs/
@@ -323,7 +325,7 @@ git clone https://github.com/saschadaemgen/GoChat.git
 cd GoChat
 git checkout feat/simplego-support-chat
 cd smp-web
-npx vitest run                    # Run all 544+ tests
+npx vitest run                    # Run all 551+ tests
 npm run build:browser             # Build browser bundle -> dist/gochat-client.js
 ```
 
@@ -344,7 +346,7 @@ GoChat is one component of a larger ecosystem for encrypted communication across
 
 ## Status
 
-Seasons 1 through 10 are complete. Season 11 (GoBot + .env + Polish) is next.
+Seasons 1 through 11 are complete. Season 12 (Security Hardening + Review) is next.
 
 | Component | Status |
 |:----------|:-------|
@@ -372,7 +374,9 @@ Seasons 1 through 10 are complete. Season 11 (GoBot + .env + Polish) is next.
 | Offline messaging | Done |
 | Delete confirmation + destruction sequence | Done |
 | Event handling (x.direct.del, x.msg.new) | Done |
-| GoBot + .env config | Season 11 |
+| Delivery receipts (bidirectional double checkmarks) | Done |
+| Connection lifecycle (END, timeout, delete notify) | Done |
+| .env configuration (dotenv + 11ty) | Done |
 | Security hardening | Season 12 |
 
 ---

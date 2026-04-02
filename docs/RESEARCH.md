@@ -7,7 +7,7 @@
 <p align="center">
   <strong>Deep research on browser-native encrypted messaging, design patterns, and security.</strong><br>
   Dual-profile architecture: SMP for everyday use, GRP for high-security environments.<br>
-  Conducted during Season 1 planning phase, updated with Season 5, 6, and 7 findings.
+  Conducted during Season 1 planning phase, updated with Season 5, 6, 7, 10, and 11 findings.
 </p>
 
 ---
@@ -89,7 +89,7 @@ Every major encrypted messenger has converged on Rust crypto compiled to WASM:
 - **Signal Desktop**: Uses libsignal (Rust->WASM)
 - **Wire**: Uses core-crypto (Rust->WASM), encrypts IndexedDB with AES-256-GCM
 
-For GoChat's SMP profile: Pure TypeScript with noble libraries is simpler to ship. For the GRP profile: a WASM-compiled ML-KEM-768 implementation may be necessary because post-quantum algorithms are computationally heavier and more sensitive to side-channel attacks than classical algorithms. This decision will be revisited when the GRP profile enters active development (Season 12+).
+For GoChat's SMP profile: Pure TypeScript with noble libraries is simpler to ship. For the GRP profile: a WASM-compiled ML-KEM-768 implementation may be necessary because post-quantum algorithms are computationally heavier and more sensitive to side-channel attacks than classical algorithms. This decision will be revisited when the GRP profile enters active development (Season 14+).
 
 ### 2.5 Post-quantum cryptography in the browser (GRP profile)
 
@@ -246,6 +246,26 @@ The transition is defined in PR #982 "smp: command authorization". Key changes:
 - X25519 (OID `2b 65 6e`): `30 2a 30 05 06 03 2b 65 6e 03 21 00 [32B key]` = 44 bytes
 - Same format as the DH key in the NEW command, but used for authorization, not queue encryption
 
+### 2.12 Widget architecture: API-only pattern (Season 10)
+
+Season 10 discovered a critical architectural requirement: the GoChat widget (gochat-client.js) must be a pure API library with zero DOM manipulation. The widget's showNameInput() method used container.innerHTML="" to inject its own name input UI, which destroyed the external multi-step flow built in chat.js and base.njk.
+
+The correct pattern: gochat-client.js exports connect(displayName?), send(text), disconnect(), and status callbacks. All UI rendering lives in the website's own chat.js. This separation ensures the website owner controls their own UI completely, avoids CSS conflicts, prevents DOM race conditions, and allows the widget to be embedded in any framework.
+
+Additionally, setStatus("connected") was firing immediately after invitation send, skipping the waiting screen. The fix: "connected" only fires from the state machine after HELLO is received. JSON event handling (x.msg.new, x.direct.del) must happen inside the widget via handleChatPayload(), filtering unknown events before they reach the UI callback.
+
+### 2.13 Delivery receipts and connection lifecycle (Season 11)
+
+Season 11 implemented bidirectional delivery receipts and connection lifecycle management. Three key discoveries:
+
+**Receipt msgHash scope:** The SHA256 hash in the AMessageReceipt must cover the FULL decrypted agentMessage buffer - outer 'M' tag + APrivHeader (sndMsgId + prevMsgHash) + inner 'M' tag + JSON body. Hashing only the JSON body or only the inner tag + JSON both produce incorrect hashes that the Desktop App rejects (red double checkmarks instead of white). Three attempts were needed to find the correct scope. This mirrors how the Desktop App computes the hash: over the entire serialized AgentMessage before Ratchet encryption.
+
+**Dead infrastructure activation:** The SMP transport layer already had complete END detection code (subscriptionEndHandler, onSubscriptionEnd setter, dispatch check in dispatchServerPush) but the handler was never registered during connection setup. One line of code - `client.onSubscriptionEnd((entityId) => { ... })` - activated the entire feature. When the Desktop App deletes a contact, the SMP server sends END to the subscriber, and GoChat now catches this to show "Connection ended."
+
+**Connection rejection is a protocol limit:** When the support agent rejects (not accepts) a connection request in the Desktop App, nothing happens on the SMP protocol level. No END event, no message, no queue deletion. The rejection is a purely local action in the Desktop App. GoChat has no way to distinguish "agent rejected" from "agent hasn't looked yet." The only mitigation is a timeout (2 minutes), which is imperfect but unavoidable given the protocol design.
+
+**dotenv # comment trap:** The .env file format treats `#` as an inline comment character. SimpleX contact address URLs contain `contact#/` which gets silently truncated to `contact`. The fix: wrap URLs containing `#` in double quotes in the .env file.
+
 ---
 
 ## 3. Security analysis
@@ -266,6 +286,8 @@ For the highest security requirements, the GRP profile combined with a SimpleGo 
 
 The September 2025 npm supply chain attack compromised packages with 1 billion+ weekly downloads (chalk, debug, ansi-styles) - a stark reminder that dependency minimization is security-critical. GoChat's @noble-only crypto policy limits the attack surface to three well-audited packages.
 
+**Current XSS protection (Season 11):** chat.js uses `escHtml()` which sets `textContent` (auto-escaping) before reading `innerHTML`. This prevents script injection through chat messages. DOMPurify is planned as an additional layer for Season 12.
+
 ### 3.2 The trust boundary: server-delivered code
 
 Unlike native apps distributed through signed app stores, web applications reload from the server on every visit. A compromised or malicious server can serve different code to different users.
@@ -279,6 +301,8 @@ This trust boundary affects both profiles equally. Even GRP's Noise + ML-KEM-768
 - Transparent security documentation
 
 **The dual-profile architecture provides a natural escape from this limitation:** for communications where the browser trust boundary is unacceptable, the GRP profile with a SimpleGo hardware endpoint on the receiving side ensures that at least one party is running verified, non-server-delivered code. The browser side remains the weaker link, but the hardware side is fully controlled.
+
+**Important context (Season 11):** GoChat is designed as an encrypted support chat widget for website operators - comparable to Intercom but with E2E encryption via SimpleX. It is not intended as a high-security communication tool. For that use case, SimpleGo offers dedicated hardware devices in Class 1, 2, and 3 with hardware-level key protection, secure enclaves, and no browser in the loop.
 
 ### 3.3 TLS certificate challenge (resolved in Seasons 5 and 7)
 
@@ -557,7 +581,16 @@ The chat panel was implemented in Season 5 with the following architecture:
 - **HTML:** Placed outside `#page-content` in the base template so the chat panel persists across SPA page navigation
 - **Integration:** "Chat" tab in the util-bar alongside "GitHub"
 
-### 7.5 Accessibility requirements
+### 7.5 Delivery receipt UI (Season 11)
+
+Delivery receipts are displayed as checkmarks on outgoing messages:
+
+- **Single checkmark (dim):** Message sent, server accepted
+- **Double checkmark (bright/green):** Message delivered, recipient confirmed
+- **Implementation:** `pendingChecks` FIFO queue in chat.js tracks outgoing `.gc-check` DOM elements. `onDeliveryReceipt` callback shifts the oldest pending check and calls `upgradeCheck()` which adds a second SVG checkmark and the `.delivered` CSS class.
+- **Styling hook:** The `.delivered` class on `.gc-check` allows CSS customization of color, animation, spacing.
+
+### 7.6 Accessibility requirements
 
 - Chat container: `role="log"` with `aria-live="polite"`
 - All interactive elements: visible focus indicators + keyboard operability
@@ -580,6 +613,7 @@ The chat panel was implemented in Season 5 with the following architecture:
 | Dark mode | Yes | Yes | Yes | **Yes** | **Yes** |
 | Multi-hop routing | No | No | No | No | **Yes (two-hop)** |
 | Cover traffic | No | No | No | No | **Yes (Poisson)** |
+| Delivery receipts | Yes | Yes | Yes | **Yes (S11)** | **Planned** |
 | File sharing | Yes | Yes | Yes | **Planned** | **Planned** |
 | Mobile responsive | Yes | Yes | Yes | **Done** | **Planned** |
 | Multi-agent | Yes | Yes | Yes | **Planned** | **Planned** |
@@ -654,13 +688,15 @@ The chat panel was implemented in Season 5 with the following architecture:
 - **Desktop App replaces CLI:** Support agent uses SimpleX Desktop App. Contact address created in Desktop App settings.
 - **Admin via .env (now) and GoBot (future):** No runtime admin panel. Config at build time via .env, future runtime config via SimpleX bot commands.
 
-### 2.12 Widget architecture: API-only pattern (Season 10)
-
-Season 10 discovered a critical architectural requirement: the GoChat widget (gochat-client.js) must be a pure API library with zero DOM manipulation. The widget's showNameInput() method used container.innerHTML="" to inject its own name input UI, which destroyed the external multi-step flow built in chat.js and base.njk.
-
-The correct pattern: gochat-client.js exports connect(displayName?), send(text), disconnect(), and status callbacks. All UI rendering lives in the website's own chat.js. This separation ensures the website owner controls their own UI completely, avoids CSS conflicts, prevents DOM race conditions, and allows the widget to be embedded in any framework.
-
-Additionally, setStatus("connected") was firing immediately after invitation send, skipping the waiting screen. The fix: "connected" only fires from the state machine after HELLO is received. JSON event handling (x.msg.new, x.direct.del) must happen inside the widget via handleChatPayload(), filtering unknown events before they reach the UI callback.
+### From Season 11 (delivery receipts + connection lifecycle)
+- **Receipt msgHash = full agentMessage:** sha256 must cover the ENTIRE decrypted agentMessage buffer (outer tag + APrivHeader + inner tag + body). Three attempts needed. Hashing only JSON or inner tag + JSON both fail.
+- **Receipt count = Word8, rcptInfo = Word16:** NOT Word16 and Word32. These two encoding traps were documented from SimpleGo Session 25 (Bugs #37, #38) and avoided on first implementation in GoChat.
+- **agentVersion=1 for outgoing receipts:** Same as all outgoing agent messages (A_MSG, A_RCVD). Only AgentConfirmation uses agentVersion=7.
+- **No receipt for receipts:** When receiving A_RCVD (tag 'V'), do NOT send a receipt back. Only send receipts for x.msg.new chat messages.
+- **onSubscriptionEnd was dead code:** Transport layer had full END detection but handler was never wired. One line activated it.
+- **Connection rejection = protocol limit:** No SMP signal exists for rejection. Timeout (2 min) is the only option.
+- **dotenv # comment trap:** URLs with # must be quoted in .env files. SimpleX contact addresses contain contact#/ which gets silently truncated.
+- **.env integration pattern:** require('dotenv').config() at top of .eleventy.js, addGlobalData('gochat', {...}), template variables in base.njk.
 
 ---
 
@@ -700,3 +736,4 @@ Additionally, setStatus("connected") was firing immediately after invitation sen
 | 2026-03-30 | Season 8 findings. Added Season 8 architectural decisions: nacl.box for all crypto_box (HSalsa20 discovery), ASCII encoding for Maybe/Bool, SystemTime = 12 bytes, preserve queueDhKeyPair, four DH keypairs per connection, clean server (Debian 13). |
 | 2026-03-31 | Season 9 findings. PQ KEM Word16 BE length prefix, AES-256-GCM 16-byte IV, chainKdf output order trap (CRYPTO.md wrong), agentVersion 7 vs 1, handshake response format (tag 'C', PHConfirmation 'K', e2eEncryption_=Nothing), first-message pad 15904. |
 | 2026-04-01 | Season 10 findings. Added Section 2.12 (widget API-only pattern, DOM injection trap, status from state machine, event handling). Added Season 10 architectural decisions. |
+| 2026-04-02 | Season 11 findings. Added Section 2.13 (delivery receipts, msgHash scope, END detection, connection rejection protocol limit, dotenv # trap). Added Section 7.5 (delivery receipt UI). Updated Section 3.1 (current XSS protection via escHtml). Updated Section 3.2 (GoChat as support chat context). Updated competitive analysis (delivery receipts column). Added Season 11 architectural decisions (8 entries). |

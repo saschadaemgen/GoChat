@@ -37,7 +37,7 @@ All commits follow Conventional Commits format: `type(scope): description`
 
 Season protocol documents live in `docs/seasons/` and serve as a development diary - anyone can look at the source code and understand how and why we built things the way we did.
 
-At the end of each season, ALL project documents are updated: README.md, PROTOCOL.md, RESEARCH.md, SEASON-PLAN.md, CLAUDE.md, and SECURITY-HARDENING-ROADMAP.md. This is a main priority and non-negotiable.
+At the end of each season, ALL project documents are updated: README.md, PROTOCOL.md, RESEARCH.md, SEASON-PLAN.md, CLAUDE.md, SECURITY-HARDENING-ROADMAP.md, and the Season Handover document. This is a main priority and non-negotiable.
 
 ```
 docs/
@@ -54,7 +54,9 @@ docs/
     SEASON-06-connection-request.md # Connection request to SimpleX App
     SEASON-07-server-upgrade.md  # Server upgrade, ALPN fix, v6-18 over WebSocket
     SEASON-08-v9-auth.md         # v9 CbAuthenticator, server rebuild, MSG + Layer 1 decrypt
-    SEASON-09-x3dh-ratchet.md    # AgentConfirmation, X3DH, Double Ratchet, HELLO, CON (next)
+    SEASON-09-x3dh-ratchet.md    # AgentConfirmation, X3DH, Double Ratchet, HELLO, CON
+    SEASON-10-bidirectional-chat.md # Bidirectional chat, Desktop App, multi-step UX
+    SEASON-11-receipts-lifecycle.md # Delivery receipts, connection lifecycle, .env
 ```
 
 ---
@@ -386,16 +388,16 @@ Phase 7: Documentation (SMP-VERSIONS.md, SMP-HANDSHAKE.md)
 
 ### Success criteria
 
-- [ ] AgentConfirmation parsed (X448 keys, e2e version, connInfo)
-- [ ] X3DH key agreement with real keys produces shared secrets
-- [ ] Double Ratchet initialized for receiving direction
-- [ ] CLI's HELLO message decrypted
-- [ ] Our HELLO message sent and accepted
-- [ ] CON state reached
-- [ ] Browser sends message, CLI displays it
-- [ ] CLI sends message, browser displays it
-- [ ] SMP-VERSIONS.md created (version differences table)
-- [ ] SMP-HANDSHAKE.md created (complete handshake reference)
+- [x] AgentConfirmation parsed (X448 keys, e2e version, connInfo)
+- [x] X3DH key agreement with real keys produces shared secrets
+- [x] Double Ratchet initialized for receiving direction
+- [x] CLI's HELLO message decrypted
+- [x] Our HELLO message sent and accepted
+- [x] CON state reached
+- [x] Browser sends message, CLI displays it
+- [x] CLI sends message, browser displays it
+- [x] SMP-VERSIONS.md created (version differences table)
+- [x] SMP-HANDSHAKE.md created (complete handshake reference)
 
 ### This is the milestone
 
@@ -439,44 +441,67 @@ After this season, a website visitor can click "Start Encrypted Chat", connect t
 
 ---
 
-## Season 11: GoBot + .env + Polish
+## Season 11: Delivery receipts + connection lifecycle + .env
 
-**Status:** Next
-**Goal:** .env integration for website config, GoBot SimpleX configuration bot, connection rejection handling, delivery receipts.
+**Status:** Complete
+**Goal:** Delivery confirmations, connection end handling, build-time configuration.
+**Result:** 5 PRs (#91-#95), 551+ tests. Double checkmarks and connection lifecycle live on simplego.dev.
 
-### Scope
+### Deliverables
 
-1. .env integration for SimpleGo website (dotenv + eleventy.js)
-2. GoBot - SimpleX bot for runtime config via chat commands
-3. Connection rejection handling in widget
-4. Delivery receipts (double checkmarks)
-5. Begin simplex-js library extraction
+- [x] Parse incoming delivery receipts (A_RCVD inner_tag 'V') (PR #91)
+- [x] Send delivery receipts for received chat messages (PR #91)
+- [x] Fix receipt msgHash scope - full agentMessage buffer (PR #92, #93)
+- [x] Wire onSubscriptionEnd for queue END detection (PR #94)
+- [x] Add connection timeout for unresponsive agents - 2 min (PR #94)
+- [x] Send x.direct.del notification before disconnect (PR #95)
+- [x] chat.js receipt UI - onDeliveryReceipt callback, pendingChecks, upgradeCheck()
+- [x] .env integration - dotenv in 11ty, template variables in base.njk
+
+### PRs
+
+| PR | Title | Key Achievement |
+|:---|:------|:----------------|
+| #91 | feat(protocol): delivery receipts (send and receive) | Bidirectional receipts, 551 tests |
+| #92 | fix(protocol): include inner tag in receipt msgHash | Still red (wrong scope) |
+| #93 | fix(protocol): hash full agentMessage for receipt msgHash | White checkmarks! |
+| #94 | feat(protocol): wire onSubscriptionEnd for queue END detection | Connection end + timeout |
+| #95 | feat: connection lifecycle (delete notification) | x.direct.del before disconnect |
+
+### Key discoveries
+
+1. **Receipt msgHash = full agentMessage buffer** - not JSON, not inner tag + JSON. Three attempts needed.
+2. **dotenv treats # as comment** - SimpleX URLs with contact#/ get truncated. Wrap in double quotes.
+3. **onSubscriptionEnd was dead code** - transport layer had full END detection, handler never wired. One line fixed it.
+4. **Connection rejection = protocol limit** - no SMP signal exists for rejection. Timeout is the only option.
+5. **ESP32 bug docs save browser debug time** - Word8 count, Word16 rcptInfo from SimpleGo Session 25 avoided on first try.
+6. **Post-merge commands are mandatory** - full build/test/deploy block after every PR merge. No exceptions.
 
 ---
 
 ## Season 12: Security hardening + review
 
-**Status:** Planned
-**Goal:** Battle-tested, deployable encrypted support chat with complete security hardening.
+**Status:** Next
+**Goal:** Production-ready security with CSP, SRI, dependency vendoring, and documentation.
 
 ### Scope
 
-- Content Security Policy (strict, no eval, no inline scripts)
-- Subresource Integrity for all external scripts
-- Web Worker isolation for crypto operations
+- Content Security Policy (strict nonce-based CSP on SimpleGo website)
+- Subresource Integrity for gochat-client.js bundle
+- Dependency vendoring (@noble libraries into repository)
+- Input sanitization review (escHtml already exists, evaluate DOMPurify)
 - Trust boundary documentation (honest about browser limitations)
-- Key storage (IndexedDB + AES-256-GCM encryption at rest)
-- Performance optimization (bundle size, memory)
-- Error handling for all edge cases
-- Security review
+- Security review of all crypto operations
+- Error handling for edge cases
+- Performance optimization and bundle size review
 
-### SMP profile complete after this season
+### SMP profile feature-complete after this season
 
-After Season 11, GoChat's SMP profile is production-ready. The GRP profile development begins afterward.
+After Season 12, GoChat's SMP profile has both features and security hardening. The simplex-js library extraction begins in Season 13.
 
 ---
 
-## Season 12: simplex-js npm library
+## Season 13: simplex-js npm library
 
 **Status:** Planned  
 **Goal:** Extract the SMP browser client into a standalone npm library that anyone can use.
@@ -489,10 +514,11 @@ After Season 11, GoChat's SMP profile is production-ready. The GRP profile devel
 - SimpleXClient facade class for easy integration
 - Zero-dependency audit (only @noble packages)
 - Documentation and examples
+- Publish as 0.x.x with alpha disclaimer
 
 ---
 
-## Season 13: GRP - Noise transport
+## Season 14: GRP - Noise transport
 
 **Status:** Future  
 **Goal:** Implement the Noise Protocol transport layer for the GRP profile.
@@ -513,7 +539,7 @@ After Season 11, GoChat's SMP profile is production-ready. The GRP profile devel
 
 ---
 
-## Season 14: GRP - Post-quantum key exchange
+## Season 15: GRP - Post-quantum key exchange
 
 **Status:** Future  
 **Goal:** Add mandatory ML-KEM-768 hybrid key exchange to the GRP transport.
@@ -524,7 +550,7 @@ After Season 11, GoChat's SMP profile is production-ready. The GRP profile devel
 
 ---
 
-## Season 15: GRP - Two-hop relay routing
+## Season 16: GRP - Two-hop relay routing
 
 **Status:** Future  
 **Goal:** Implement mandatory two-hop message routing for the GRP profile.
@@ -536,7 +562,7 @@ After Season 11, GoChat's SMP profile is production-ready. The GRP profile devel
 
 ---
 
-## Season 16+: GRP - Triple Shield and beyond
+## Season 17+: GRP - Triple Shield and beyond
 
 **Status:** Future  
 **Goal:** Implement the Triple Shield defense layer and additional features.
@@ -546,7 +572,7 @@ After Season 11, GoChat's SMP profile is production-ready. The GRP profile devel
 - **Triple Shield 6a:** Zero-Knowledge Queue Authentication (Schnorr DLOG via Fiat-Shamir)
 - **Triple Shield 6b:** Shamir's Secret Sharing 2-of-3 across servers
 - **Triple Shield 6c:** Steganographic Transport (Pluggable Transports: HTTPS, WebSocket, meek, obfs4)
-- **Admin Panel:** Multi-conversation browser dashboard for support agents (E2E encrypted)
+- **Admin Tool:** GoChat Configurator (local HTML/Electron, generates .env, SCP deploy)
 - **File sharing:** Send images/files via XFTP protocol
 - **Typing indicators:** Show when support team is typing
 - **Push notifications:** Browser notifications for new messages
@@ -570,17 +596,17 @@ After Season 11, GoChat's SMP profile is production-ready. The GRP profile devel
 | S8 | v9 auth + MSG + Layer 1 | CbAuthenticator, server rebuild, MSG decrypt, AgentConfirmation, 494 tests | Complete |
 | S9 | X3DH + Ratchet + CON | AgentConf, X3DH, Ratchet, HELLO, CON, 537 tests | Complete |
 | S10 | Chat + Desktop App + UX | Bidirectional chat, visitor name, offline msg, destruction, 544+ tests | Complete |
-| **S11** | **GoBot + .env + Polish** | **.env config, GoBot, rejection handling, delivery receipts** | **Next** |
-| S12 | Security hardening | CSP, SRI, Web Worker crypto, security review | Planned |
+| S11 | Receipts + Lifecycle + .env | Delivery receipts, END detection, timeout, x.direct.del, .env, 551+ tests | Complete |
+| **S12** | **Security hardening** | **CSP, SRI, dependency vendoring, security review** | **Next** |
 | S13 | simplex-js library | Standalone npm package for SMP browser client | Planned |
 | S14 | GRP: Noise transport | `grp/transport.ts`, Noise IK/XX | Future |
 | S15 | GRP: Post-quantum | ML-KEM-768 hybrid key exchange | Future |
 | S16 | GRP: Two-hop routing | PFWD/RFWD/RRES/PRES, cover traffic | Future |
 | S17+ | GRP: Triple Shield | ZKP, Shamir, steganographic transport | Future |
 
-**SMP critical path:** S1 -> S2 -> ... -> S10 -> S11 -> S12 -> S13
+**SMP critical path:** S1 -> S2 -> ... -> S11 -> S12 -> S13
 **Library track:** S13 after S12
-**GRP track:** S13 -> S14 -> S15 -> S16+ (begins after SMP profile is production-ready)
+**GRP track:** S14 -> S15 -> S16 -> S17+ (begins after SMP profile is production-ready)
 **GRP dependency:** GoRelay must complete its corresponding phases first
 
 ---
@@ -598,3 +624,4 @@ After Season 11, GoChat's SMP profile is production-ready. The GRP profile devel
 | 2026-03-28 | Season 7 complete. Server upgrade to PR #1738 build. ALPN fix enables v6-18 over WebSocket. Nginx eliminated, Docker direct port mapping (8444->443). 4096-bit RSA Let's Encrypt cert. Three-layer root cause chain resolved (SKEY -> sndSecure -> ALPN). sndSecure confirmed as v9+ only. v7+ command auth identified as Season 8 prerequisite. Season numbers shifted: S8 = v7+ auth + bidirectional messaging, S9 = polish, S10 = security, S11 = library, S12-S15+ = GRP. Added document update rule to workflow section. |
 | 2026-03-30 | Season 8 complete. 13 PRs (#52-#65). v9 CbAuthenticator implemented (nacl.box fix for HSalsa20). Server rebuilt on Debian 13 (Plesk removed). MSG processing with server-to-recipient decryption. Layer 1 NaCl decryption of AgentConfirmation (14,777B). 494 tests. Season numbers shifted: S9 = X3DH + Ratchet + CON, S10 = polish, S11 = security, S12 = library, S13+ = GRP. Added CLAUDE.md to document update list. |
 | 2026-04-01 | Season 10 complete. 11 PRs (#79-#89), 544+ tests. Bidirectional E2E chat with Desktop App. Visitor name, multi-step UX, offline messaging, delete confirmation with destruction sequence. Season numbers shifted: S11 = GoBot + .env, S12 = security, S13 = library, S14+ = GRP. |
+| 2026-04-02 | Season 11 complete. 5 PRs (#91-#95), 551+ tests. Delivery receipts (bidirectional, A_RCVD tag 'V', double checkmarks). Receipt msgHash fix (3 attempts, full agentMessage buffer). Connection lifecycle (END detection, timeout, x.direct.del send). .env integration (dotenv + 11ty). chat.js receipt UI. Key discoveries: msgHash = full agentMessage, dotenv # trap, onSubscriptionEnd dead code, rejection = protocol limit. S12 (Security Hardening) is next. |

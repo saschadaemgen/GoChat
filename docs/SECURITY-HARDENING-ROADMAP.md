@@ -1,13 +1,17 @@
+<p align="center">
+  <img src="../.github/assets/gochat_banner.png" alt="GoChat" width="1500" height="230">
+</p>
+
 # GoChat Security Hardening Roadmap
 
 **Created:** Season 6 (2026-03-26)
-**Updated:** Season 6 (2026-03-26) - Deep research findings added
+**Updated:** Season 11 (2026-04-02) - Current state updated, S11 findings added
 **Status:** Planning - phased implementation across future seasons
 **Context:** Browser-native keys are currently stored as plain JS variables. This document defines a realistic hardening path based on research into Web Crypto API capabilities, browser threat models, and how Signal, WhatsApp, Element, and Wire solve these problems.
 
 ---
 
-## Current State (Season 6)
+## Current State (Season 11)
 
 - Keys generated fresh per session (Ed25519, X25519, X448)
 - Keys stored as raw byte arrays in JavaScript memory
@@ -15,8 +19,15 @@
 - No persistent storage, no accounts, no key reuse
 - Crypto pipeline: X3DH + Double Ratchet + NaCl crypto_box (Signal-level design)
 - SMP transport encryption via WebSocket TLS (wss://)
+- Delivery receipts with bidirectional A_RCVD (Season 11)
+- Connection lifecycle management: END detection, timeout, x.direct.del (Season 11)
+- .env build-time configuration for contact address and server URL (Season 11)
+- Input sanitization via escHtml() using textContent auto-escaping (Season 5)
+- 551+ tests across 23 files, zero regressions
 
 **Risk assessment:** Acceptable for ephemeral support chat. No long-lived secrets. Attack window is limited to the active browser tab. Ephemeral keys actually provide stronger forward secrecy than persistent-key approaches.
+
+**Important context (Season 11):** GoChat is designed as an encrypted support chat widget for website operators - comparable to Intercom but with E2E encryption via SimpleX. It is not intended as a high-security communication tool. For that use case, SimpleGo offers dedicated hardware devices in Class 1, 2, and 3 with hardware-level key protection, secure enclaves, and no browser in the loop.
 
 ---
 
@@ -26,7 +37,7 @@ Research identified the following prioritized threats for browser-based E2E encr
 
 | Attack Vector | Likelihood | Impact | Current Mitigation |
 |--------------|-----------|--------|-------------------|
-| XSS against crypto keys | High | Critical | None |
+| XSS against crypto keys | High | Critical | escHtml() via textContent (S5) |
 | npm supply chain compromise | High | Critical | None |
 | Browser extension key theft | Medium-High | Critical | None (technically unsolvable) |
 | Embedded widget risks (same-origin) | Medium-High | High | N/A (not embedded yet) |
@@ -92,11 +103,13 @@ The fundamental unsolved problem shared by ALL browser-based E2E messengers is s
 
 ## Implementation Phases
 
-### Phase 1: CSP + SRI + Input Sanitization (Season 7)
+### Phase 1: CSP + SRI + Input Sanitization (Season 12)
 
 **Goal:** Block XSS and script tampering - the two highest-likelihood attacks.
 **Effort:** Small (1-2 sessions)
 **Impact:** High
+
+**Partial progress:** Input sanitization via escHtml() (textContent auto-escaping) already exists in chat.js since Season 5. DOMPurify evaluation is part of Season 12.
 
 #### Content Security Policy
 
@@ -148,13 +161,15 @@ import DOMPurify from 'dompurify';
 chatElement.innerHTML = DOMPurify.sanitize(messageText);
 ```
 
+**Note (Season 11):** chat.js already uses `escHtml()` which creates a div element, sets `textContent` (auto-escaping), then reads `innerHTML`. This prevents script injection through chat messages. DOMPurify would be an additional defense layer.
+
 #### CSP Reporting
 
 Deploy with `Content-Security-Policy-Report-Only` first. Monitor for violations. Tighten iteratively, then switch to enforcing mode. Sentry supports CSP violation ingestion for monitoring.
 
 ---
 
-### Phase 2: Crypto Web Worker (Season 7-8)
+### Phase 2: Crypto Web Worker (Season 13)
 
 **Goal:** Isolate all key material from the main thread.
 **Effort:** Medium (3-5 sessions)
@@ -198,7 +213,7 @@ Main Thread (chat UI)          Web Worker (crypto-worker.ts)
 
 ---
 
-### Phase 3: Non-Extractable Keys (Season 8-9)
+### Phase 3: Non-Extractable Keys (Season 13-14)
 
 **Goal:** Prevent raw key bytes from entering JavaScript for supported algorithms.
 **Effort:** Medium (3-4 sessions)
@@ -238,7 +253,7 @@ This decision affects SMP protocol compatibility. Consult SimpleGo protocol team
 
 ---
 
-### Phase 4: Dependency Hardening (Season 8)
+### Phase 4: Dependency Hardening (Season 12)
 
 **Goal:** Protect against npm supply chain attacks.
 **Effort:** Small-Medium (1-2 sessions)
@@ -260,7 +275,7 @@ This decision affects SMP protocol compatibility. Consult SimpleGo protocol team
 
 ---
 
-### Phase 5: Cross-Origin Iframe for Embeddable Widget (Season 9-10)
+### Phase 5: Cross-Origin Iframe for Embeddable Widget (Season 14+)
 
 **Goal:** Protect GoChat when embedded on third-party websites.
 **Effort:** Medium (2-3 sessions)
@@ -282,7 +297,7 @@ When GoChat is embedded on external websites, serve it from a separate origin (e
 
 ---
 
-### Phase 6: Rust-to-WASM Crypto Core (Season 10+)
+### Phase 6: Rust-to-WASM Crypto Core (Season 15+)
 
 **Goal:** Memory safety, constant-time guarantees, unified codebase.
 **Effort:** Large (dedicated season)
@@ -313,8 +328,8 @@ This is the pattern that Signal (libsignal), Element (vodozemac), and Wire all i
 4. Keys live entirely in WASM linear memory
 
 #### Prerequisites
-- Stable chat functionality first (Seasons 6-8)
-- Proven test suite for protocol compatibility
+- Stable chat functionality first (Seasons 6-11 - DONE)
+- Proven test suite for protocol compatibility (551+ tests - DONE)
 - Build pipeline for WASM (wasm-pack + esbuild integration)
 
 ---
@@ -323,12 +338,12 @@ This is the pattern that Signal (libsignal), Element (vodozemac), and Wire all i
 
 | Priority | Phase | Protection Against | Effort | Season |
 |----------|-------|-------------------|--------|--------|
-| 1 | CSP + SRI + DOMPurify | XSS, script tampering | Small | 8-9 |
-| 2 | Crypto Web Worker | XSS key theft | Medium | 8-9 |
-| 3 | Non-extractable keys | Casual JS key access | Medium | 9-10 |
-| 4 | Dependency vendoring | Supply chain attacks | Small | 9 |
-| 5 | Cross-origin iframe | Third-party embedding | Medium | 10-11 |
-| 6 | Rust-to-WASM | All JS-level threats | Large | 11+ |
+| 1 | CSP + SRI + DOMPurify | XSS, script tampering | Small | 12 (next) |
+| 2 | Dependency vendoring | Supply chain attacks | Small | 12 (next) |
+| 3 | Crypto Web Worker | XSS key theft | Medium | 13 |
+| 4 | Non-extractable keys | Casual JS key access | Medium | 13-14 |
+| 5 | Cross-origin iframe | Third-party embedding | Medium | 14+ |
+| 6 | Rust-to-WASM | All JS-level threats | Large | 15+ |
 
 ---
 
