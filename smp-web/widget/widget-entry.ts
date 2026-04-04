@@ -12,6 +12,19 @@ import {WIDGET_TEMPLATE, BUBBLE_TEMPLATE} from './widget-template.js'
 import {initUI} from './widget-ui.js'
 import type {WidgetConfig} from './widget-ui.js'
 
+// Import crypto engine from existing source - bundled into the widget
+import {createBrowserClient, generateRandomVisitorName, DEFAULT_CONTACT_ADDRESS} from '../src/browser-client.js'
+import * as GoChatClientExports from '../src/index.js'
+
+// Expose on window so widget-ui.ts can find them
+;(window as any).createBrowserClient = createBrowserClient
+;(window as any).GoChatClient = {
+  ...GoChatClientExports,
+  createBrowserClient,
+  generateRandomVisitorName,
+  DEFAULT_CONTACT_ADDRESS,
+}
+
 // Capture script tag immediately (only available during initial execution)
 const scriptTag = document.currentScript as HTMLScriptElement | null
 
