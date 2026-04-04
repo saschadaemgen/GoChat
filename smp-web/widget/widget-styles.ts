@@ -316,9 +316,36 @@ export const WIDGET_CSS = `
 .gc-float-bubble.anim-shimmer-flip::after{content:'';position:absolute;top:0;left:-100%;width:50%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.3),transparent);animation:gc-shimmer-sweep 3s ease-in-out infinite;pointer-events:none;}
 .gc-float-bubble.anim-shimmer-flip svg{animation:gc-icon-flip 5s ease-in-out infinite;transform-style:preserve-3d;}
 
+/* 10. pulse: classic expanding rings */
+@keyframes gc-pulse-ring{0%{transform:scale(1);opacity:0.5;}100%{transform:scale(1.9);opacity:0;}}
+.gc-float-bubble.anim-pulse{position:relative;}
+.gc-float-bubble.anim-pulse::before,.gc-float-bubble.anim-pulse::after{content:'';position:absolute;inset:-4px;border-radius:50%;border:2px solid var(--gochat-color-primary,#45bdd1);animation:gc-pulse-ring 2.2s ease-out infinite;pointer-events:none;}
+.gc-float-bubble.anim-pulse::after{animation-delay:1.1s;}
+
+/* 11. neon: hue-rotate color cycling */
+@keyframes gc-neon{0%{filter:hue-rotate(0deg) brightness(1.1);}25%{filter:hue-rotate(90deg) brightness(1.2);}50%{filter:hue-rotate(180deg) brightness(1.1);}75%{filter:hue-rotate(270deg) brightness(1.2);}100%{filter:hue-rotate(360deg) brightness(1.1);}}
+.gc-float-bubble.anim-neon{animation:gc-neon 6s linear infinite;}
+
+/* 12. heartbeat: two quick pulses then pause */
+@keyframes gc-heartbeat{0%,100%{transform:scale(1);}14%{transform:scale(1.12);}20%{transform:scale(1);}28%{transform:scale(1.08);}34%{transform:scale(1);}}
+.gc-float-bubble.anim-heartbeat{animation:gc-heartbeat 2s ease-in-out infinite;}
+
+/* 13. jelly: wobbly elastic effect */
+@keyframes gc-jelly{0%,100%{transform:scale(1,1);}25%{transform:scale(0.9,1.1);}50%{transform:scale(1.1,0.9);}75%{transform:scale(0.95,1.05);}}
+.gc-float-bubble.anim-jelly{animation:gc-jelly 3s ease-in-out infinite;}
+
+/* 14. ring-rotate: spinning ring border */
+@keyframes gc-ring-spin{0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}
+.gc-float-bubble.anim-ring-rotate{position:relative;}
+.gc-float-bubble.anim-ring-rotate::before{content:'';position:absolute;inset:-3px;border-radius:50%;border:2px solid transparent;border-top-color:var(--gochat-color-primary,#45bdd1);border-right-color:var(--gochat-color-primary,#45bdd1);animation:gc-ring-spin 1.5s linear infinite;pointer-events:none;}
+
+/* 15. float: gentle up-down hover */
+@keyframes gc-float{0%,100%{transform:translateY(0);}50%{transform:translateY(-5px);}}
+.gc-float-bubble.anim-float{animation:gc-float 4s ease-in-out infinite;}
+
 /* Suppress animations when panel is open */
 .gc-float-bubble.panel-open,.gc-float-bubble.panel-open svg{animation:none !important;}
-.gc-float-bubble.panel-open::after{display:none;}
+.gc-float-bubble.panel-open::before,.gc-float-bubble.panel-open::after{display:none;}
 
 /* === REDUCED MOTION === */
 @media(prefers-reduced-motion:reduce){
@@ -328,6 +355,6 @@ export const WIDGET_CSS = `
   .gc-panel.shaking,.gc-header-btn.gc-close-btn.spinning,.gc-msg.glitching,.gc-msg.exploding,.gc-destruct-flash.active,.gc-destruct-scanline.active{animation:none;}
   .gc-destroyed-icon,.gc-destroyed-text,.gc-destroyed-sub,.gc-destroyed-line{animation:none;opacity:1;}
   .gc-float-bubble,.gc-float-bubble svg{animation:none !important;}
-  .gc-float-bubble::after{display:none;}
+  .gc-float-bubble::before,.gc-float-bubble::after{display:none;}
 }
 `;
