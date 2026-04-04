@@ -1,0 +1,37 @@
+{
+  "name": "gochat-widget",
+  "version": "1.0.0",
+  "description": "End-to-end encrypted chat widget for any website. One script tag, Shadow DOM isolated, no dependencies. Built on the SimpleX Messaging Protocol.",
+  "main": "gochat-widget.js",
+  "types": "index.d.ts",
+  "files": [
+    "gochat-widget.js",
+    "index.d.ts",
+    "README.md"
+  ],
+  "keywords": [
+    "chat",
+    "widget",
+    "encrypted",
+    "e2e",
+    "end-to-end",
+    "simplex",
+    "support",
+    "messaging",
+    "shadow-dom",
+    "privacy",
+    "gdpr",
+    "dsgvo",
+    "open-source"
+  ],
+  "author": "Sascha Daemgen <info@it-and-more.systems>",
+  "license": "AGPL-3.0",
+  "homepage": "https://github.com/saschadaemgen/GoChat",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/saschadaemgen/GoChat.git"
+  },
+  "bugs": {
+    "url": "https://github.com/saschadaemgen/GoChat/issues"
+  }
+}

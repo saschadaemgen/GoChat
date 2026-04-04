@@ -266,6 +266,22 @@ Season 11 implemented bidirectional delivery receipts and connection lifecycle m
 
 **dotenv # comment trap:** The .env file format treats `#` as an inline comment character. SimpleX contact address URLs contain `contact#/` which gets silently truncated to `contact`. The fix: wrap URLs containing `#` in double quotes in the .env file.
 
+### 2.14 Widget distribution and infrastructure (Season 12)
+
+Season 12 transformed GoChat from a development proof-of-concept into a distributable product. Several architectural discoveries emerged:
+
+**Shadow DOM isolation:** The widget uses Shadow DOM (mode: 'open') to encapsulate all UI, CSS, and HTML. This prevents style leakage in both directions - the host page's CSS cannot break the widget, and the widget's CSS cannot affect the host page. One critical exception: CSS Custom Properties (--gochat-color-primary etc.) penetrate the Shadow DOM boundary by design, enabling customer theming without modifying the widget code.
+
+**Browser TLS preflight for WebSocket:** Browsers refuse WebSocket connections to the SMP server without a prior HTTPS handshake to the same host. The root cause is ALPN multiplexing - the SMP server serves both HTTPS and SMP protocol on the same TLS port. Browsers need to warm the TLS session cache via a standard HTTPS request before the WebSocket upgrade succeeds. The fix: a silent `fetch()` call in the widget before opening the WebSocket connection. This works on all tested browsers including Chrome, Firefox, Safari, and mobile browsers.
+
+**Nginx stream proxy with SNI routing:** HTTP reverse proxy (proxy_pass) does NOT work for SMP connections because SMP is not an HTTP protocol. The SMP server speaks its own binary protocol over TLS. The solution: Nginx stream module with ssl_preread for SNI-based routing. Port 443 inspects the SNI hostname - `smp.simplego.dev` gets raw TCP passthrough to the Docker container, all other hostnames get routed to Nginx HTTP on port 8443. This eliminates the non-standard port from the server URL.
+
+**CDN distribution model:** The widget is served as a single JavaScript file (461KB) from cdn.simplego.dev. Website owners embed it with a single script tag. Configuration happens via data-attributes on the script tag - no JavaScript API needed for basic setup. When the CDN file is updated, all customers receive the update automatically without rebuilding their websites.
+
+**Data-attribute configuration system:** The widget reads configuration from data-attributes on its own script tag (data-color, data-bubble-animation, data-position, data-name, data-welcome, data-trigger). This enables zero-JavaScript configuration - a website owner with no programming knowledge can configure the widget by editing HTML attributes. The approach was chosen over JavaScript initialization because it works with static site generators, CMS platforms, and server-rendered pages without any build step.
+
+**Single-file bundling:** All 25+ TypeScript protocol files, the UI code, CSS (as template literal), and HTML (as template literal) are bundled into a single IIFE JavaScript file via esbuild. The crypto engine alone is ~400KB, the UI adds ~60KB. Total: 461KB uncompressed, ~104KB gzipped. This approach was chosen over separate CSS/JS/HTML files because it simplifies deployment to a single script tag and avoids CORS issues with separate asset loading.
+
 ---
 
 ## 3. Security analysis
@@ -737,3 +753,4 @@ Delivery receipts are displayed as checkmarks on outgoing messages:
 | 2026-03-31 | Season 9 findings. PQ KEM Word16 BE length prefix, AES-256-GCM 16-byte IV, chainKdf output order trap (CRYPTO.md wrong), agentVersion 7 vs 1, handshake response format (tag 'C', PHConfirmation 'K', e2eEncryption_=Nothing), first-message pad 15904. |
 | 2026-04-01 | Season 10 findings. Added Section 2.12 (widget API-only pattern, DOM injection trap, status from state machine, event handling). Added Season 10 architectural decisions. |
 | 2026-04-02 | Season 11 findings. Added Section 2.13 (delivery receipts, msgHash scope, END detection, connection rejection protocol limit, dotenv # trap). Added Section 7.5 (delivery receipt UI). Updated Section 3.1 (current XSS protection via escHtml). Updated Section 3.2 (GoChat as support chat context). Updated competitive analysis (delivery receipts column). Added Season 11 architectural decisions (8 entries). |
+| 2026-04-04 | Season 12 findings. Added Section 2.14 (Shadow DOM widget isolation, TLS preflight for WebSocket, Nginx stream proxy with SNI routing, CDN distribution model, data-attribute configuration, CSS Custom Properties through Shadow DOM boundary). Added Season 12 architectural decisions: single-file bundle (461KB), Shadow DOM over CSS namespacing, stream proxy over HTTP reverse proxy, CDN model, data-attributes for zero-JS config, internal bubble animations, port 443 via SNI routing. |

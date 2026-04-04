@@ -1,12 +1,12 @@
-# GoChat - Claude Code Instructions
+# GoRelay - Claude Code Instructions
 
 ## Project
 
-GoChat is a browser-native encrypted messenger for the SimpleX ecosystem.
-- Speaks SMP (SimpleX Messaging Protocol) over WebSocket
-- Future: GRP (GoRelay Protocol) with Noise transport, post-quantum crypto
-- Built on the `ep/smp-web-spike` branch of simplexmq
-- Repository: github.com/saschadaemgen/GoChat
+GoRelay is a dual-protocol encrypted relay server written in Go.
+- Port 5223: SMP (SimpleX Messaging Protocol) for SimpleX Chat compatibility
+- Port 7443: GRP (GoRelay Protocol) with Noise transport, mandatory post-quantum crypto, two-hop relay routing
+- Both protocols share the same internal queue store
+- Repository: github.com/saschadaemgen/GoRelay
 - License: AGPL-3.0
 - Author: Sascha Daemgen, IT and More Systems, Recklinghausen
 
@@ -15,350 +15,211 @@ GoChat is a browser-native encrypted messenger for the SimpleX ecosystem.
 ### Git
 - Conventional Commits ONLY: `feat(scope): description`, `fix(scope): description`
 - Valid types: feat, fix, docs, test, refactor, ci, chore
-- Valid scopes: smp, grp, transport, crypto, ui, agent, config, ci, wiki, seasons, security, handshake, commands
-- Feature branches: `s8/NNN-description` pattern (season number + task number)
-- Push with `git push --set-upstream origin s8/NNN-description`
-- NEVER push directly to `feat/simplego-support-chat` - ALWAYS create PRs
+- Valid scopes: core, smp, grp, store, relay, config, ci, wiki
+- NEVER commit directly to main - always feature/* branches
+- Squash-merge feature branches to main
 - NEVER change version numbers without explicit permission
-- When creating PRs: ALWAYS verify base repository is `saschadaemgen/GoChat`, NOT `simplex-chat/simplexmq`
-- PR target branch: `feat/simplego-support-chat`
-
-### GPG Signing Workflow
-- Claude Code does NOT have access to the GPG signing key (E13737C02E97E54B)
-- Direct pushes from Claude Code produce UNSIGNED commits (no green "Verified" badge)
-- Sascha creates signed merge commits when merging PRs via GitHub
-- Therefore: ALL code changes MUST go through Pull Requests
-- This ensures every commit on `feat/simplego-support-chat` is GPG-verified
-- Never push directly to the target branch - always feature branch + PR
-- Use squash merge when appropriate to keep history clean
 
 ### Code Style
 - NEVER use em dashes - use regular hyphens or rewrite the sentence
 - All code, comments, commits, and documentation in English
-- TypeScript strict mode
-- @noble-only crypto (@noble/curves, @noble/ciphers, @noble/hashes)
-- tweetnacl for NaCl crypto_box (nacl.box includes HSalsa20 key derivation)
-- Do NOT import from xftp-web/src/protocol/commands.ts (pulls libsodium)
-- Copy helpers locally instead (ascii(), readTag(), readSpace())
-- console.log for debug output (not console.debug - browsers filter verbose by default)
+- Use `log/slog` for logging - NEVER `fmt.Println` or `log.Printf`
+- NEVER log IP addresses, queue IDs, message content, or any user metadata
+- Use `io.ReadFull` for all network reads - NEVER plain `conn.Read`
+- Handle all errors explicitly - NEVER use `_` to discard errors
+- Use `crypto/subtle.ConstantTimeCompare` for all secret comparisons
+- Zero all key material after use with explicit zeroing loops
 
 ### Architecture
-- ChatTransport interface for all transport code (SMP and future GRP)
-- 16,384-byte fixed blocks for ALL SMP wire communication
-- encodeBytes() for shortString (1-byte length prefix)
-- encodeLarge() for large data (2-byte length prefix)
-- CorrId-matched dispatch for typed command responses
-- esbuild.config.mjs MUST use `format: "iife"` (not "esm") - gets overwritten by rebases
+- Three goroutines per connection: receiver, processor, sender
+- Fixed 16,384-byte blocks for ALL wire communication
+- QueueStore interface for all persistence (BadgerDB in production, memory for tests)
+- SubscriptionHub with sync.Map for queue-to-client routing
+- smp/ and grp/ packages NEVER import each other - both import common/
 
 ## Build and Test
 
 ```bash
-cd smp-web
-npx vitest run        # Run all tests
-npx vitest --watch    # Watch mode
-npm run build:browser # Build IIFE bundle -> dist/gochat-client.js
+go build -o gorelay ./cmd/gorelay
+go test -race ./...
 ```
 
-Deploy after build:
-```powershell
-copy dist\gochat-client.js "C:\Projects\SimpleGo www\www\src\assets\js\gochat-client.js"
-```
-
-## Technology Stack
+## Technology Stack (LOCKED)
 
 | Component | Choice |
 |---|---|
-| Language | TypeScript (strict) |
-| Runtime | Browser (no Node.js) |
-| Transport | WebSocket (binary frames) |
-| Crypto (signing) | @noble/curves v2 (Ed25519) |
-| Crypto (DH) | @noble/curves v2 (X25519, X448) |
-| Crypto (NaCl) | tweetnacl (nacl.box for crypto_box) |
-| Crypto (Ratchet) | @noble/ciphers (AES-256-GCM), @noble/hashes (HKDF-SHA512) |
-| Compression | zstd-codec (level 3 for connInfo) |
-| Testing | Vitest |
-| Bundle | esbuild (IIFE format) |
-| Block size | 16,384 bytes (SMP standard) |
+| Language | Go 1.26+ |
+| Transport (SMP) | crypto/tls (stdlib) |
+| Transport (GRP) | flynn/noise v1.1.0 |
+| Post-Quantum | crypto/mlkem (stdlib, FIPS 203) |
+| Persistence | BadgerDB v4 |
+| Configuration | koanf v2 |
+| Logging | log/slog (stdlib) |
+| Metrics | prometheus/client_golang |
+| Rate Limiting | golang.org/x/time/rate |
 
 ## Package Structure
 
 ```
-smp-web/src/
-  index.ts              # Re-exports all public API
-  types.ts              # ChatTransport, SMPServerAddress, TransportState, errors
-  transport.ts          # SMPWebSocketTransport (WebSocket + 16KB blocks)
-  handshake.ts          # SMP ServerHello/ClientHello encode/decode
-  client.ts             # SMPClient (handshake, session, typed commands, corrId dispatch)
-  agent.ts              # SMPClientAgent (connection pool, reconnection)
-  commands.ts           # SMP command encoders (14 commands)
-  protocol.ts           # SMP transmission encode/decode, response decoder
-  address.ts            # SimpleX contact address URI parser
-  state.ts              # Connection lifecycle state machine
-  crypto-utils.ts       # Key gen: Ed25519, X25519, X448 + SPKI encoding
-  connection.ts         # ConnectionManager (queue creation + send invitation)
-  invitation.ts         # AgentInvitation builder (connReq URI, NaCl crypto_box)
-  x3dh.ts               # Modified 4-DH X3DH key agreement (for Season 8)
-  ratchet.ts            # Double Ratchet init + encrypt (for Season 8)
-  agent-envelope.ts     # Agent confirmation encoding (for Season 8)
-  connection-request.ts # Connection request builder + zstd (for Season 9)
-  browser-client.ts     # High-level browser API for chat integration
-  msg-decrypt.ts        # Server-to-recipient MSG decryption (nacl.box.open)
-  layer1-decrypt.ts     # Layer 1 NaCl smpEncConfirmation decryption
-  agent-confirmation.ts # Parse AgentConfirmation with E2ERatchetParams + PQ KEM
-  x3dh-agreement.ts     # X3DH receiver-side (3x X448 DH + HKDF-SHA512)
-  ratchet-decrypt.ts    # Double Ratchet init + encrypt (rcEncrypt) + decrypt (rcDecrypt)
-  reply-queue.ts        # Parse SMPQueueInfo from AgentConnInfoReply tag 'D'
-  __tests__/            # 551+ tests across 23 files
+cmd/gorelay/                    Entry point, CLI, signal handling
+internal/config/                Configuration loading (koanf)
+internal/server/                Server, Client, SubscriptionHub
+internal/protocol/common/       Block framing, command types (shared)
+internal/protocol/smp/          SMP-specific handlers
+internal/protocol/grp/          GRP-specific handlers
+internal/queue/                 QueueStore interface + implementations
+internal/relay/                 Relay-to-relay forwarding (Phase 5)
 ```
 
-## Current State (Post-Season 11)
+## Current State
 
-Full E2E bidirectional chat working in the browser:
-- WebSocket -> SMP v9 handshake -> NaCl Layer 1
-- X3DH (X448) -> Double Ratchet (AES-256-GCM, 16B IV)
-- SNTRUP761 KEM -> HELLO -> CONNECTION ESTABLISHED
-- Bidirectional messaging with SimpleX Desktop App
-- PING/PONG keepalive (30s interval)
-- Visitor name support (custom or Visitor-xxxx guest)
-- Multi-step UX flow (Start -> Name -> Waiting -> Chat)
-- Offline messaging with single-message limit
-- Delete confirmation with Hollywood destruction sequence
-- x.direct.del event handling ("Connection ended")
-- Delivery receipts bidirectional (A_RCVD tag 'V', double checkmarks)
-- Connection lifecycle (END detection, timeout, x.direct.del send)
-- .env integration for website config (dotenv + 11ty)
-- 551+ tests passing
-
-The widget (gochat-client.js) is a pure API library.
-All UI is handled externally by chat.js on the SimpleGo website.
-gochat-client.js must NEVER create DOM elements or manipulate HTML.
-
-### What works (Seasons 1-11)
-- WebSocket transport with SMP handshake (v6-18 offered, v9 negotiated)
-- 14 SMP command encoders with full response decoder
-- Contact address parser (simplex:/ and https:// formats)
-- Connection state machine (7 states)
-- Queue creation on real SMP server (NEW -> IDS) with v9 CbAuthenticator
-- AgentInvitation with connReq URI sent to contact queue (SEND -> OK)
-- NaCl crypto_box encryption (tweetnacl nacl.box)
-- SimpleX App/CLI shows "Website Visitor - New contact request"
-- CLI accepts connection request (SKEY succeeds with sndSecure)
-- Server rebuilt on Debian 13 (Nginx + Certbot + Docker, PR #1738 build v6.5.0.11)
-- v9 CbAuthenticator (nacl.box over SHA-512 hash, 80-byte authenticator)
-- sndSecure + SKEY (Fast Duplex sender queue securing)
-- MSG processing with server-to-recipient decryption (nacl.box.open)
-- Layer 1 NaCl decryption of smpEncConfirmation (AgentConfirmation extracted)
-- ACK with CbAuthenticator
-- queueDhKeyPair preserved for Layer 1 decryption
-- AgentConfirmation parsing with PQ KEM (SNTRUP761) support
-- X3DH key agreement (receiver side, 3x X448 DH + HKDF-SHA512)
-- Double Ratchet encrypt + decrypt (AES-256-GCM with 16-byte IV)
-- Reply queue parsing from AgentConnInfoReply tag 'D'
-- Duplex handshake (send AgentConfirmation to CLI's reply queue)
-- HELLO received - CONNECTION ESTABLISHED
-- Chat messages received and decrypted
-- WebSocket subscription fix after HELLO (single WS per queue)
-- Send HELLO and chat messages from browser (agentVersion=1)
-- PING/PONG keep-alive (30s interval)
-- Visitor name in AgentInvitation profile JSON
-- handleChatPayload() for x.msg.new and x.direct.del events
-- connect(displayName?) accepts name from external UI
-- Status "pending" after invitation (not premature "connected")
-- Delivery receipts: parse incoming A_RCVD (tag 'V'), send A_RCVD for received messages
-- Receipt msgHash = sha256(full agentMessage buffer), not partial
-- Connection END detection via onSubscriptionEnd (wired in S11)
-- Connection timeout for unresponsive agents (2 minutes)
-- Send x.direct.del notification before disconnect
-- .env integration (dotenv + 11ty + base.njk template variables)
-- 551+ tests across 23+ files
-
-### What does NOT work yet
-- Instant connection rejection detection (protocol limit, timeout only)
-- simplex-js npm library extraction
-- Security hardening (CSP, SRI, Web Worker)
-- GoChat Configurator admin tool
+Phase 1 is COMPLETE. The server compiles, runs, and passes 40+ tests:
+- Dual-port listener works (SMP TLS on :5223, GRP TCP on :7443)
+- Three-goroutine-per-connection model implemented
+- 16 KB block framing works (ReadBlock/WriteBlock)
+- SMP-compatible TLS CA chain with Ed25519 (persistent CA, rotatable online cert)
+- SMP URI with CA fingerprint printed on startup
+- SMP version handshake (min=6, max=7) with X25519 DH key exchange
+- PING/PONG integration tests verify full TLS round-trip
+- NEW command creates queues with random 24-byte IDs, idempotent
+- SUB command with Ed25519 signature verification and subscription takeover
+- KEY command sets one-time sender key
+- SEND command verifies sender signature, stores and delivers messages
+- MSG delivery one-at-a-time with ACK before next
+- ACK with cryptographic deletion, triggers next message delivery
+- DeliveryAttempts counter with MaxDeliveryAttempts=5 (redelivery loop protection)
+- BadgerDB v4 persistent store with per-message AES-256-GCM encryption
+- Native TTL (48h default, 7d hard max) with GC every 5 minutes
+- QueueStore interface with both MemoryStore (tests) and BadgerStore (production)
+- 40+ tests passing including 13 integration tests
 
 ## Development Roadmap
 
-- Season 1: Planning and Documentation - COMPLETE
-- Season 2: WebSocket Transport - COMPLETE
-- Season 3: SMP Commands (187 tests) - COMPLETE
-- Season 4: Connection Flow + X3DH + Double Ratchet (413 tests) - COMPLETE
-- Season 5: Chat UI + Browser Client + Real Server (485 tests) - COMPLETE
-- Season 6: Connection Request to SimpleX App (493 tests) - COMPLETE
-- Season 7: Server Upgrade, ALPN Fix, v6-18 over WebSocket - COMPLETE
-- Season 8: v9 Command Auth, Server Rebuild, MSG + Layer 1 (494 tests) - COMPLETE
-- Season 9: X3DH + Double Ratchet + HELLO + CON (537 tests) - COMPLETE
-- Season 10: Chat Messages + Desktop App + UX (544+ tests) - COMPLETE
-- Season 11: Delivery Receipts + Connection Lifecycle + .env (551+ tests) - COMPLETE
-- Season 12: Security Hardening (CSP, SRI, Dependency Vendoring) - NEXT
-- Season 13: simplex-js npm Library
-- Season 14+: GRP Profile (Noise, ML-KEM-768, Two-hop Routing)
+- Phase 0: Research and Planning - COMPLETE
+- Phase 1: SMP Skeleton (TLS, Block Framing, Handshake, Queue Ops, BadgerDB) - COMPLETE
+- Phase 2: Production Hardening (DEL, OFF, Timeouts, Metrics, Rate Limiting, Docker) - CURRENT
+- Phase 3: SMP Compatibility Testing (verify against official SimpleX Chat app)
+- Phase 4: GRP Protocol (Noise transport, hybrid PQC key exchange)
+- Phase 5: Advanced Security (two-hop relay routing, cover traffic, queue rotation)
+- Phase 6: Triple Shield
+  - 6a: Zero-Knowledge Proofs for queue authentication (Schnorr DLOG via Fiat-Shamir)
+  - 6b: Shamir's Secret Sharing across multiple servers (2-of-3 default)
+  - 6c: Steganographic Transport (pluggable transports: HTTPS, WebSocket, meek, obfs4)
+  - Read: docs/research/12-triple-shield.md
 
-## Season 9 Context (COMPLETE)
+## Phase 1 Implementation Plan (COMPLETE)
 
-Season 9 is COMPLETE. Full E2E pipeline working. 11 PRs (#67-#77), 537 tests.
+All 9 tasks completed on separate feature branches, squash-merged to main:
 
-### What was achieved
-1. AgentConfirmation parsing with PQ KEM SNTRUP761 (Word16 BE length prefix)
-2. X3DH key agreement (receiver side, 3x X448 DH + HKDF-SHA512)
-3. Double Ratchet encrypt (rcEncrypt) + decrypt (rcDecrypt) with AES-256-GCM 16B IV
-4. Reply queue parsing from AgentConnInfoReply tag 'D'
-5. Duplex handshake: send AgentConfirmation (tag 'C', PHConfirmation 'K') to CLI
-6. HELLO received - CONNECTION ESTABLISHED
-7. Chat messages received and decrypted
+### Task 1: go mod tidy - COMPLETE
+### Task 2: TLS with SMP-Compatible CA Chain - COMPLETE
+### Task 3: SMP Version Handshake - COMPLETE
+### Task 4: PING/PONG Verification - COMPLETE
+### Task 5: NEW Command - COMPLETE
+### Task 6: SUB Command - COMPLETE
+### Task 7: KEY + SEND/MSG/ACK - COMPLETE
+### Task 8: Integration Tests - COMPLETE
+### Task 9: BadgerDB Store - COMPLETE
 
-### Season 10 plan
-1. Fix WebSocket subscription after HELLO (new connections disrupted)
-2. Send chat messages (agentVersion=1, not 7!)
-3. Send HELLO
-4. Basic chat UI integration
-8. HELLO exchange, achieve CON state
-9. Bidirectional encrypted messaging
+## Phase 2 Implementation Plan (Current)
 
-### v6 vs v7+ command authorization
-v6 (current - Ed25519 signatures):
+### Task 1: DEL Command
+- Delete queue by recipientID with Ed25519 signature verification
+- Remove all messages, sender mapping, and recipient key index
+- Idempotent (DEL on deleted queue returns OK)
+- Branch: feature/queue-del
+
+### Task 2: OFF Command
+- Turn off notifications for a queue
+- Unsubscribe the connection without deleting the queue
+- Branch: feature/queue-off
+
+### Task 3: QueueStore Cleanup on Connection Drop
+- Unsubscribe all queues when a connection drops
+- Ensure no leaked subscriptions in SubscriptionHub
+- Branch: feature/connection-cleanup
+
+### Task 4: Connection Timeout Handling
+- Enforce read/write deadlines from config (ReadTimeout, WriteTimeout)
+- Handshake timeout for SMP version negotiation
+- Idle connection reaping
+- Branch: feature/connection-timeouts
+
+### Task 5: Prometheus Metrics Endpoint
+- Expose metrics on :9100 using prometheus/client_golang
+- Counters: connections, commands processed, messages sent/received, errors
+- Gauges: active connections, active subscriptions, queue count
+- Histograms: command latency, message size
+- Branch: feature/prometheus-metrics
+
+### Task 6: Rate Limiting
+- Per-connection rate limiting with golang.org/x/time/rate
+- Configurable via LimitsConfig (CommandsPerSecond, CommandsBurst)
+- Return ERR with appropriate error code when rate exceeded
+- Branch: feature/rate-limiting
+
+### Task 7: Graceful Shutdown
+- Drain in-flight messages before closing connections
+- Wait for active transactions to complete
+- Close BadgerDB cleanly
+- Signal handling (SIGTERM, SIGINT)
+- Branch: feature/graceful-shutdown
+
+### Task 8: Admin Dashboard
+- Embedded web UI via go:embed on :9090
+- Server status, connection count, queue stats
+- No sensitive data exposed (no queue IDs, no message content)
+- Branch: feature/admin-dashboard
+
+### Task 9: Dockerfile and docker-compose.yml
+- Multi-stage Dockerfile (build + minimal runtime image)
+- docker-compose.yml with volume for data directory
+- Health check endpoint
+- Branch: feature/docker
+
+### Task 10: systemd Unit File
+- systemd service file for Linux deployment
+- Proper user/group, data directory permissions
+- Restart on failure with backoff
+- Branch: feature/systemd
+
+## Critical Protocol Details
+
+### Block Framing
 ```
-[sigLen=0x40][64B Ed25519 signature][sessIdLen][sessionId][corrId][entityId][command]
-signedData = [0x20][sessionId] + [corrId] + [entityId] + [command]
-```
-
-v7+ (target - X25519 DH crypto_box):
-```
-ClientHello adds: shortString(authPubKey) + Maybe(proxyServer) + Maybe(clientService)
-Commands authorized via crypto_box instead of Ed25519 signatures
-```
-
-Reference code for v7+ auth: `C:\Projects\simplexmq-latest` (branch `pr-1738`)
-- src/Simplex/Messaging/Transport.hs - handshake with authPubKey
-- src/Simplex/Messaging/Protocol.hs - command authorization
-- PR #982 on GitHub - "smp: command authorization" design document
-
-### sndSecure wire format (for v9+ NEW command)
-```
-Without sndSecure (v6, current):  "NEW " [authKey] [dhKey] "S"      (95 bytes)
-With sndSecure (v9+, target):     "NEW " [authKey] [dhKey] "S T"    (97 bytes)
-                                                            ^ ^ ^
-                                                            S SP T
-```
-Space between "S" and "T" is critical. "ST" without space gives CMD SYNTAX.
-connReq URI must include &k=s when sndSecure is enabled.
-
-### Key protocol knowledge (from Seasons 5-7)
-- Joining party sends AgentInvitation ('I' + PHEmpty '_' + connReq URI)
-- Contact owner responds with AgentConfirmation ('C' + PHConfirmation 'K' + Ratchet-encrypted body)
-- First contact has NO Ratchet (only per-queue NaCl crypto_box)
-- Ratchet begins after receiving owner's AgentConfirmation with X448 keys
-- nacl.box() = DH + HSalsa20 + XSalsa20-Poly1305 (never use raw xsalsa20poly1305)
-- SKEY comes BEFORE SEND in the CLI flow - if SKEY fails, CLI aborts immediately
-- Browser ALPN is "h2" - PR #1738 server matches this and offers v6-18
-- sessionId is 48 bytes on PR #1738 server (was 32 on legacy WebSocket port)
-- ServerHello includes certs=2 and signedKey on PR #1738 server
-
-### Corrected Ratchet parameters (for Season 8 implementation)
-- All HKDF: SHA-512 (not SHA-256)
-- X3DH: salt=64 zeros, info="SimpleXX3DH", 3 DH ops (not 4)
-- Chain KDF: salt=empty, info="SimpleXChainRatchet"
-- Root KDF: salt=root_key, info="SimpleXRootRatchet"
-- IV order: msg_iv[64-79], header_iv[80-95]
-- Ratchet v3: 124B emHeader, 2B Word16 BE prefix
-- MsgHeader v3: content_len + version + 68B SPKI + KEM Nothing + PN + NS
-
-### Server infrastructure (Season 8 - current, rebuilt on Debian 13)
-- Docker image: local/smp-server-pr1738 (built from PR #1738 Haskell source)
-- Software: SMP server v6.5.0.11
-- Protocol range: v6-18 (both WebSocket and TLS)
-- ALPN list: ["smp/1", "h2", "http/1.1"]
-- Host: smp.simplego.dev (194.164.197.247)
-- Port 5223: native TLS (CLI/App connections)
-- Port 8444 -> Docker 443: HTTPS + WebSocket (browser connections, no Nginx)
-- Port 5224: Control port
-- Fingerprint: 7qw4hvuS-PvTHbotgtg_xiwrhFUk_s1q2upUQrGIWow=
-- TLS cert (HTTPS): 4096-bit RSA Let's Encrypt (expires 2026-06-26)
-- Nginx: STOPPED (no longer needed since Season 7)
-- Server source: /root/simplexmq-pr1738 (branch pr-1738)
-
-Docker run command:
-```bash
-docker run -d --name simplego-smp --restart always \
-  -p 5223:5223 -p 5224:5224 -p 8444:443 \
-  -v /root/simplex/smp/config/certificates:/certificates:z \
-  -v /root/simplex/smp/config:/etc/opt/simplex:z \
-  -v /root/simplex/smp/logs:/var/opt/simplex:z \
-  local/smp-server-pr1738
+Block = payloadLength (2 bytes, uint16 BE) + payload + padding ('#' to 16384)
+ALWAYS exactly 16,384 bytes. No exceptions.
+ALWAYS io.ReadFull. NEVER conn.Read.
 ```
 
-## Known Traps
-
-1. GitHub defaults to `simplex-chat/simplexmq` as base repo when creating PRs from the fork - ALWAYS switch to `saschadaemgen/GoChat` / `feat/simplego-support-chat`
-2. `esbuild.config.mjs` must use `format: "iife"` not `format: "esm"` - gets overwritten by every rebase
-3. `send(text)` must be gated on CONNECTED state to prevent spurious duplicate sends
-4. Debug logging must use `console.log` not `console.debug` (browser filters verbose logs)
-5. NaCl crypto_box requires nacl.box() not raw xsalsa20poly1305 (HSalsa20 step missing otherwise)
-6. X448 has zero browser Web Crypto support - must use @noble/curves with raw byte arrays
-7. CSP `'self'` does NOT match `wss://` schemes - must explicitly include `connect-src wss://smp.simplego.dev:8444`
-8. sndSecure format is "S T" (with space), NOT "ST" - space is critical, "ST" gives CMD SYNTAX
-9. sndSecure requires v9+ negotiation - v6 command parser does not know sndSecure
-10. v7+ auth is COMPLETELY DIFFERENT from v6 - not just replacing signatures, whole auth scheme changes
-11. SKEY comes BEFORE SEND - CLI never sends AgentConfirmation if SKEY fails
-12. sessionId is 48 bytes on PR #1738 server (not 32 like on legacy WebSocket port)
-13. ServerHello includes certs=2 and signedKey on PR #1738 server (were absent on legacy WS port)
-14. queueDhKeyPair private key must be saved on ManagedConnection for Layer 1 decryption (fixed in S8)
-15. Contact address in base.njk may point to CLI test address - verify before testing
-16. Nginx runs on port 8444 with TLS termination, proxies to SMP server on port 5225 (Debian 13 setup)
-17. SMP Maybe encoding uses ASCII '0' (0x30) for Nothing, NOT binary 0x00 - causes CMD SYNTAX
-18. CbAuthenticator uses nacl.box (DH + HSalsa20), NOT nacl.secretbox (raw key) - causes ERR AUTH
-19. SystemTime in RcvMsgBody is 12 bytes (Int64 seconds + Word32 nanoseconds), NOT 8 bytes
-20. smpEncConfirmation format is ASYMMETRIC: outgoing has version prefix, incoming does NOT
-21. Four X25519 keypairs per connection - confusing any two causes decryption failure
-22. nacl.box.keyPair() generates X25519 keys compatible with both nacl.box and nacl.scalarMult
-23. chainKdf output order: [newCK, mk, bodyIV, headerIV] - CRYPTO.md has mk and newCK SWAPPED
-24. AgentConfirmation uses agentVersion=7, AgentMsgEnvelope uses agentVersion=1 - wrong version causes A_VERSION
-25. KEM keys use Word16 BE length prefix (not 1-byte or 0xFF+Word16 variable encoding)
-26. prevMsgHash uses 1-byte length prefix (not Word16 BE)
-27. smpClientVersion MUST be in ClientMsgEnvelope PubHeader - omitting causes A_VERSION
-28. First message to a queue (e2ePubKey=Just) pads to 15904, not 15840 (Haskell e2eEncConfirmationLength)
-29. APrivHeader: skip 8 bytes sndMsgId (Int64 BE) before prevMsgHash
-30. Handshake reply: tag 'C' (AgentConfirmation), PHConfirmation 'K' with sender auth key, e2eEncryption_=Nothing '0'
-31. gochat-client.js must NEVER inject DOM elements - pure API only, chat.js controls UI
-32. setStatus("connected") must ONLY come from state machine after HELLO, not from connectWithName()
-33. x.direct.del arrives as raw JSON - must be parsed by handleChatPayload()
-34. Chrome rejects WSS after crash - visit https://smp.simplego.dev:8444 in new tab to fix
-35. base.njk lives in _includes/ NOT src/_includes/ in the SimpleGo www project
-36. SimpleGo www is NOT a git repo - never run git commands there
-37. Receipt count is Word8 (1 byte), NOT Word16 - using Word16 shifts everything by 1 byte and Desktop App reads count=0
-38. Receipt rcptInfo is Word16 (2 bytes), NOT Word32 - using Word32 adds 2 extra bytes, receipt rejected
-39. Receipt msgHash must be sha256 of the FULL agentMessage buffer (outer tag + APrivHeader + inner tag + body) - NOT just the JSON body or inner tag + JSON
-40. agentVersion=1 for outgoing receipts (A_RCVD) - same as all outgoing agent messages, NOT 7
-41. Do NOT send a receipt for a received receipt (tag 'V') - only for x.msg.new chat messages
-42. onSubscriptionEnd must be wired during connection setup - the handler exists but is null by default
-43. Connection rejection produces no SMP signal - timeout is the only detection mechanism
-44. dotenv treats # as inline comment - SimpleX URLs with contact#/ get silently truncated, wrap in double quotes
-
-## Upstream Files (READ ONLY - never modify)
-
+### SMP Version Negotiation
 ```
-xftp-web/src/
-  protocol/encoding.ts    # Binary encoding primitives
-  protocol/transmission.ts # Block framing
-  crypto/keys.ts          # X25519/Ed25519 operations
-  crypto/secretbox.ts     # NaCl XSalsa20-Poly1305
-  crypto/identity.ts      # Server identity verification
-
-protocol/simplex-messaging.md  # SMP specification (upstream reference)
+Current SMP versions: 6 and 7 (older versions discontinued)
+Server sends: min=6, max=7
+Client responds with its version range
+Agree on highest mutual version
+Source: github.com/simplex-chat/simplexmq/blob/stable/protocol/simplex-messaging.md
 ```
+
+### Subscription Rules
+- Only ONE connection per queue at any time
+- NEW creates implicit subscription
+- New SUB sends END to old subscriber
+- Messages delivered one at a time, wait for ACK
+
+### Idempotency
+- NEW with same key: return existing IDS
+- ACK for deleted message: return OK
+- DEL for deleted queue: return OK
+- SEND: deduplicate by correlationID within 5-minute window
 
 ## Documentation
 
-1. docs/seasons/SEASON-08-v9-auth.md - Season 8 closing protocol
-2. docs/seasons/SEASON-07-server-upgrade.md - Season 7 closing protocol
-3. docs/seasons/SEASON-06-connection-request.md - Season 6 closing protocol
-4. docs/seasons/SEASON-05-real-server.md - Season 5 closing protocol
-5. docs/seasons/SEASON-PLAN.md - Full roadmap
-6. docs/PROTOCOL.md - Main technical protocol
-7. docs/RESEARCH.md - Security and design research
-8. docs/SECURITY-HARDENING-ROADMAP.md - Six-phase browser security hardening plan
-9. docs/seasons/SEASON-10-bidirectional-chat.md - Season 10 closing protocol
-10. docs/seasons/SEASON-11-receipts-lifecycle.md - Season 11 closing protocol
-11. docs/SMP-HANDSHAKE.md - Complete handshake reference
-12. docs/SMP-VERSIONS.md - SMP version fields reference
+Read these files for implementation details:
+1. docs/research/01-smp-server-analysis.md - How SMP works
+2. docs/research/02-go-server-architecture.md - Go patterns
+3. docs/research/12-triple-shield.md - Phase 6 Triple Shield architecture
+4. docs/protocol/05-message-format.md - Byte-level encoding
+5. docs/protocol/06-queue-operations.md - Command semantics
+6. docs/architecture/01-overview.md - Package structure
+7. docs/architecture/03-queue-store.md - BadgerDB schema

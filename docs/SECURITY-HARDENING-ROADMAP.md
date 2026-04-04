@@ -5,13 +5,13 @@
 # GoChat Security Hardening Roadmap
 
 **Created:** Season 6 (2026-03-26)
-**Updated:** Season 11 (2026-04-02) - Current state updated, S11 findings added
-**Status:** Planning - phased implementation across future seasons
+**Updated:** Season 12 (2026-04-04) - Season numbers shifted (S12=Widget, S13=Security), widget/CDN/npm state added
+**Status:** Planning - phased implementation beginning Season 13
 **Context:** Browser-native keys are currently stored as plain JS variables. This document defines a realistic hardening path based on research into Web Crypto API capabilities, browser threat models, and how Signal, WhatsApp, Element, and Wire solve these problems.
 
 ---
 
-## Current State (Season 11)
+## Current State (Season 12)
 
 - Keys generated fresh per session (Ed25519, X25519, X448)
 - Keys stored as raw byte arrays in JavaScript memory
@@ -23,11 +23,19 @@
 - Connection lifecycle management: END detection, timeout, x.direct.del (Season 11)
 - .env build-time configuration for contact address and server URL (Season 11)
 - Input sanitization via escHtml() using textContent auto-escaping (Season 5)
+- Single-file widget (461KB) with Shadow DOM isolation (Season 12)
+- CDN distribution: cdn.simplego.dev/gochat.js (Season 12)
+- 15 configurable bubble animations via data-attributes (Season 12)
+- npm: gochat-widget@1.0.0 + simplex-js@1.0.0 published (Season 12)
+- Nginx stream proxy on port 443 with SNI routing (Season 12)
+- Demo platform: demo.it-and-more.systems (Season 12)
 - 551+ tests across 23 files, zero regressions
 
 **Risk assessment:** Acceptable for ephemeral support chat. No long-lived secrets. Attack window is limited to the active browser tab. Ephemeral keys actually provide stronger forward secrecy than persistent-key approaches.
 
 **Important context (Season 11):** GoChat is designed as an encrypted support chat widget for website operators - comparable to Intercom but with E2E encryption via SimpleX. It is not intended as a high-security communication tool. For that use case, SimpleGo offers dedicated hardware devices in Class 1, 2, and 3 with hardware-level key protection, secure enclaves, and no browser in the loop.
+
+**Widget distribution context (Season 12):** The widget is now distributed via CDN as a single JavaScript file. This adds a new trust boundary: the CDN server. SRI (Phase 1) mitigates this by letting browsers verify the file integrity. The Shadow DOM isolation prevents host page CSS/JS from interfering with the widget, but does not protect against a compromised host page reading postMessage data.
 
 ---
 
@@ -37,10 +45,11 @@ Research identified the following prioritized threats for browser-based E2E encr
 
 | Attack Vector | Likelihood | Impact | Current Mitigation |
 |--------------|-----------|--------|-------------------|
-| XSS against crypto keys | High | Critical | escHtml() via textContent (S5) |
+| XSS against crypto keys | High | Critical | escHtml() via textContent (S5), Shadow DOM (S12) |
 | npm supply chain compromise | High | Critical | None |
+| CDN file tampering | Medium-High | Critical | None (SRI planned for S13) |
 | Browser extension key theft | Medium-High | Critical | None (technically unsolvable) |
-| Embedded widget risks (same-origin) | Medium-High | High | N/A (not embedded yet) |
+| Embedded widget risks (same-origin) | Medium-High | High | Shadow DOM isolation (S12) |
 | Server-side JS tampering | Medium | Critical | None |
 | WebSocket MitM | Medium | Low | E2E encryption protects content |
 | JS timing side-channels | Low | High | Fundamental JS limitation |
@@ -103,13 +112,13 @@ The fundamental unsolved problem shared by ALL browser-based E2E messengers is s
 
 ## Implementation Phases
 
-### Phase 1: CSP + SRI + Input Sanitization (Season 12)
+### Phase 1: CSP + SRI + Input Sanitization (Season 13)
 
 **Goal:** Block XSS and script tampering - the two highest-likelihood attacks.
 **Effort:** Small (1-2 sessions)
 **Impact:** High
 
-**Partial progress:** Input sanitization via escHtml() (textContent auto-escaping) already exists in chat.js since Season 5. DOMPurify evaluation is part of Season 12.
+**Partial progress:** Input sanitization via escHtml() (textContent auto-escaping) already exists in chat.js since Season 5. Shadow DOM isolation added in Season 12 provides additional protection. DOMPurify evaluation is part of Season 13.
 
 #### Content Security Policy
 
@@ -122,7 +131,7 @@ Content-Security-Policy:
   style-src 'self' 'nonce-{RANDOM}';
   img-src 'self' data: blob:;
   font-src 'self';
-  connect-src wss://smp.simplego.dev:8444;
+  connect-src wss://smp.simplego.dev;
   worker-src 'self' blob:;
   frame-ancestors 'none';
   form-action 'none';
@@ -133,7 +142,9 @@ Content-Security-Policy:
   report-uri /api/csp-report;
 ```
 
-**Critical WebSocket gotcha:** The `'self'` keyword does NOT match `wss://` schemes. Without explicit `connect-src wss://smp.simplego.dev:8444`, all WebSocket connections will be silently blocked.
+**Critical WebSocket gotcha:** The `'self'` keyword does NOT match `wss://` schemes. Without explicit `connect-src wss://smp.simplego.dev`, all WebSocket connections will be silently blocked.
+
+**CDN script-src:** The CSP must also allow the CDN origin for the widget script: `script-src ... https://cdn.simplego.dev`
 
 The `'unsafe-inline'` and `https:` in script-src are ignored by CSP Level 3 browsers that understand `'strict-dynamic'` - they serve purely as fallbacks for older browsers.
 
@@ -143,12 +154,14 @@ esbuild has no native SRI support. Add a post-build script:
 
 ```bash
 # Generate SRI hash after build
-HASH=$(shasum -b -a 384 dist/gochat-client.js | xxd -r -p | base64)
+HASH=$(shasum -b -a 384 dist/gochat-widget.js | xxd -r -p | base64)
 # Inject into script tag
-<script src="/assets/js/gochat-client.js"
+<script src="https://cdn.simplego.dev/gochat.js"
         integrity="sha384-${HASH}"
         crossorigin="anonymous"></script>
 ```
+
+**Note:** SRI hash changes with every build. Need a workflow that updates the hash after CDN deployment. For CDN-served widgets, SRI is critical because the file is loaded from a third-party origin.
 
 **Skip code splitting.** Bundle everything into a single IIFE file (which we already do). This avoids the unsolved problem of SRI verification on dynamically loaded chunks.
 
@@ -163,13 +176,37 @@ chatElement.innerHTML = DOMPurify.sanitize(messageText);
 
 **Note (Season 11):** chat.js already uses `escHtml()` which creates a div element, sets `textContent` (auto-escaping), then reads `innerHTML`. This prevents script injection through chat messages. DOMPurify would be an additional defense layer.
 
+**Note (Season 12):** The widget now uses Shadow DOM which provides additional isolation. However, Shadow DOM does not prevent XSS within the shadow tree itself - sanitization is still necessary.
+
 #### CSP Reporting
 
 Deploy with `Content-Security-Policy-Report-Only` first. Monitor for violations. Tighten iteratively, then switch to enforcing mode. Sentry supports CSP violation ingestion for monitoring.
 
 ---
 
-### Phase 2: Crypto Web Worker (Season 13)
+### Phase 2: Dependency Hardening (Season 13)
+
+**Goal:** Protect against npm supply chain attacks.
+**Effort:** Small-Medium (1-2 sessions)
+**Impact:** High
+
+#### Actions
+
+1. **Vendor all crypto dependencies** directly into the repository:
+   - @noble/curves (X448, Ed25519 fallback)
+   - @noble/hashes (SHA-256, SHA-512, HKDF)
+   - @noble/ciphers (XSalsa20-Poly1305) or tweetnacl
+   - zstd-codec (compression)
+
+2. **Pin exact versions** with lockfile, use `npm ci` exclusively in CI/CD
+
+3. **Audit diffs** on every dependency update with `npm-diff`
+
+4. **Prefer @noble libraries** - they have minimal dependencies (only @noble/hashes), PGP-signed commits, and token-less CI
+
+---
+
+### Phase 3: Crypto Web Worker (Season 14)
 
 **Goal:** Isolate all key material from the main thread.
 **Effort:** Medium (3-5 sessions)
@@ -213,7 +250,7 @@ Main Thread (chat UI)          Web Worker (crypto-worker.ts)
 
 ---
 
-### Phase 3: Non-Extractable Keys (Season 13-14)
+### Phase 4: Non-Extractable Keys (Season 14-15)
 
 **Goal:** Prevent raw key bytes from entering JavaScript for supported algorithms.
 **Effort:** Medium (3-4 sessions)
@@ -253,29 +290,7 @@ This decision affects SMP protocol compatibility. Consult SimpleGo protocol team
 
 ---
 
-### Phase 4: Dependency Hardening (Season 12)
-
-**Goal:** Protect against npm supply chain attacks.
-**Effort:** Small-Medium (1-2 sessions)
-**Impact:** High
-
-#### Actions
-
-1. **Vendor all crypto dependencies** directly into the repository:
-   - @noble/curves (X448, Ed25519 fallback)
-   - @noble/hashes (SHA-256, SHA-512, HKDF)
-   - @noble/ciphers (XSalsa20-Poly1305) or tweetnacl
-   - zstd-codec (compression)
-
-2. **Pin exact versions** with lockfile, use `npm ci` exclusively in CI/CD
-
-3. **Audit diffs** on every dependency update with `npm-diff`
-
-4. **Prefer @noble libraries** - they have minimal dependencies (only @noble/hashes), PGP-signed commits, and token-less CI
-
----
-
-### Phase 5: Cross-Origin Iframe for Embeddable Widget (Season 14+)
+### Phase 5: Cross-Origin Iframe for Embeddable Widget (Season 15+)
 
 **Goal:** Protect GoChat when embedded on third-party websites.
 **Effort:** Medium (2-3 sessions)
@@ -287,6 +302,8 @@ When GoChat is embedded on external websites, serve it from a separate origin (e
 - CryptoKey objects
 - WebSocket connections
 
+**Season 12 note:** The current Shadow DOM approach provides CSS/DOM isolation but NOT JavaScript isolation. Shadow DOM is same-origin - the host page can still access the shadow root via JavaScript. Cross-origin iframe would provide true JavaScript isolation.
+
 #### Rules for cross-origin iframe communication
 
 - Validate postMessage origins against a strict whitelist
@@ -297,7 +314,7 @@ When GoChat is embedded on external websites, serve it from a separate origin (e
 
 ---
 
-### Phase 6: Rust-to-WASM Crypto Core (Season 15+)
+### Phase 6: Rust-to-WASM Crypto Core (Season 16+)
 
 **Goal:** Memory safety, constant-time guarantees, unified codebase.
 **Effort:** Large (dedicated season)
@@ -330,6 +347,8 @@ This is the pattern that Signal (libsignal), Element (vodozemac), and Wire all i
 #### Prerequisites
 - Stable chat functionality first (Seasons 6-11 - DONE)
 - Proven test suite for protocol compatibility (551+ tests - DONE)
+- Widget product stable (Season 12 - DONE)
+- Security hardening complete (Season 13 - next)
 - Build pipeline for WASM (wasm-pack + esbuild integration)
 
 ---
@@ -338,12 +357,12 @@ This is the pattern that Signal (libsignal), Element (vodozemac), and Wire all i
 
 | Priority | Phase | Protection Against | Effort | Season |
 |----------|-------|-------------------|--------|--------|
-| 1 | CSP + SRI + DOMPurify | XSS, script tampering | Small | 12 (next) |
-| 2 | Dependency vendoring | Supply chain attacks | Small | 12 (next) |
-| 3 | Crypto Web Worker | XSS key theft | Medium | 13 |
-| 4 | Non-extractable keys | Casual JS key access | Medium | 13-14 |
-| 5 | Cross-origin iframe | Third-party embedding | Medium | 14+ |
-| 6 | Rust-to-WASM | All JS-level threats | Large | 15+ |
+| 1 | CSP + SRI + DOMPurify | XSS, script tampering | Small | 13 (next) |
+| 2 | Dependency vendoring | Supply chain attacks | Small | 13 (next) |
+| 3 | Crypto Web Worker | XSS key theft | Medium | 14 |
+| 4 | Non-extractable keys | Casual JS key access | Medium | 14-15 |
+| 5 | Cross-origin iframe | Third-party embedding | Medium | 15+ |
+| 6 | Rust-to-WASM | All JS-level threats | Large | 16+ |
 
 ---
 
