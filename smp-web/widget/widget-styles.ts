@@ -16,7 +16,6 @@ export const WIDGET_CSS = `
   --warning: #f0ad4e;
   --success: #4caf50;
   --danger: #ff5050;
-  --gc-shadow: rgba(69, 189, 209, 0.5);
 }
 
 /* === FLOAT BUBBLE === */
@@ -275,27 +274,51 @@ export const WIDGET_CSS = `
   .gc-input{min-height:48px;}
 }
 
-/* === BUBBLE ANIMATIONS === */
-@keyframes gc-pulse-ring{0%{transform:scale(1);opacity:0.6;}100%{transform:scale(1.8);opacity:0;}}
-.gc-float-bubble.anim-pulse{position:relative;}
-.gc-float-bubble.anim-pulse::before,.gc-float-bubble.anim-pulse::after{content:'';position:absolute;inset:-4px;border-radius:50%;border:2px solid var(--accent);animation:gc-pulse-ring 2s ease-out infinite;pointer-events:none;}
-.gc-float-bubble.anim-pulse::after{animation-delay:1s;}
+/* === BUBBLE ANIMATIONS (internal only - nothing outside bubble) === */
 
-@keyframes gc-breathe{0%,100%{transform:scale(1);filter:drop-shadow(0 4px 8px rgba(0,0,0,0.3));}50%{transform:scale(1.08);filter:drop-shadow(0 6px 16px rgba(0,0,0,0.4));}}
-.gc-float-bubble.anim-breathe{animation:gc-breathe 3s ease-in-out infinite;}
+/* 1. inner-glow: soft inner box-shadow pulsing */
+@keyframes gc-inner-glow{0%,100%{box-shadow:inset 0 0 12px rgba(255,255,255,0);}50%{box-shadow:inset 0 0 20px rgba(255,255,255,0.35);}}
+.gc-float-bubble.anim-inner-glow{animation:gc-inner-glow 3s ease-in-out infinite;}
 
-@keyframes gc-orbit{0%{transform:rotate(0deg) translateX(34px) rotate(0deg);}100%{transform:rotate(360deg) translateX(34px) rotate(-360deg);}}
-.gc-orbit-dot{position:absolute;width:6px;height:6px;border-radius:50%;background:var(--accent);opacity:0.6;animation:gc-orbit 4s linear infinite;pointer-events:none;}
+/* 2. icon-breathe: only SVG icon scales */
+@keyframes gc-icon-breathe{0%,100%{transform:scale(1);}50%{transform:scale(1.15);}}
+.gc-float-bubble.anim-icon-breathe svg{animation:gc-icon-breathe 2.5s ease-in-out infinite;}
 
-@keyframes gc-bounce{0%,20%,50%,80%,100%{transform:translateY(0);}40%{transform:translateY(-12px);}60%{transform:translateY(-6px);}}
-.gc-float-bubble.anim-bounce{animation:gc-bounce 2.5s ease infinite;}
+/* 3. shimmer: light streak sweeps across */
+@keyframes gc-shimmer-sweep{0%{left:-100%;}100%{left:200%;}}
+.gc-float-bubble.anim-shimmer{position:relative;overflow:hidden;}
+.gc-float-bubble.anim-shimmer::after{content:'';position:absolute;top:0;left:-100%;width:50%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.3),transparent);animation:gc-shimmer-sweep 3s ease-in-out infinite;pointer-events:none;}
 
-@keyframes gc-glow-spin{0%{box-shadow:4px 0 16px var(--gc-shadow);}25%{box-shadow:0 4px 16px var(--gc-shadow);}50%{box-shadow:-4px 0 16px var(--gc-shadow);}75%{box-shadow:0 -4px 16px var(--gc-shadow);}100%{box-shadow:4px 0 16px var(--gc-shadow);}}
-.gc-float-bubble.anim-glow{animation:gc-glow-spin 3s linear infinite;}
+/* 4. wiggle: icon shakes briefly */
+@keyframes gc-wiggle{0%,85%,100%{transform:rotate(0deg);}88%{transform:rotate(-12deg);}91%{transform:rotate(10deg);}94%{transform:rotate(-8deg);}97%{transform:rotate(5deg);}}
+.gc-float-bubble.anim-wiggle svg{animation:gc-wiggle 4s ease-in-out infinite;}
 
-.gc-float-bubble.active{animation:none !important;}
-.gc-float-bubble.active::before,.gc-float-bubble.active::after{display:none;}
-.gc-float-bubble.active .gc-orbit-dot{display:none;}
+/* 5. color-shift: brightness shifts */
+@keyframes gc-color-shift{0%,100%{filter:brightness(1);}50%{filter:brightness(1.2);}}
+.gc-float-bubble.anim-color-shift{animation:gc-color-shift 3s ease-in-out infinite;}
+
+/* 6. icon-flip: Y-axis rotation */
+@keyframes gc-icon-flip{0%,80%,100%{transform:rotateY(0deg);}90%{transform:rotateY(180deg);}}
+.gc-float-bubble.anim-icon-flip svg{animation:gc-icon-flip 5s ease-in-out infinite;transform-style:preserve-3d;}
+
+/* 7. notification-dot: pulsing white dot inside */
+@keyframes gc-dot-pulse{0%,100%{opacity:0;transform:scale(0);}50%{opacity:1;transform:scale(1);}}
+.gc-float-bubble.anim-notification-dot{position:relative;}
+.gc-float-bubble.anim-notification-dot::after{content:'';position:absolute;top:6px;right:6px;width:10px;height:10px;border-radius:50%;background:#fff;animation:gc-dot-pulse 2s ease-in-out infinite;pointer-events:none;z-index:3;}
+
+/* 8. radar-sweep: rotating conic gradient inside */
+@keyframes gc-sweep{0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}
+.gc-float-bubble.anim-radar-sweep{position:relative;overflow:hidden;}
+.gc-float-bubble.anim-radar-sweep::after{content:'';position:absolute;inset:0;border-radius:50%;background:conic-gradient(from 0deg,transparent 0%,rgba(255,255,255,0.25) 25%,transparent 50%);animation:gc-sweep 3s linear infinite;pointer-events:none;}
+
+/* 9. shimmer-flip (DEFAULT): shimmer + icon-flip combined */
+.gc-float-bubble.anim-shimmer-flip{position:relative;overflow:hidden;}
+.gc-float-bubble.anim-shimmer-flip::after{content:'';position:absolute;top:0;left:-100%;width:50%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.3),transparent);animation:gc-shimmer-sweep 3s ease-in-out infinite;pointer-events:none;}
+.gc-float-bubble.anim-shimmer-flip svg{animation:gc-icon-flip 5s ease-in-out infinite;transform-style:preserve-3d;}
+
+/* Suppress animations when panel is open */
+.gc-float-bubble.panel-open,.gc-float-bubble.panel-open svg{animation:none !important;}
+.gc-float-bubble.panel-open::after{display:none;}
 
 /* === REDUCED MOTION === */
 @media(prefers-reduced-motion:reduce){
@@ -304,7 +327,7 @@ export const WIDGET_CSS = `
   .gc-typing-dots span,.gc-encrypt-badge::after,.gc-float-badge,.gc-waiting-spinner{animation:none;}
   .gc-panel.shaking,.gc-header-btn.gc-close-btn.spinning,.gc-msg.glitching,.gc-msg.exploding,.gc-destruct-flash.active,.gc-destruct-scanline.active{animation:none;}
   .gc-destroyed-icon,.gc-destroyed-text,.gc-destroyed-sub,.gc-destroyed-line{animation:none;opacity:1;}
-  .gc-float-bubble,.gc-float-bubble::before,.gc-float-bubble::after,.gc-orbit-dot{animation:none !important;}
-  .gc-float-bubble::before,.gc-float-bubble::after,.gc-orbit-dot{display:none;}
+  .gc-float-bubble,.gc-float-bubble svg{animation:none !important;}
+  .gc-float-bubble::after{display:none;}
 }
 `;
