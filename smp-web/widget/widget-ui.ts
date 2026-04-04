@@ -389,7 +389,21 @@ export function initUI(shadow: ShadowRoot, host: HTMLElement, config: WidgetConf
   })
 
   // --- Real connection ---
-  function startRealChat(displayName: string) {
+  async function startRealChat(displayName: string) {
+    // TLS preflight: warm up browser TLS cache for SMP server.
+    // The SMP server uses a special ALPN list that requires browsers
+    // to complete one HTTPS handshake before WebSocket connections work.
+    if (config.serverUrl) {
+      try {
+        const preflightUrl = config.serverUrl
+          .replace('wss://', 'https://')
+          .replace('ws://', 'http://')
+        await fetch(preflightUrl, {mode: 'no-cors'})
+      } catch (_) {
+        // Ignore - we only need the TLS handshake to complete
+      }
+    }
+
     try {
       client = (window as any).createBrowserClient({
         contactAddress: config.contactAddress,
