@@ -16,6 +16,7 @@ export const WIDGET_CSS = `
   --warning: #f0ad4e;
   --success: #4caf50;
   --danger: #ff5050;
+  --gc-shadow: rgba(69, 189, 209, 0.5);
 }
 
 /* === FLOAT BUBBLE === */
@@ -274,6 +275,28 @@ export const WIDGET_CSS = `
   .gc-input{min-height:48px;}
 }
 
+/* === BUBBLE ANIMATIONS === */
+@keyframes gc-pulse-ring{0%{transform:scale(1);opacity:0.6;}100%{transform:scale(1.8);opacity:0;}}
+.gc-float-bubble.anim-pulse{position:relative;}
+.gc-float-bubble.anim-pulse::before,.gc-float-bubble.anim-pulse::after{content:'';position:absolute;inset:-4px;border-radius:50%;border:2px solid var(--accent);animation:gc-pulse-ring 2s ease-out infinite;pointer-events:none;}
+.gc-float-bubble.anim-pulse::after{animation-delay:1s;}
+
+@keyframes gc-breathe{0%,100%{transform:scale(1);filter:drop-shadow(0 4px 8px rgba(0,0,0,0.3));}50%{transform:scale(1.08);filter:drop-shadow(0 6px 16px rgba(0,0,0,0.4));}}
+.gc-float-bubble.anim-breathe{animation:gc-breathe 3s ease-in-out infinite;}
+
+@keyframes gc-orbit{0%{transform:rotate(0deg) translateX(34px) rotate(0deg);}100%{transform:rotate(360deg) translateX(34px) rotate(-360deg);}}
+.gc-orbit-dot{position:absolute;width:6px;height:6px;border-radius:50%;background:var(--accent);opacity:0.6;animation:gc-orbit 4s linear infinite;pointer-events:none;}
+
+@keyframes gc-bounce{0%,20%,50%,80%,100%{transform:translateY(0);}40%{transform:translateY(-12px);}60%{transform:translateY(-6px);}}
+.gc-float-bubble.anim-bounce{animation:gc-bounce 2.5s ease infinite;}
+
+@keyframes gc-glow-spin{0%{box-shadow:4px 0 16px var(--gc-shadow);}25%{box-shadow:0 4px 16px var(--gc-shadow);}50%{box-shadow:-4px 0 16px var(--gc-shadow);}75%{box-shadow:0 -4px 16px var(--gc-shadow);}100%{box-shadow:4px 0 16px var(--gc-shadow);}}
+.gc-float-bubble.anim-glow{animation:gc-glow-spin 3s linear infinite;}
+
+.gc-float-bubble.active{animation:none !important;}
+.gc-float-bubble.active::before,.gc-float-bubble.active::after{display:none;}
+.gc-float-bubble.active .gc-orbit-dot{display:none;}
+
 /* === REDUCED MOTION === */
 @media(prefers-reduced-motion:reduce){
   .gc-panel-dock,.gc-header-main,.gc-header-confirm,.gc-float-bubble{transition:none;}
@@ -281,5 +304,7 @@ export const WIDGET_CSS = `
   .gc-typing-dots span,.gc-encrypt-badge::after,.gc-float-badge,.gc-waiting-spinner{animation:none;}
   .gc-panel.shaking,.gc-header-btn.gc-close-btn.spinning,.gc-msg.glitching,.gc-msg.exploding,.gc-destruct-flash.active,.gc-destruct-scanline.active{animation:none;}
   .gc-destroyed-icon,.gc-destroyed-text,.gc-destroyed-sub,.gc-destroyed-line{animation:none;opacity:1;}
+  .gc-float-bubble,.gc-float-bubble::before,.gc-float-bubble::after,.gc-orbit-dot{animation:none !important;}
+  .gc-float-bubble::before,.gc-float-bubble::after,.gc-orbit-dot{display:none;}
 }
 `;

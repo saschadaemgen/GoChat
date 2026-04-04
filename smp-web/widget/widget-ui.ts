@@ -9,6 +9,7 @@ export interface WidgetConfig {
   color: string
   position: string
   trigger: string
+  bubbleAnimation: string
 }
 
 export function initUI(shadow: ShadowRoot, host: HTMLElement, config: WidgetConfig): void {
@@ -59,11 +60,28 @@ export function initUI(shadow: ShadowRoot, host: HTMLElement, config: WidgetConf
   // --- Set header title from config ---
   if (headerTitle && config.name) headerTitle.textContent = config.name
 
+  // --- Apply bubble animation ---
+  if (bubble && config.bubbleAnimation && config.bubbleAnimation !== 'none') {
+    bubble.classList.add('anim-' + config.bubbleAnimation)
+    // Orbit needs extra DOM elements (3 dots)
+    if (config.bubbleAnimation === 'orbit') {
+      for (let i = 0; i < 3; i++) {
+        const orb = document.createElement('div')
+        orb.className = 'gc-orbit-dot'
+        orb.style.animationDelay = -(i * 1.33) + 's'
+        if (i === 1) { orb.style.width = '4px'; orb.style.height = '4px'; orb.style.opacity = '0.4' }
+        if (i === 2) { orb.style.width = '5px'; orb.style.height = '5px'; orb.style.opacity = '0.5' }
+        bubble.appendChild(orb)
+      }
+    }
+  }
+
   // --- Panel toggle ---
   function openPanel() {
     if (panelOpen || exploding) return
     panelOpen = true
     if (dock) dock.classList.add('open')
+    if (bubble) bubble.classList.add('active')
     clearUnread()
     if (connected && input) setTimeout(() => input.focus(), 400)
   }
@@ -71,6 +89,7 @@ export function initUI(shadow: ShadowRoot, host: HTMLElement, config: WidgetConf
     if (!panelOpen) return
     panelOpen = false
     if (dock) dock.classList.remove('open')
+    if (bubble) bubble.classList.remove('active')
     if (offlineSent) setTimeout(() => resetChat(), 400)
   }
   function togglePanel() {

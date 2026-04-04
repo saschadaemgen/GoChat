@@ -38,6 +38,7 @@ function initWidget(): void {
     name: scriptTag?.getAttribute('data-name') || 'GoChat',
     welcome: scriptTag?.getAttribute('data-welcome') || '',
     color: scriptTag?.getAttribute('data-color') || '#45bdd1',
+    bubbleAnimation: scriptTag?.getAttribute('data-bubble-animation') || 'pulse',
     lang: scriptTag?.getAttribute('data-lang') || 'en',
   }
   const zIndex = parseInt(scriptTag?.getAttribute('data-z-index') || '10000', 10)
@@ -65,13 +66,20 @@ function initWidget(): void {
 
   // Inject CSS
   const style = document.createElement('style')
-  // Apply custom color if provided
   let css = WIDGET_CSS
+  // Apply custom color if provided
   if (config.color && config.color !== '#45bdd1') {
-    // Override the accent color CSS variable
     css = css.replace(
       'var(--gochat-color-primary, #45bdd1)',
       'var(--gochat-color-primary, ' + config.color + ')'
+    )
+    // Compute shadow color for glow animation from custom color
+    const r = parseInt(config.color.slice(1, 3), 16)
+    const g = parseInt(config.color.slice(3, 5), 16)
+    const b = parseInt(config.color.slice(5, 7), 16)
+    css = css.replace(
+      'rgba(69, 189, 209, 0.5)',
+      'rgba(' + r + ', ' + g + ', ' + b + ', 0.5)'
     )
   }
   // Apply position
