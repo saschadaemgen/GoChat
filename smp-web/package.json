@@ -17,7 +17,8 @@
     "build": "tsc",
     "build:browser": "node esbuild.config.mjs",
     "build:admin": "node esbuild.admin.config.mjs",
-    "build:all": "node esbuild.config.mjs && node esbuild.admin.config.mjs",
+    "build:widget": "node esbuild.widget.mjs",
+    "build:all": "node esbuild.config.mjs && node esbuild.admin.config.mjs && node esbuild.widget.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
