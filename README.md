@@ -31,7 +31,7 @@ GoChat is part of the [SimpleGo ecosystem](#simplego-ecosystem) and serves as th
 
 ```html
 <script src="https://cdn.simplego.dev/gochat.js"
-        data-contact-address="simplex://contact#/..."
+        data-contact-address="YOUR_SIMPLEX_ADDRESS_HERE"
         data-server-url="wss://smp.simplego.dev"
         async></script>
 ```
@@ -54,7 +54,7 @@ npm install simplex-js
 
 ```html
 <script src="https://cdn.simplego.dev/gochat.js"
-        data-contact-address="simplex://contact#/..."
+        data-contact-address="YOUR_SIMPLEX_ADDRESS_HERE"
         data-server-url="wss://smp.simplego.dev"
         data-position="bottom-right"
         data-trigger="floating"
@@ -86,7 +86,7 @@ For sites that use their own button or menu item instead of the floating bubble:
 
 ```html
 <script src="https://cdn.simplego.dev/gochat.js"
-        data-contact-address="simplex://contact#/..."
+        data-contact-address="YOUR_SIMPLEX_ADDRESS_HERE"
         data-server-url="wss://smp.simplego.dev"
         data-trigger="custom"
         async></script>
@@ -244,11 +244,15 @@ WebSocket support is based on [PR #1738](https://github.com/simplex-chat/simplex
 
 Every SimpleX contact address contains the SMP server where that user's message queue lives. When a visitor opens GoChat and initiates a connection, GoChat must connect to **that specific server** - not just any server. If the contact address points to `smp8.simplex.im` (no WebSocket), GoChat cannot reach it. The contact address must point to a WebSocket-enabled server like `smp.simplego.dev`.
 
+This also applies to the reply direction. When you accept a GoChat connection in your SimpleX app, the app creates a reply queue on one of your configured servers. If the app routes the reply through a server without WebSocket support (via private routing or because another server is set to receive messages), GoChat cannot reach it and the connection fails with an AUTH error. This is why all message routing must go through `smp.simplego.dev` until WebSocket support is available on the official SimpleX servers.
+
 ---
 
 ## Setting up your contact address for GoChat
 
-To use GoChat on your website, you need a SimpleX contact address that points to a WebSocket-enabled SMP server. Follow these steps in the SimpleX app (desktop or mobile):
+To use GoChat on your website, you need a SimpleX contact address that points to a WebSocket-enabled SMP server. Follow these steps in the SimpleX app (desktop or mobile).
+
+We recommend creating a **separate SimpleX profile** dedicated to GoChat support. This way, the server settings described below only apply to your support profile, while your other profiles continue to work normally with all SimpleX servers.
 
 ### Step 1: Add the SimpleGo SMP server
 
@@ -265,7 +269,21 @@ To use GoChat on your website, you need a SimpleX contact address that points to
 8. Go back to **Network & Servers**
 9. Tap **Save Servers**
 
-### Step 2: Create your contact address
+### Step 2: Disable private routing on default servers
+
+This step is critical. If the default SimpleX servers have "To receive" or "For private routing" enabled, your app will route reply queues through those servers. Since they don't support WebSocket, GoChat connections will fail with an AUTH error.
+
+For each of the preset SimpleX servers (the ones you did NOT add yourself):
+
+1. Go to **Settings** > **Network & Servers**
+2. Tap on each preset server
+3. Under **"Use for messages"**, turn OFF **"To receive"**
+4. Turn OFF **"For private routing"**
+5. Go back and tap **Save Servers**
+
+Only `smp.simplego.dev` should be active for sending and receiving. The preset servers can remain in the list but must not be used for receiving or routing.
+
+### Step 3: Create your contact address
 
 If you already have a SimpleX contact address, you need to delete it first and create a new one. The old address points to a server without WebSocket support.
 
@@ -275,7 +293,7 @@ If you already have a SimpleX contact address, you need to delete it first and c
 4. Your new address is now created on `smp.simplego.dev`
 5. Tap **Share address** to copy it to your clipboard
 
-### Step 3: Add GoChat to your website
+### Step 4: Add GoChat to your website
 
 Take the address from your clipboard and add the GoChat script tag to your website:
 
@@ -288,9 +306,18 @@ Take the address from your clipboard and add the GoChat script tag to your websi
 
 That's it. Visitors can now open the chat widget and their browser establishes an end-to-end encrypted connection directly to your SimpleX app.
 
-### Step 4: Accept incoming chats
+### Step 5: Accept incoming chats
 
 When a visitor starts a chat on your website, a connection request appears in your SimpleX app. Accept the request and you can start messaging. Each visitor appears as a separate contact. Multiple concurrent conversations are supported.
+
+### Troubleshooting
+
+If the chat widget shows "connecting to support" indefinitely after you accept the connection, or if the browser console shows `SMP error: AUTH`, check the following:
+
+- **Reply queue on wrong server:** Open the browser console (F12) and look for `Reply queue:` in the log. If it shows any server other than `smp.simplego.dev` (like `smp4.simplexonflux.com` or `smp8.simplex.im`), your app is routing replies through a server without WebSocket support. Go back to Step 2 and make sure "To receive" and "For private routing" are disabled on all preset servers.
+- **Private routing enabled:** If you have private routing turned on in your SimpleX app settings, the app will route messages through intermediate servers. Disable private routing for the profile you use with GoChat.
+- **Old connection cached:** Delete the contact in your SimpleX app, reload the website (Ctrl+Shift+R), and start a fresh chat.
+- **Certificate fingerprint mismatch:** If you see "Server certificate fingerprint mismatch", your contact address was created on a different server. Delete your address and create a new one after completing Steps 1 and 2.
 
 ---
 
