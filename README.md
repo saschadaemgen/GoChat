@@ -229,26 +229,104 @@ Documented in [docs/SECURITY-HARDENING-ROADMAP.md](docs/SECURITY-HARDENING-ROADM
 
 ## Server requirements
 
-GoChat requires an SMP server with WebSocket support. Standard SimpleX public servers do not support WebSocket connections from browsers.
+GoChat runs in the browser and connects to SMP relay servers via WebSocket (WSS). This requires SMP servers that support WebSocket connections. Standard SimpleX public servers (like `smp8.simplex.im`, `smp10.simplex.im`, etc.) do **not** support WebSocket - they only accept native TLS connections from the SimpleX app.
+
+**This means:** GoChat can only connect to SMP servers that have WebSocket support enabled. If your SimpleX contact address points to a server without WebSocket support, GoChat cannot establish a connection.
 
 **Options:**
 
-1. **Use SimpleGo's server** - `wss://smp.simplego.dev` (recommended for most users, free)
+1. **Use SimpleGo's public server** - `smp.simplego.dev` (recommended, free, WebSocket-enabled)
 2. **Self-host** - Build from the [smp-web branch](https://github.com/simplex-chat/simplexmq/tree/smp-web) of simplexmq (PR #1738 by Evgeny Poberezkin). Requires a 4096-bit RSA Let's Encrypt certificate.
 
-WebSocket support is based on PR #1738, which adds WebSocket connections on the same TLS port via warp-tls. The patch is authored by the SimpleX founder and is maintained in the `smp-web` branch.
+WebSocket support is based on [PR #1738](https://github.com/simplex-chat/simplexmq/pull/1738), authored by the SimpleX founder. The patch adds WebSocket connections on the same TLS port via warp-tls. It is maintained in the `smp-web` branch and has not yet been merged into the main SimpleX release. Once merged, all public SimpleX servers will support WebSocket and GoChat will work with any contact address.
+
+### Why this matters
+
+Every SimpleX contact address contains the SMP server where that user's message queue lives. When a visitor opens GoChat and initiates a connection, GoChat must connect to **that specific server** - not just any server. If the contact address points to `smp8.simplex.im` (no WebSocket), GoChat cannot reach it. The contact address must point to a WebSocket-enabled server like `smp.simplego.dev`.
 
 ---
 
-## Support agent setup
+## Setting up your contact address for GoChat
 
-1. Download the [SimpleX Desktop App](https://simplex.chat/downloads/) (or mobile app)
-2. Go to Settings > Your SimpleX Contact Address > Create new address
-3. Copy the contact address
-4. Add the GoChat script tag to your website with your contact address and server URL
-5. When visitors start a chat, accept the connection request in your SimpleX app
+To use GoChat on your website, you need a SimpleX contact address that points to a WebSocket-enabled SMP server. Follow these steps in the SimpleX app (desktop or mobile):
 
-Each visitor appears as a separate contact. Multiple concurrent conversations are supported.
+### Step 1: Add the SimpleGo SMP server
+
+1. Open the SimpleX app
+2. Go to **Settings** > **Network & Servers**
+3. Tap **Your servers**
+4. Tap **Add server**
+5. Enter the server address:
+   ```
+   smp://7qw4hvuS-PvTHbotgtg_xiwrhFUk_s1q2upUQrGIWow=@smp.simplego.dev
+   ```
+6. Tap **Test server** - wait for the green checkmark
+7. Enable **Use for new connections**
+8. Go back to **Network & Servers**
+9. Tap **Save Servers**
+
+### Step 2: Create your contact address
+
+If you already have a SimpleX contact address, you need to delete it first and create a new one. The old address points to a server without WebSocket support.
+
+1. Go to **Settings** > **Your SimpleX Contact Address**
+2. If you have an existing address, delete it
+3. Tap **Create new address**
+4. Your new address is now created on `smp.simplego.dev`
+5. Tap **Share address** to copy it to your clipboard
+
+### Step 3: Add GoChat to your website
+
+Take the address from your clipboard and add the GoChat script tag to your website:
+
+```html
+<script src="https://cdn.simplego.dev/gochat.js"
+        data-contact-address="YOUR_COPIED_ADDRESS_HERE"
+        data-server-url="wss://smp.simplego.dev"
+        async></script>
+```
+
+That's it. Visitors can now open the chat widget and their browser establishes an end-to-end encrypted connection directly to your SimpleX app.
+
+### Step 4: Accept incoming chats
+
+When a visitor starts a chat on your website, a connection request appears in your SimpleX app. Accept the request and you can start messaging. Each visitor appears as a separate contact. Multiple concurrent conversations are supported.
+
+---
+
+## Supported address formats
+
+GoChat accepts SimpleX contact addresses in multiple formats. You can use whichever format your SimpleX app provides:
+
+### Full HTTPS format
+
+The standard share link from the SimpleX app:
+
+```
+https://simplex.chat/contact#/?v=2-7&smp=smp%3A%2F%2F...
+```
+
+### Short format
+
+The compact address format:
+
+```
+https://smp.simplego.dev/a#ABCDxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+### Deep-link format
+
+The `simplex://` URI scheme used by the mobile app. GoChat automatically converts this to the HTTPS format:
+
+```
+simplex://contact#/?v=2-7&smp=smp%3A%2F%2F...
+```
+
+All three formats work in the `data-contact-address` attribute. GoChat normalizes the address internally before establishing the connection.
+
+### Important: Server compatibility
+
+Regardless of format, the contact address must point to a WebSocket-enabled SMP server. If your address contains a server like `smp8.simplex.im` or `smp10.simplex.im`, GoChat cannot connect because those servers do not support WebSocket. Follow the setup steps above to create an address on `smp.simplego.dev`.
 
 ---
 
@@ -257,10 +335,9 @@ Each visitor appears as a separate contact. Multiple concurrent conversations ar
 ```powershell
 git clone https://github.com/saschadaemgen/GoChat.git
 cd GoChat
-git checkout feat/simplego-support-chat
 cd smp-web
 npm install
-npx vitest run              # 551+ tests
+npx vitest run              # 554+ tests
 npm run build:browser       # dist/gochat-client.js (crypto engine)
 npm run build:widget        # dist/gochat-widget.js (complete widget)
 ```
@@ -273,7 +350,7 @@ GoChat/
   .claude/                     # Claude Code project configuration
   smp-web/                     # SMP browser client
     src/                       # Protocol + crypto source (25+ TypeScript files)
-      __tests__/               # 551+ tests across 23 files
+      __tests__/               # 554+ tests across 23 files
     widget/                    # Widget source (entry, UI, CSS, HTML, animations)
     package/                   # npm package files for gochat-widget
     dist/                      # Build output
@@ -307,6 +384,7 @@ GoChat/
 | Chat messaging + Desktop App + UX | S10 | 544 |
 | Delivery receipts + connection lifecycle | S11 | 551 |
 | Widget product (CDN, npm, animations, demo) | S12 | 551 |
+| Address format normalization | S13 | 554 |
 
 ### In progress
 
@@ -326,7 +404,7 @@ GoChat/
 |:-------|:------|:-------|
 | S1-S11 | Protocol + E2E + Chat + Receipts + Lifecycle | Complete (551+ tests) |
 | S12 | Widget Product (CDN, npm, animations, demo) | Complete |
-| **S13** | **Security Hardening** | **Next** |
+| **S13** | **Security Hardening** | **In progress** |
 | S14+ | GRP Profile (Noise, PQ, two-hop) | Future |
 
 ### npm packages
