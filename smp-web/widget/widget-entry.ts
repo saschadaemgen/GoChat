@@ -28,10 +28,24 @@ import * as GoChatClientExports from '../src/index.js'
 // Capture script tag immediately (only available during initial execution)
 const scriptTag = document.currentScript as HTMLScriptElement | null
 
+/**
+ * Normalize SimpleX contact address formats:
+ *   simplex://contact#/...  -> https://simplex.chat/contact#/...
+ *   https://simplex.chat/... -> unchanged
+ *   anything else           -> unchanged
+ */
+export function normalizeContactAddress(addr: string): string {
+  if (addr.startsWith('simplex://')) {
+    return 'https://simplex.chat/' + addr.slice('simplex://'.length)
+  }
+  return addr
+}
+
 function initWidget(): void {
   // Read config from script tag data attributes
+  const rawAddress = scriptTag?.getAttribute('data-contact-address') || ''
   const config: WidgetConfig = {
-    contactAddress: scriptTag?.getAttribute('data-contact-address') || '',
+    contactAddress: normalizeContactAddress(rawAddress),
     serverUrl: scriptTag?.getAttribute('data-server-url') || '',
     position: scriptTag?.getAttribute('data-position') || 'bottom-right',
     trigger: scriptTag?.getAttribute('data-trigger') || 'floating',
